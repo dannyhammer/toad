@@ -1,14 +1,35 @@
-use clap::{error::ErrorKind, Parser};
-use toad::Engine;
+use toad::{parse_input, Engine};
+
+/*
+/// A UCI-compatible chess engine
+#[derive(clap::Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Name of the person to greet
+    #[arg(short = 'x', long)]
+    command: String,
+}
+ */
 
 fn main() {
-    let engine = Engine::new();
+    // Print some metadata about the engine
+    let name = env!("CARGO_PKG_NAME");
+    let version = env!("CARGO_PKG_VERSION");
+    let authors = env!("CARGO_PKG_AUTHORS").replace(':', ", "); // Split multiple authors by comma-space
+    println!("{name} {version} by {authors}");
 
+    let toad = Engine::new();
+
+    // TODO: Use Clap with -x to send command(s) to engine
     // Skip the executable name
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let args = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
 
-    // eprintln!("ARGS: {args:?}");
+    // Send input to engine
+    if let Ok(cmd) = parse_input(&args) {
+        toad.send_command(cmd).unwrap();
+    }
 
+    /*
     let mut arg_idx = args.len();
     let mut parsed_idx = 0;
     while parsed_idx < arg_idx {
@@ -41,8 +62,9 @@ fn main() {
             }
         }
     }
+     */
 
-    if let Err(e) = engine.run() {
-        eprintln!("{} encountered an error: {e}", env!("CARGO_PKG_NAME"));
+    if let Err(e) = toad.run() {
+        eprintln!("{} encountered a fatal error: {e}", env!("CARGO_PKG_NAME"));
     }
 }

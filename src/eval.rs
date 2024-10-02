@@ -1,6 +1,8 @@
-use chessie::{Board, Color, Game, PieceKind};
+use std::fmt;
 
-use super::Score;
+use chessie::{Board, Color, File, Game, PieceKind, Rank, Square};
+
+use crate::Score;
 
 /// Encapsulates the logic of scoring a chess position.
 ///
@@ -35,8 +37,20 @@ impl<'a> Evaluator<'a> {
     /// A score of 0 is considered equal.
     #[inline(always)]
     fn eval_for(self, color: Color) -> Score {
-        let material = material_difference(&self.game, color);
+        let material = material_difference(self.game, color);
         Score(material)
+    }
+
+    #[inline(always)]
+    fn value_at(&self, square: Square) -> Option<i32> {
+        self.game
+            .piece_at(square)
+            .map(|p| value_of(p.kind()) * p.color().negation_multiplier() as i32)
+    }
+
+    #[inline(always)]
+    fn normalize(&self, value: i32) -> f32 {
+        value as f32 / 100.0
     }
 }
 
@@ -81,4 +95,77 @@ const fn count_material_of(board: &Board, color: Color, kind: PieceKind) -> i32 
     let pieces = board.piece_parts(color, kind);
 
     (pieces.population() as i32) * value_of(kind)
+}
+
+impl fmt::Display for Evaluator<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // for file in File::iter()
+
+        // // Perform material evaluation for each color
+        // for color in Color::iter() {
+        //     // Count material for this color
+        //     let material = PieceKind::all_except_king()
+        //         .into_iter()
+        //         .fold(0, |acc, kind| {
+        //             acc + count_material_of(&self.game, color, kind)
+        //         });
+
+        //     writeln!(f, "Material for {color}: {material}")?;
+        // }
+
+        let ranks = Rank::iter().rev();
+
+        write!(f, "  +")?;
+        for _ in File::iter() {
+            write!(f, "-----+")?;
+        }
+        writeln!(f)?;
+        for rank in ranks {
+            write!(f, "{rank} |")?;
+
+            // Step 1: Write the piece char
+            for file in File::iter() {
+                let square = Square::new(file, rank);
+                let piece = self.game.piece_at(square);
+                let piece_char = piece.map(|p| p.char()).unwrap_or(' ');
+                write!(f, "  {piece_char}  |")?;
+            }
+            writeln!(f)?;
+            write!(f, "  |")?;
+
+            // Step 2: Write the contribution of that piece
+            for file in File::iter() {
+                let square = Square::new(file, rank);
+                // let score = self
+                //     .value_at(square)
+                //     .map(|s| format!("{:^5}", self.normalize(s)))
+                //     .unwrap_or(String::from("     "));
+                let score = if let Some(val) = self.value_at(square) {
+                    // format!("{")
+                    let s = if val > 0 {
+                        format!("+{}", self.normalize(val))
+                    } else {
+                        format!("{}", self.normalize(val))
+                    };
+
+                    format!("{s:^5}")
+                } else {
+                    format!("     ")
+                };
+                write!(f, "{score}|")?;
+            }
+
+            writeln!(f)?;
+
+            write!(f, "  +")?;
+            for _ in File::iter() {
+                write!(f, "-----+")?;
+            }
+            writeln!(f)?;
+        }
+        for file in File::iter() {
+            write!(f, "     {file}")?;
+        }
+        Ok(())
+    }
 }

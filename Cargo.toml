@@ -11,8 +11,9 @@ keywords = ["chess", "chess engine"]
 
 [dependencies]
 anyhow = "1.0.89"
-chessie = "1.0.0"
+#chessie = "1.0.0"
+chessie = { path = "../chessie/chessie" }
 clap = { version = "4.5.18", features = ["derive"] }
 num_cpus = "1.16.0"
 shlex = "1.3.0"
-threadpool = "1.8.1"
+uci-parser = { path = "../uci-parser", features = ["parse-go-perft", "parse-bench", "clamp-negatives"] }

@@ -4,5 +4,5 @@ mod search;
 mod utils;
 pub use engine::*;
 use eval::*;
-// use search::*;
+use search::*;
 use utils::*;
