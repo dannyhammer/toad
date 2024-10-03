@@ -129,9 +129,20 @@ impl Default for SearchConfig {
 
 /// Executes a search on the provided game at a specified depth.
 pub struct Search<'a> {
+    /// The game to search on.
+    ///
+    /// This game will be copied when moves are applied to it.
     game: &'a Game,
+
+    /// The result of the search, updated as-needed during search.
     result: SearchResult,
+
+    /// An atomic flag to determine if the search should be cancelled at any time.
+    ///
+    /// If this is ever `false`, the search will exit as soon as possible.
     is_searching: Arc<AtomicBool>,
+
+    /// Configuration variables for this instance of the search.
     config: SearchConfig,
 }
 
