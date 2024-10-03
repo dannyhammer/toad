@@ -1,33 +1,44 @@
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 use anyhow::{bail, Result};
 use chessie::{Game, Move};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::Sender,
         Arc,
     },
     time::{Duration, Instant},
-    u64,
 };
-use uci_parser::{UciCommand, UciSearchOptions};
+use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
-use crate::{EngineCommand, Evaluator, Score, MAX_DEPTH};
+use crate::{Evaluator, Score, MAX_DEPTH};
 
 /// The result of a search, containing the best move found, score, and total nodes searched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SearchResult {
+    /// Number of nodes searched.
     pub nodes: u64,
+
+    /// Best move found during the search.
     pub bestmove: Option<Move>,
+
+    /// Evaluation of the position after `bestmove` is made.
     pub score: Score,
 }
 
 impl Default for SearchResult {
-    /// A default search result should initialize to a *very bad* value.
+    /// A default search result should initialize to a *very bad* value,
+    /// since there isn't a move to play.
+    #[inline(always)]
     fn default() -> Self {
         Self {
             nodes: 0,
             bestmove: None,
-            score: Score(0),
+            score: -Score::INF,
         }
     }
 }
@@ -35,10 +46,27 @@ impl Default for SearchResult {
 /// Configuration variables for executing a [`Search`].
 #[derive(Debug, Clone, Copy)]
 pub struct SearchConfig {
+    /// Maximum depth to execute the search.
     pub max_depth: usize,
+
+    /// Node allowance.
+    ///
+    /// If the search exceeds this many nodes, it will exit as quickly as possible.
     pub max_nodes: u64,
+
+    /// Start time of the search.
     pub starttime: Instant,
+
+    /// Soft limit on search time.
+    ///
+    /// During iterative deepening, if a search concludes and this timeout is exceeded,
+    /// the entire search will exit, since there probably isn't enough time remaining
+    /// to conduct a search at a deeper depth.
     pub soft_timeout: Duration,
+
+    /// Hard limit on search time.
+    ///
+    /// During *any* point in the search, if this limit is exceeded, the search will cancel.
     pub hard_timeout: Duration,
 }
 
@@ -80,17 +108,11 @@ impl SearchConfig {
     }
 }
 
-impl From<UciSearchOptions> for SearchConfig {
-    /// Convert a [`UciSearchOptions`] to a [`SearchConfig`] by using a default [`Game`].
-    fn from(options: UciSearchOptions) -> Self {
-        Self::new(options, &Game::default())
-    }
-}
-
 impl Default for SearchConfig {
     /// A default [`SearchConfig`] will permit an "infinite" search.
     ///
     /// The word "infinite" is quoted here because the actual defaults are the `::MAX` values for each field.
+    #[inline(always)]
     fn default() -> Self {
         Self {
             max_depth: MAX_DEPTH,
@@ -106,26 +128,23 @@ impl Default for SearchConfig {
 pub struct Search<'a> {
     game: &'a Game,
     result: SearchResult,
-    sender: Sender<EngineCommand>,
     is_searching: Arc<AtomicBool>,
     config: SearchConfig,
 }
 
 impl<'a> Search<'a> {
     /// Construct a new [`Search`] instance to execute on the provided [`Game`].
-    pub fn new(
-        game: &'a Game,
-        sender: Sender<EngineCommand>,
-        is_searching: Arc<AtomicBool>,
-        config: SearchConfig,
-    ) -> Self {
-        let mut result = SearchResult::default();
-        // Initialize `bestmove` to the first move available
-        result.bestmove = game.into_iter().next();
+    #[inline(always)]
+    pub fn new(game: &'a Game, is_searching: Arc<AtomicBool>, config: SearchConfig) -> Self {
+        let result = SearchResult {
+            // Initialize `bestmove` to the first move available
+            bestmove: game.into_iter().next(),
+            ..Default::default()
+        };
+
         Self {
             game,
             result,
-            sender,
             is_searching,
             config,
         }
@@ -135,7 +154,10 @@ impl<'a> Search<'a> {
     ///
     /// This is the entrypoint of the search, and begins by performing iterative deepening.
     pub fn start(mut self) -> SearchResult {
-        println!("info string Starting search on {:?}", self.game.to_fen());
+        self.send_info(
+            UciInfo::new().string(format!("Starting search on {:?}", self.game.to_fen())),
+        );
+
         // println!(
         //     "info string Soft timeout {}ms",
         //     self.config.soft_timeout.as_millis()
@@ -145,9 +167,12 @@ impl<'a> Search<'a> {
         //     self.config.hard_timeout.as_millis()
         // );
 
+        // Start at depth 1 because a search at depth 0 makes no sense
         let mut depth = 1;
 
-        // Save the original result
+        // Save the result of the search to an external variable.
+        // This allows us to track the search results in each search iteration.
+        // If any search iteration was cancelled, we can't trust `self.result` anymore.
         let mut res = self.result;
 
         // Iterative Deepening
@@ -157,67 +182,71 @@ impl<'a> Search<'a> {
             && self.is_searching.load(Ordering::Relaxed)
             && depth <= self.config.max_depth
         {
-            // TODO: Reset score after each search?
-            // self.result.score = -Score::INF;
+            // Reset score after each search, as there is no way to know what the bounds are.
+            // We can use the score from the previous depth's search in Aspiration Windows: https://www.chessprogramming.org/Aspiration_Windows
+            self.result.score = -Score::INF;
 
-            if let Err(e) = self.negamax_root(*self.game, depth) {
-                println!("info string Search cancelled at depth {depth}: {e}");
+            // If the search returned an error, it was cancelled, so exit the iterative deepening loop.
+            if let Err(e) = self.negamax(*self.game, depth, 0) {
+                self.send_info(UciInfo::new().string(format!(
+                    "Search cancelled during depth {depth} while evaluating {} with score {}: {e}",
+                    self.result.bestmove.unwrap_or_default(),
+                    self.result.score
+                )));
+
+                self.send_info(UciInfo::new().string(format!(
+                    "Falling back to result from depth {}: {} with score {}",
+                    depth - 1,
+                    res.bestmove.unwrap_or_default(),
+                    res.score,
+                )));
+
                 break;
             }
 
             // If the search at the next depth succeeded, update the result.
             res = self.result;
 
-            // TODO: UCI response
-            println!(
-                "info depth {depth} nodes {} score cp {}",
-                res.nodes, res.score,
+            // Send search info to the GUI
+            let elapsed = self.config.starttime.elapsed();
+            self.send_info(
+                UciInfo::new()
+                    .depth(depth)
+                    .nodes(res.nodes)
+                    .score(res.score.into_uci())
+                    .nps((res.nodes as f32 / elapsed.as_secs_f32()).trunc())
+                    .time(elapsed.as_millis()),
             );
 
             // Increase the depth for the next iteration
             depth += 1;
         }
 
-        // Search has concluded, send a message to stop the search.
-        self.sender
-            .send(EngineCommand::UciCommand(UciCommand::Stop))
-            .unwrap();
+        // Search has ended; send bestmove
+        let response = UciResponse::BestMove {
+            bestmove: res.bestmove,
+            ponder: None,
+        };
+
+        println!("{response}");
+
+        // Search has concluded, alert other threads that we are no longer searching
+        self.is_searching.store(false, Ordering::Relaxed);
 
         res
     }
 
-    fn negamax_root(&mut self, game: Game, depth: usize) -> Result<()> {
-        let moves = game.get_legal_moves();
-
-        // If there are no legal moves, it's either mate or a draw.
-        if moves.is_empty() {
-            if game.is_in_check() {
-                self.result.score = Score::MATE;
-            } else {
-                self.result.score = Score::DRAW;
-            };
-            return Ok(());
-        }
-
-        self.result.score = -Score::INF;
-        self.result.bestmove = moves.first().copied();
-
-        for mv in moves {
-            let new_game = game.with_move_made(mv);
-
-            let new_score = self.negamax(new_game, depth - 1)?;
-            self.result.nodes += 1;
-
-            if new_score > self.result.score {
-                self.result.score = new_score;
-                self.result.bestmove = Some(mv);
-            }
-        }
-
-        Ok(())
+    #[inline(always)]
+    fn send_info(&self, info: UciInfo) {
+        let resp = UciResponse::<String>::Info(Box::new(info));
+        println!("{resp}");
     }
 
-    fn negamax(&mut self, game: Game, depth: usize) -> Result<Score> {
+    /// Primary location of search logic.
+    ///
+    /// Uses the [negamax](https://www.chessprogramming.org/Negamax) algorithm.
+    fn negamax(&mut self, game: Game, depth: usize, ply: i32) -> Result<Score> {
+        self.result.nodes += 1;
         // If we've reached a terminal node, evaluate the position
         if depth == 0 {
             return Ok(Evaluator::new(&game).eval());
@@ -228,10 +257,13 @@ impl<'a> Search<'a> {
         // If there are no legal moves, it's either mate or a draw.
         if moves.is_empty() {
             let score = if game.is_in_check() {
-                Score::MATE
+                // Prefer earlier mates
+                -Score::MATE + ply
             } else {
+                // Drawing is better than losing
                 Score::DRAW
             };
+
             return Ok(score);
         }
 
@@ -247,7 +279,7 @@ impl<'a> Search<'a> {
             } else
             // Condition 2: The search was stopped by an external factor, like the `stop` command
             if !self.is_searching.load(Ordering::Relaxed) {
-                bail!("cancelled by `stop` command");
+                bail!("cancelled by external command");
             } else
             // Condition 3: We've exceeded the maximum amount of nodes we're allowed to search
             if self.result.nodes >= self.config.max_nodes {
@@ -259,12 +291,14 @@ impl<'a> Search<'a> {
             let new_game = game.with_move_made(mv);
 
             // Recurse
-            let new_score = self.negamax(new_game, depth - 1)?;
-            self.result.nodes += 1;
+            let new_score = -self.negamax(new_game, depth - 1, ply + 1)?;
 
             // If the new score is better than the current score, update it.
             score = score.max(new_score);
         }
+
+        // We've searched all moves on this position, so we can be sure this score is useful.
+        self.result.score = score;
 
         Ok(score)
     }

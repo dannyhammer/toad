@@ -1,3 +1,9 @@
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 use std::fmt;
 
 use chessie::{Board, Color, File, Game, PieceKind, Rank, Square};
@@ -50,6 +56,7 @@ impl<'a> Evaluator<'a> {
 
     #[inline(always)]
     fn normalize(&self, value: i32) -> f32 {
+        // let max = Score::MATE.0 as f32;
         value as f32 / 100.0
     }
 }
@@ -99,20 +106,6 @@ const fn count_material_of(board: &Board, color: Color, kind: PieceKind) -> i32 
 
 impl fmt::Display for Evaluator<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // for file in File::iter()
-
-        // // Perform material evaluation for each color
-        // for color in Color::iter() {
-        //     // Count material for this color
-        //     let material = PieceKind::all_except_king()
-        //         .into_iter()
-        //         .fold(0, |acc, kind| {
-        //             acc + count_material_of(&self.game, color, kind)
-        //         });
-
-        //     writeln!(f, "Material for {color}: {material}")?;
-        // }
-
         let ranks = Rank::iter().rev();
 
         write!(f, "  +")?;
@@ -136,12 +129,7 @@ impl fmt::Display for Evaluator<'_> {
             // Step 2: Write the contribution of that piece
             for file in File::iter() {
                 let square = Square::new(file, rank);
-                // let score = self
-                //     .value_at(square)
-                //     .map(|s| format!("{:^5}", self.normalize(s)))
-                //     .unwrap_or(String::from("     "));
                 let score = if let Some(val) = self.value_at(square) {
-                    // format!("{")
                     let s = if val > 0 {
                         format!("+{}", self.normalize(val))
                     } else {
@@ -150,7 +138,7 @@ impl fmt::Display for Evaluator<'_> {
 
                     format!("{s:^5}")
                 } else {
-                    format!("     ")
+                    String::from("     ")
                 };
                 write!(f, "{score}|")?;
             }
