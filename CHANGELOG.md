@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/dannyhammer/toad/compare/v0.1.0...v0.2.0) (2024-10-03)
+
+
+### Features
+
+* added more utilities to the Score type ([1484b8f](https://github.com/dannyhammer/toad/commit/1484b8fd8df2c6e3d9fa32a152a6ce15c14ec7eb))
+
+
+### Bug Fixes
+
+* fixed bug causing quit command to not parse properly ([1484b8f](https://github.com/dannyhammer/toad/commit/1484b8fd8df2c6e3d9fa32a152a6ce15c14ec7eb))
+
 ## 0.1.0 (2024-10-03)
 
 
