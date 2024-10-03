@@ -15,7 +15,10 @@ use std::{
 };
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
-use crate::{Evaluator, Score, MAX_DEPTH};
+use crate::{Evaluator, Score};
+
+/// Maximum depth that can be searched
+pub const MAX_DEPTH: usize = 255;
 
 /// The result of a search, containing the best move found, score, and total nodes searched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -152,12 +155,12 @@ impl<'a> Search<'a> {
 
     /// Start the search, returning its results if the search was successful.
     ///
-    /// This is the entrypoint of the search, and begins by performing iterative deepening.
+    /// This is the entrypoint of the search, and prints UCI info before calling [`Self::iterative_deepening`],
+    /// and concluding by sending the `bestmove` message and exiting.
     pub fn start(mut self) -> SearchResult {
         self.send_info(
-            UciInfo::new().string(format!("Starting search on {:?}", self.game.to_fen())),
+            UciInfo::new().string(format!("Starting search on {:?}", self.game.to_fen(),)),
         );
-
         // println!(
         //     "info string Soft timeout {}ms",
         //     self.config.soft_timeout.as_millis()
@@ -167,6 +170,32 @@ impl<'a> Search<'a> {
         //     self.config.hard_timeout.as_millis()
         // );
 
+        let res = self.iterative_deepening();
+        // let res = self.random_move();
+
+        // Search has ended; send bestmove
+        let response = UciResponse::BestMove {
+            bestmove: res.bestmove,
+            ponder: None,
+        };
+
+        println!("{response}");
+
+        // Search has concluded, alert other threads that we are no longer searching
+        self.is_searching.store(false, Ordering::Relaxed);
+
+        res
+    }
+
+    /// Performs [iterative deepening](https://www.chessprogramming.org/Iterative_Deepening) (ID) on the Search's position.
+    ///
+    /// ID is a basic time management strategy for engines.
+    /// It involves performing a search at depth `n`, then, if there is enough time remaining, performing a search at depth `n + 1`.
+    /// On it's own, ID does not improve performance, because we are wasting work by re-running searches at low depth.
+    /// However, with features such as move ordering, a/b pruning, and aspiration windows, ID enhances performance.
+    ///
+    /// After each iteration, we check if we've exceeded our `soft_timeout` and, if we haven't, we run a search at a greater depth.
+    fn iterative_deepening(&mut self) -> SearchResult {
         // Start at depth 1 because a search at depth 0 makes no sense
         let mut depth = 1;
 
@@ -175,9 +204,7 @@ impl<'a> Search<'a> {
         // If any search iteration was cancelled, we can't trust `self.result` anymore.
         let mut res = self.result;
 
-        // Iterative Deepening
-        // In order to obey time constraints, we run searches one-by-one with increasing depths
-        // until we run out of time.
+        // The actual Iterative Deepening loop
         while self.config.starttime.elapsed() < self.config.soft_timeout
             && self.is_searching.load(Ordering::Relaxed)
             && depth <= self.config.max_depth
@@ -222,17 +249,8 @@ impl<'a> Search<'a> {
             depth += 1;
         }
 
-        // Search has ended; send bestmove
-        let response = UciResponse::BestMove {
-            bestmove: res.bestmove,
-            ponder: None,
-        };
-
-        println!("{response}");
-
-        // Search has concluded, alert other threads that we are no longer searching
-        self.is_searching.store(false, Ordering::Relaxed);
-
+        // ID loop has concluded (either by finishing or timing out),
+        //  so we return the result from the last successfully-completed search.
         res
     }
 
@@ -301,5 +319,135 @@ impl<'a> Search<'a> {
         self.result.score = score;
 
         Ok(score)
+    }
+
+    /*
+    /// Chooses a random legal move to play.
+    fn random_move(&mut self) -> SearchResult {
+        let mut res = self.result;
+        let moves = self.game.get_legal_moves();
+
+        // If there are any legal moves available, pick a random one.
+        if moves.is_empty() {
+            res.score = if self.game.is_in_check() {
+                // Prefer earlier mates
+                -Score::MATE
+            } else {
+                // Drawing is better than losing
+                Score::DRAW
+            };
+        } else {
+            // use some "random" seeds
+            let seeds = [
+                self.config
+                    .starttime
+                    .elapsed()
+                    .as_nanos()
+                    .wrapping_add_signed(self.config.starttime.elapsed().as_nanos() as i128)
+                    as u64,
+                self.config
+                    .starttime
+                    .elapsed()
+                    .as_nanos()
+                    .wrapping_rem_euclid(self.config.hard_timeout.as_nanos())
+                    as u64,
+                self.config
+                    .starttime
+                    .elapsed()
+                    .as_nanos()
+                    .wrapping_div_euclid(self.config.soft_timeout.as_nanos())
+                    as u64,
+                self.config
+                    .starttime
+                    .elapsed()
+                    .as_nanos()
+                    .wrapping_mul(self.config.starttime.elapsed().as_nanos())
+                    as u64,
+            ];
+
+            // Generate a random index into the move list
+            let i = (chessie::XoShiRo::from_seeds(seeds).get_next())
+                .wrapping_shl(moves.len() as u32)
+                .count_ones() as usize
+                % moves.len();
+
+            let mv = moves[i];
+            let new_game = self.game.with_move_made(mv);
+            // Remember; this is from the opponent's perspective, so we need to negate the score.
+            res.score = -Evaluator::new(&new_game).eval();
+            res.bestmove = Some(mv);
+
+            // Send some `info`
+            self.send_info(
+                UciInfo::new()
+                    .depth(1)
+                    .nodes(res.nodes)
+                    .score(res.score.into_uci()),
+            );
+        }
+
+        res
+    }
+     */
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ensure_is_mate_in(fen: &str, config: SearchConfig, moves: i32) {
+        let is_searching = Arc::new(AtomicBool::new(true));
+        let game = fen.parse().unwrap();
+
+        let search = Search::new(&game, is_searching, config);
+
+        let res = search.start();
+        assert!(
+            res.score.is_mate(),
+            "Search on {fen:?} with config {config:#?} produced result that is not mate.\nResult: {res:#?}"
+        );
+        assert_eq!(
+            res.score.moves_to_mate(),
+            moves,
+            "Search on {fen:?} with config {config:#?} produced result not mate in {moves}.\nResult: {res:#?}"
+        );
+    }
+
+    #[test]
+    fn test_white_mate_in_1() {
+        let fen = "k7/8/KQ6/8/8/8/8/8 w - - 0 1";
+        let config = SearchConfig {
+            max_depth: 2,
+            ..Default::default()
+        };
+
+        ensure_is_mate_in(fen, config, 1);
+    }
+
+    #[test]
+    fn test_black_mated_in_1() {
+        let fen = "1k6/8/KQ6/2Q5/8/8/8/8 b - - 0 1";
+        let config = SearchConfig {
+            max_depth: 3,
+            ..Default::default()
+        };
+
+        ensure_is_mate_in(fen, config, -1);
+    }
+
+    #[test]
+    fn test_stalemate() {
+        let fen = "k7/8/KQ6/8/8/8/8/8 b - - 0 1";
+        let config = SearchConfig::default();
+
+        let is_searching = Arc::new(AtomicBool::new(true));
+        let game = fen.parse().unwrap();
+
+        let search = Search::new(&game, is_searching, config);
+
+        let res = search.start();
+        assert!(res.bestmove.is_none());
+        assert!(res.score.is_mate());
+        assert_eq!(res.score.moves_to_mate(), 0);
     }
 }

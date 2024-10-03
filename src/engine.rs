@@ -370,13 +370,13 @@ impl Command {
         let (cmd, args) = input.split_once(' ').unwrap_or((input, ""));
 
         match cmd {
-            "b" | "bench" => Self::parse_bench(args),
+            "bench" => Self::parse_bench(args),
             "d" | "display" => Ok(Self::Display),
-            "e" | "eval" => Self::parse_eval(args),
+            "eval" => Self::parse_eval(args),
             "fen" => Ok(Self::Fen),
             "flip" => Ok(Self::Flip),
             "perft" => Self::parse_perft(args),
-            "quiet" | "exit" => Self::parse_quit(args),
+            "quit" | "exit" => Self::parse_quit(args),
             _ => UciCommand::new(input)
                 .map_err(|_| anyhow!("Unknown command: {input:?}"))
                 .map(Self::Uci),
@@ -434,8 +434,13 @@ impl Command {
 
     /// Attempts to parse the arguments to [`Command::Quit`].
     fn parse_quit(args: &str) -> Result<Self> {
-        let Ok(cleanup) = args.parse() else {
-            bail!("usage: quit [ true | false ]")
+        let cleanup = if args.is_empty() {
+            false
+        } else {
+            let Ok(cleanup) = args.parse() else {
+                bail!("usage: quit [ true | false ]")
+            };
+            cleanup
         };
 
         Ok(Self::Quit { cleanup })

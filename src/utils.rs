@@ -8,10 +8,12 @@ use std::fmt;
 
 use uci_parser::UciScore;
 
+use crate::MAX_DEPTH;
+
 /// A numerical representation of the evaluation of a position / move.
 ///
 /// This value is internally capped at [`Self::INF`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Score(pub(crate) i32);
 
@@ -43,23 +45,30 @@ impl Score {
     #[inline(always)]
     pub fn into_uci(self) -> UciScore {
         if self.is_mate() {
-            // distance to mate (in plies)
-            let plies = self.mate_dist();
-
-            // If this score is in favor of the side-to-move, it will be positive
-            // so we add 1 (because we need to make the current move in order for it's score to take effect).
-            // Otherwise, the score is for our opponent, so we need to negate it.
-            let moves = if self > Self::DRAW { plies + 1 } else { -plies } / 2;
-
-            UciScore::mate(moves)
+            UciScore::mate(self.moves_to_mate())
         } else {
             UciScore::cp(self.0)
         }
     }
 
-    /// Returns the number of plies this score is from mate.
-    pub const fn mate_dist(&self) -> i32 {
+    /// Returns the number of plies (half moves) this score is from mate.
+    #[inline(always)]
+    pub const fn plies_to_mate(&self) -> i32 {
         Self::MATE.0 - self.0.abs()
+    }
+
+    /// Returns the number of moves (full moves) this score is from mate.
+    #[inline(always)]
+    pub const fn moves_to_mate(&self) -> i32 {
+        let plies = self.plies_to_mate();
+
+        // If this score is in favor of the side-to-move, it will be positive
+        // so we add 1 (because we need to make the current move in order for it's score to take effect).
+        // Otherwise, the score is for our opponent, so we need to negate it.
+        let relative_to_side = if self.0 > 0 { plies + 1 } else { -plies };
+
+        // Divide by 2 to obtain the number of moves (1 move = 2 ply)
+        relative_to_side / 2
     }
 
     /*
@@ -157,5 +166,14 @@ impl fmt::Display for Score {
     }
 }
 
-/// Maximum depth that can be searched
-pub const MAX_DEPTH: usize = 255;
+impl fmt::Debug for Score {
+    #[inline(always)]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // self.0.fmt(f)
+        if self.is_mate() {
+            write!(f, "{} (mate in {})", self.0, self.plies_to_mate())
+        } else {
+            write!(f, "{}", self.0)
+        }
+    }
+}
