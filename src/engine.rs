@@ -6,21 +6,20 @@
 
 use std::{
     io,
-    str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{channel, Receiver, Sender},
         Arc,
     },
-    thread::JoinHandle,
+    thread::{self, JoinHandle},
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use chessie::{print_perft, Game, Move};
-use std::thread;
-use uci_parser::{UciCommand, UciResponse};
+use clap::Parser;
+use uci_parser::{UciCommand, UciOption, UciParseError, UciResponse};
 
-use crate::{Evaluator, Search, SearchConfig, SearchResult};
+use crate::{EngineCommand, Evaluator, Search, SearchConfig, SearchResult};
 
 /// Default depth at which to run the benchmark searches.
 const BENCH_DEPTH: usize = 4;
@@ -38,14 +37,15 @@ pub struct Engine {
     game: Game,
 
     /// One half of a channel, responsible for sending commands to the engine to execute.
-    sender: Sender<Command>,
+    sender: Sender<EngineCommand>,
 
     /// One half of a channel, responsible for receiving commands for the engine to execute.
-    receiver: Receiver<Command>,
+    receiver: Receiver<EngineCommand>,
 
     /// Atomic flag to determine whether a search is currently running
     is_searching: Arc<AtomicBool>,
 
+    /// Handle to the currently-running search thread, if one exists.
     search_thread: Option<JoinHandle<SearchResult>>,
 }
 
@@ -64,8 +64,19 @@ impl Engine {
         }
     }
 
-    /// Sends an [`Command`] to the engine to be executed.
-    pub fn send_command(&self, command: Command) {
+    /// Returns a string of the engine's name and current version.
+    pub fn name(&self) -> String {
+        format!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    }
+
+    /// Returns a string of all authors of this engine.
+    pub fn authors(&self) -> String {
+        // Split multiple authors by comma-space
+        env!("CARGO_PKG_AUTHORS").replace(':', ", ").to_string()
+    }
+
+    /// Sends an [`EngineCommand`] to the engine to be executed.
+    pub fn send_command(&self, command: EngineCommand) {
         // Safe unwrap: `send` can only fail if it's corresponding receiver doesn't exist,
         //  and the only way our engine's `Receiver` can no longer exist is when our engine
         //  doesn't exist either, so this is always safe.
@@ -75,7 +86,7 @@ impl Engine {
     /// Execute the main event loop for the engine.
     ///
     /// This function spawns a thread to handle input from `stdin` and waits on received commands.
-    pub fn run(mut self) -> Result<()> {
+    pub fn run(&mut self) -> Result<()> {
         // Spawn a separate thread for handling user input
         let sender = self.sender.clone();
         thread::spawn(|| {
@@ -87,21 +98,29 @@ impl Engine {
         // Loop on user input
         while let Ok(cmd) = self.receiver.recv() {
             match cmd {
-                Command::Bench { depth, file } => self.bench(depth, file)?,
+                EngineCommand::Bench {
+                    depth,
+                    file,
+                    pretty,
+                } => self.bench(depth, file, pretty)?,
 
-                Command::Display => self.display(),
+                EngineCommand::Display => self.display(),
 
-                Command::Eval { pretty } => self.eval(pretty),
+                EngineCommand::Eval { pretty } => self.eval(pretty),
 
-                Command::Fen => println!("{}", self.game.to_fen()),
+                EngineCommand::Fen => println!("{}", self.game.to_fen()),
 
-                Command::Flip => self.game.toggle_side_to_move(),
+                EngineCommand::Flip => self.game.toggle_side_to_move(),
 
-                Command::Perft { depth } => {
+                EngineCommand::Perft { depth } => {
                     print_perft::<false, false>(&self.game, depth);
                 }
 
-                Command::Quit { cleanup } => {
+                EngineCommand::Splitperft { depth } => {
+                    print_perft::<false, true>(&self.game, depth);
+                }
+
+                EngineCommand::Exit { cleanup } => {
                     // If requested, await the completion of any ongoing search threads
                     if cleanup {
                         self.stop_search();
@@ -111,12 +130,12 @@ impl Engine {
                     break;
                 }
 
-                Command::Uci(uci) => {
+                EngineCommand::Uci { cmd } => {
                     // Keep running, even on error
-                    if let Err(e) = self.handle_uci_command(uci) {
+                    if let Err(e) = self.handle_uci_command(cmd) {
                         eprintln!("Error: {e}");
                     }
-                } // Command::UciResp(resp) => println!("{resp}"),
+                }
             };
         }
 
@@ -127,7 +146,7 @@ impl Engine {
     fn handle_uci_command(&mut self, uci: UciCommand) -> Result<()> {
         use UciCommand::*;
         match uci {
-            Uci => println!("{}", UciResponse::<&str>::UciOk),
+            Uci => self.uci(),
 
             // Debug(status) => self.debug.store(status, Ordering::Relaxed),
             IsReady => println!("{}", UciResponse::<&str>::ReadyOk),
@@ -151,7 +170,7 @@ impl Engine {
             Stop => self.set_is_searching(false),
 
             // PonderHit => self.ponderhit(),
-            Quit => self.send_command(Command::Quit { cleanup: false }),
+            Quit => self.send_command(EngineCommand::Exit { cleanup: false }),
 
             _ => bail!(
                 "{} does not support UCI command {uci:?}",
@@ -163,7 +182,7 @@ impl Engine {
     }
 
     /// Execute the `bench` command, running a benchmark of a fixed search on a series of positions and displaying the results.
-    fn bench(&mut self, depth: Option<usize>, file: Option<String>) -> Result<()> {
+    fn bench(&mut self, depth: Option<usize>, file: Option<String>, pretty: bool) -> Result<()> {
         // Set up the benchmarking config
         let config = SearchConfig {
             max_depth: depth.unwrap_or(BENCH_DEPTH),
@@ -216,14 +235,21 @@ impl Engine {
         let ms = elapsed.as_millis();
         let prune = ((possible_nodes - nodes) as f32 / possible_nodes as f32) * 100.0;
 
-        // Display the results in a nice table
-        println!();
-        println!("+----- Benchmark Complete -----+");
-        println!("| time (ms)      : {ms:<12}|");
-        println!("| nodes          : {nodes:<12}|");
-        println!("| nps            : {nps:<12}|");
-        println!("| prune rate (%) : {prune:<12.2}|");
-        println!("+------------------------------+");
+        if pretty {
+            // Display the results in a nice table
+            println!();
+            println!("+----- Benchmark Complete -----+");
+            println!("| time (ms)      : {ms:<12}|");
+            println!("| nodes          : {nodes:<12}|");
+            println!("| nps            : {nps:<12}|");
+            println!("| prune rate (%) : {prune:<12.2}|");
+            println!("+------------------------------+");
+        } else {
+            println!("{nodes} nodes {nps} nps");
+        }
+
+        // Re-set the internal game state.
+        self.new_game();
 
         Ok(())
     }
@@ -315,7 +341,7 @@ impl Engine {
         // Attempt to join the thread handle to retrieve the result
         let id = handle.thread().id();
         let Ok(res) = handle.join() else {
-            eprintln!("Failed to join on thread {id:?}",);
+            eprintln!("Failed to join on thread {id:?}");
             return None;
         };
 
@@ -323,6 +349,21 @@ impl Engine {
         self.set_is_searching(false);
 
         Some(res)
+    }
+
+    /// Called when the engine receives the `uci` command.
+    ///
+    /// Prints engine's ID, version, and authors, and lists all UCI options.
+    fn uci(&self) {
+        println!("id name {}", self.name());
+        println!("id author {}\n", self.authors());
+
+        let opt_threads = UciOption::spin("Threads", 1, 1, 1);
+        println!("{}", UciResponse::Option(opt_threads));
+        let opt_hash = UciOption::spin("Hash", 1, 1, 1);
+        println!("{}", UciResponse::Option(opt_hash));
+
+        println!("{}", UciResponse::<&str>::UciOk)
     }
 }
 
@@ -332,130 +373,8 @@ impl Default for Engine {
     }
 }
 
-/// A command to be sent to the engine.
-#[derive(Debug, Clone)]
-pub enum Command {
-    /// Run a benchmark with the provided parameters.
-    Bench {
-        depth: Option<usize>,
-        file: Option<String>,
-    },
-
-    /// Print a visual representation of the current board state.
-    Display,
-
-    /// Print an evaluation of the current position.
-    Eval { pretty: bool },
-
-    /// Generate and print a FEN string for the current position.
-    Fen,
-
-    /// Flips the side-to-move.
-    Flip,
-
-    /// Performs a perft on the current position at the supplied depth, printing total node count.
-    Perft { depth: usize },
-
-    /// Quit the program.
-    Quit { cleanup: bool },
-
-    /// Wrapper for UCI commands from the GUI to the Engine.
-    Uci(UciCommand),
-}
-
-impl Command {
-    /// Attempts to parse user input into an [`Command`].
-    fn new(input: &str) -> Result<Self> {
-        // Split by command and args, if possible.
-        let (cmd, args) = input.split_once(' ').unwrap_or((input, ""));
-
-        match cmd {
-            "bench" => Self::parse_bench(args),
-            "d" | "display" => Ok(Self::Display),
-            "eval" => Self::parse_eval(args),
-            "fen" => Ok(Self::Fen),
-            "flip" => Ok(Self::Flip),
-            "perft" => Self::parse_perft(args),
-            "quit" | "exit" => Self::parse_quit(args),
-            _ => UciCommand::new(input)
-                .map_err(|_| anyhow!("Unknown command: {input:?}"))
-                .map(Self::Uci),
-        }
-    }
-
-    /// Attempts to parse the arguments to [`Command::Eval`].
-    fn parse_bench(args: &str) -> Result<Self> {
-        let mut depth = None;
-        let mut file = None;
-
-        let mut args = args.split_ascii_whitespace();
-        while let Some(arg) = args.next() {
-            match arg {
-                "depth" => {
-                    depth = Some(
-                        args.next()
-                            .ok_or(anyhow!("usage: bench depth <n>"))?
-                            .parse()?,
-                    )
-                }
-                "file" => {
-                    file = Some(String::from(
-                        args.next().ok_or(anyhow!("usage: bench file <path>"))?,
-                    ))
-                }
-                _ => bail!("usage: bench [depth <n>] [file <path>]"),
-            }
-        }
-
-        Ok(Self::Bench { depth, file })
-    }
-
-    /// Attempts to parse the arguments to [`Command::Eval`].
-    fn parse_eval(args: &str) -> Result<Self> {
-        let pretty = if args.is_empty() {
-            false
-        } else if args == "pretty" {
-            true
-        } else {
-            bail!("usage: eval [pretty]")
-        };
-
-        Ok(Self::Eval { pretty })
-    }
-
-    /// Attempts to parse the arguments to [`Command::Perft`].
-    fn parse_perft(args: &str) -> Result<Self> {
-        let Ok(depth) = args.parse() else {
-            bail!("usage: perft <depth>")
-        };
-
-        Ok(Self::Perft { depth })
-    }
-
-    /// Attempts to parse the arguments to [`Command::Quit`].
-    fn parse_quit(args: &str) -> Result<Self> {
-        let cleanup = if args.is_empty() {
-            false
-        } else {
-            let Ok(cleanup) = args.parse() else {
-                bail!("usage: quit [ true | false ]")
-            };
-            cleanup
-        };
-
-        Ok(Self::Quit { cleanup })
-    }
-}
-
-impl FromStr for Command {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Self::new(s)
-    }
-}
-
 /// Loops endlessly to await input via `stdin`, sending all successfully-parsed commands through the supplied `sender`.
-fn input_handler(sender: Sender<Command>) -> Result<()> {
+fn input_handler(sender: Sender<EngineCommand>) -> Result<()> {
     let mut buffer = String::with_capacity(2048); // Seems like a good amount of space to pre-allocate
 
     loop {
@@ -469,7 +388,7 @@ fn input_handler(sender: Sender<Command>) -> Result<()> {
         if 0 == bytes {
             // Send the Quit command and exit this function
             sender
-                .send(Command::Quit { cleanup: false })
+                .send(EngineCommand::Exit { cleanup: false })
                 .context("Failed to send 'quit' command after receiving empty input")?;
 
             bail!("Engine received input of 0 bytes and is quitting");
@@ -483,15 +402,39 @@ fn input_handler(sender: Sender<Command>) -> Result<()> {
             continue;
         }
 
-        // Attempt to parse the user input
-        match buf.parse() {
+        // Attempt to parse the input as a UCI command first, since that's the primary use case of the engine
+        match UciCommand::new(buf) {
+            Ok(cmd) => sender
+                .send(EngineCommand::Uci { cmd })
+                .context("Failed to send UCI command to engine")?,
+
+            // If it's not a UCI command, check if it's an engine-specific command
+            Err(UciParseError::UnrecognizedCommand { cmd: _ }) => {
+                match EngineCommand::try_parse_from(buf.split_ascii_whitespace()) {
+                    Ok(cmd) => sender
+                        .send(cmd)
+                        .context("Failed to send command to engine")?,
+
+                    // If it wasn't a custom command, either, print an error.
+                    Err(err) => eprintln!("{err}"),
+                }
+            }
+
+            // If it was a UCI command, print a usage message.
+            Err(uci_err) => eprintln!("{uci_err}"),
+        }
+
+        /*
+        // This would work if UciCommand was clap-friendly
+        match EngineCommand::try_parse_from(buf.split_ascii_whitespace()) {
             // If successful, send the command to the engine
             Ok(cmd) => sender
                 .send(cmd)
                 .context("Failed to send command {buffer:?} to engine")?,
 
             // If an invalid command was received, just print the error and continue running
-            Err(err) => eprintln!("{err}"),
+            Err(err) => println!("{err}"),
         }
+         */
     }
 }

@@ -16,6 +16,10 @@ mod search;
 /// Misc utility functions, constants, and types.
 mod utils;
 
+/// Commands to be sent to the engine, and how to parse them.
+mod cli;
+
+pub use cli::*;
 pub use engine::*;
 use eval::*;
 use search::*;
