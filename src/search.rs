@@ -181,8 +181,8 @@ impl<'a> Search<'a> {
         //     self.config.hard_timeout.as_millis()
         // );
 
-        let res = self.iterative_deepening();
-        // let res = self.random_move();
+        // let res = self.iterative_deepening();
+        let res = self.random_move();
 
         // Search has ended; send bestmove
         let response = UciResponse::BestMove {
@@ -206,7 +206,7 @@ impl<'a> Search<'a> {
     /// However, with features such as move ordering, a/b pruning, and aspiration windows, ID enhances performance.
     ///
     /// After each iteration, we check if we've exceeded our `soft_timeout` and, if we haven't, we run a search at a greater depth.
-    fn iterative_deepening(&mut self) -> SearchResult {
+    fn _iterative_deepening(&mut self) -> SearchResult {
         // Start at depth 1 because a search at depth 0 makes no sense
         let mut depth = 1;
 
@@ -225,7 +225,7 @@ impl<'a> Search<'a> {
             self.result.score = -Score::INF;
 
             // If the search returned an error, it was cancelled, so exit the iterative deepening loop.
-            if let Err(e) = self.negamax(*self.game, depth, 0) {
+            if let Err(e) = self._negamax(*self.game, depth, 0) {
                 self.send_info(UciInfo::new().string(format!(
                     "Search cancelled during depth {depth} while evaluating {} with score {}: {e}",
                     self.result.bestmove.unwrap_or_default(),
@@ -274,7 +274,7 @@ impl<'a> Search<'a> {
     /// Primary location of search logic.
     ///
     /// Uses the [negamax](https://www.chessprogramming.org/Negamax) algorithm.
-    fn negamax(&mut self, game: Game, depth: usize, ply: i32) -> Result<Score> {
+    fn _negamax(&mut self, game: Game, depth: usize, ply: i32) -> Result<Score> {
         self.result.nodes += 1;
         // If we've reached a terminal node, evaluate the position
         if depth == 0 {
@@ -320,7 +320,7 @@ impl<'a> Search<'a> {
             let new_game = game.with_move_made(mv);
 
             // Recurse
-            let new_score = -self.negamax(new_game, depth - 1, ply + 1)?;
+            let new_score = -self._negamax(new_game, depth - 1, ply + 1)?;
 
             // If the new score is better than the current score, update it.
             score = score.max(new_score);
@@ -332,11 +332,11 @@ impl<'a> Search<'a> {
         Ok(score)
     }
 
-    /*
     /// Chooses a random legal move to play.
     fn random_move(&mut self) -> SearchResult {
         let mut res = self.result;
         let moves = self.game.get_legal_moves();
+        res.nodes += 1;
 
         // If there are any legal moves available, pick a random one.
         if moves.is_empty() {
@@ -399,7 +399,6 @@ impl<'a> Search<'a> {
 
         res
     }
-     */
 }
 
 #[cfg(test)]
