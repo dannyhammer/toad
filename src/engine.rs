@@ -22,7 +22,7 @@ use uci_parser::{UciCommand, UciOption, UciParseError, UciResponse};
 use crate::{EngineCommand, Evaluator, Search, SearchConfig, SearchResult, BENCHMARK_FENS};
 
 /// Default depth at which to run the benchmark searches.
-const BENCH_DEPTH: usize = 4;
+const BENCH_DEPTH: usize = 6;
 
 /// The Toad chess engine.
 #[derive(Debug)]

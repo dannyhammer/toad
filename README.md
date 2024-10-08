@@ -20,6 +20,7 @@ The following UCI commands (and arguments) are supported:
 -   `isready`
 -   `ucinewgame`
 -   `position [fen <fenstring> | startpos] [moves <move_1> ... <move_i>]`
+    -   Extended to include [`position kiwipete`](https://www.chessprogramming.org/Perft_Results#Position_2).
 -   `go wtime <x> btime <x> winc <x> binc <x> depth <x> nodes <x> movetime <x> infinite perft <x>`
 -   `stop`
 -   `quit`
@@ -34,10 +35,9 @@ In addition to the above UCI commands, Toad also supports the following custom c
 -   `exit`: Quits the program as quickly as possible. If the `cleanup` flag is supplied, it will await the completion of any active search threads before exiting.
 -   `fen`: Generate a FEN string of the current board state.
 -   `flip`: Toggles the side-to-move. Equivalent to playing a null move.
+-   `moves`: Show all legal moves on the current position, or for a given square.
 -   `perft`: Execute a perft on the current position at a supplied depth, printing the total nodes.
-    -   `go perft <depth>` will do the same, but will print a split perft instead.
 -   `splitperft`: Execute a splitperft on the current position at a supplied depth, printing the total nodes.
--   `position kiwipete`: Extension on the UCI `position` command that sets the current position to the [Kiwipete FEN](https://www.chessprogramming.org/Perft_Results#Position_2).
 
 ### UCI Options
 
@@ -45,7 +45,7 @@ None, yet!
 
 ## Running
 
-To run Toad on your own platform, head over to the [releases](https://github.com/dannyhammer/toad/releases) page.
+To run Toad on your own platform, head over to the [releases](https://github.com/dannyhammer/toad/releases) page to grab the latest release.
 Alternatively, you can build from source:
 
 1. Ensure you have [Rust](https://www.rust-lang.org/) and [Cargo](https://doc.rust-lang.org/cargo/) installed.
@@ -58,14 +58,18 @@ Alternatively, you can build from source:
     cargo run --release
     ```
 
+**Note**: At this time, development and testing has been done solely on Linux (Ubuntu).
+If you are willing to test the installation and execution of Toad on other operating systems, please provide feedback!
+
 ## Features
 
 Toad uses several state-of-the-art techniques in [chess programming](https://www.chessprogramming.org/Main_Page) to achieve its strength:
 
--   [Bitboard representation](https://www.chessprogramming.org/Bitboards)
--   [Magic Bitboards](https://www.chessprogramming.org/Magic_Bitboards) for sliding piece attacks
+-   [Bitboard representation](https://www.chessprogramming.org/Bitboards).
+-   [Magic Bitboards](https://www.chessprogramming.org/Magic_Bitboards) for sliding piece attacks.
 -   Search:
-    -   Based on the [Negamax](https://www.chessprogramming.org/Negamax) algorithm
+    -   Based on the [Negamax](https://www.chessprogramming.org/Negamax) algorithm.
+    -   [Alpha-Beta Pruning](https://www.chessprogramming.org/Alpha-Beta#Negamax_Framework) in a fail soft framework.
 -   Evaluation:
     -   [Material difference](https://www.chessprogramming.org/Material)
 
@@ -79,3 +83,4 @@ More people have helped me on this journey than I can track, but I'll name a few
 -   The [Chess Programming Wiki](https://www.chessprogramming.org/), and all those who contribute to free, open-source knowledge.
 -   The folks over at the [Engine Programming Discord](https://discord.com/invite/F6W6mMsTGN), for their patience with my silly questions and invaluable help overall.
 -   [Analog-Hors](https://github.com/analog-hors), for an excellent [article on magic bitboards](https://analog-hors.github.io/site/magic-bitboards/)
+-   The authors of [viridithas](https://github.com/cosmobobak/viridithas/) and [Stormphrax](https://github.com/Ciekce/Stormphrax), for allowing their engines to be open source and for answering all my silly questions.
