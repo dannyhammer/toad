@@ -183,6 +183,9 @@ impl<'a> Search<'a> {
 
         // let res = self.iterative_deepening();
         let res = self.random_move();
+        // Mimic a "costly" search
+        let mimic = self.config.soft_timeout.min(Duration::from_millis(8));
+        std::thread::sleep(mimic);
 
         // Search has ended; send bestmove
         let response = UciResponse::BestMove {
