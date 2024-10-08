@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/dannyhammer/toad/compare/v0.3.0...v0.4.0) (2024-10-08)
+
+
+### Features
+
+* added `moves [square]` command to display legal moves (at a given square) ([11dcccb](https://github.com/dannyhammer/toad/commit/11dcccbbb9ee202851b18eb922d361c02b812d77))
+
+
+### Bug Fixes
+
+* fixed bug causing search to give weird results on even/odd depths ([11dcccb](https://github.com/dannyhammer/toad/commit/11dcccbbb9ee202851b18eb922d361c02b812d77))
+
 ## [0.3.0](https://github.com/dannyhammer/toad/compare/v0.2.0...v0.3.0) (2024-10-08)
 
 
