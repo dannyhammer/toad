@@ -16,7 +16,7 @@ mod search;
 /// Misc utility functions, constants, and types.
 mod utils;
 
-/// Types and utilities for rating how good/bad a position.
+/// Types and utilities for rating how good/bad a position is.
 mod score;
 
 /// Commands to be sent to the engine, and how to parse them.

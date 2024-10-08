@@ -4,6 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+use chessie::Square;
 use clap::Parser;
 use uci_parser::UciCommand;
 
@@ -45,6 +46,11 @@ pub enum EngineCommand {
 
     /// Flips the side-to-move. Equivalent to playing a nullmove.
     Flip,
+
+    /// Shows all legal moves in the current position.
+    ///
+    /// If `square` is provided, it will display all available moves from that square.
+    Moves { square: Option<Square> },
 
     /// Performs a perft on the current position at the supplied depth, printing total node count.
     Perft { depth: usize },

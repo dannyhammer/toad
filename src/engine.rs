@@ -105,6 +105,28 @@ impl Engine {
 
                 EngineCommand::Flip => self.game.toggle_side_to_move(),
 
+                EngineCommand::Moves { square } => {
+                    // Get the legal moves
+                    let moves = if let Some(square) = square {
+                        self.game.get_legal_moves_from(square.into())
+                    } else {
+                        self.game.get_legal_moves()
+                    };
+
+                    // If there are none, print "(none)"
+                    let moves_string = if moves.is_empty() {
+                        String::from("(none)")
+                    } else {
+                        // Otherwise, join them by comma-space
+                        moves
+                            .into_iter()
+                            .map(|mv| mv.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    println!("{moves_string}");
+                }
+
                 EngineCommand::Perft { depth } => {
                     print_perft::<false, false>(&self.game, depth);
                 }

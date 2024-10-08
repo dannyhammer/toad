@@ -198,6 +198,12 @@ impl<'a> Search<'a> {
         res
     }
 
+    #[inline(always)]
+    fn send_info(&self, info: UciInfo) {
+        let resp = UciResponse::<String>::Info(Box::new(info));
+        println!("{resp}");
+    }
+
     /// Performs [iterative deepening](https://www.chessprogramming.org/Iterative_Deepening) (ID) on the Search's position.
     ///
     /// ID is a basic time management strategy for engines.
@@ -210,11 +216,6 @@ impl<'a> Search<'a> {
         // Start at depth 1 because a search at depth 0 makes no sense
         let mut depth = 1;
 
-        // Save the result of the search to an external variable.
-        // This allows us to track the search results in each search iteration.
-        // If any search iteration was cancelled, we can't trust `self.result` anymore.
-        let mut res = self.result;
-
         // The actual Iterative Deepening loop
         while self.config.starttime.elapsed() < self.config.soft_timeout
             && self.is_searching.load(Ordering::Relaxed)
@@ -225,34 +226,40 @@ impl<'a> Search<'a> {
             self.result.score = -Score::INF;
 
             // If the search returned an error, it was cancelled, so exit the iterative deepening loop.
-            if let Err(e) = self.negamax(*self.game, depth, 0) {
-                self.send_info(UciInfo::new().string(format!(
-                    "Search cancelled during depth {depth} while evaluating {} with score {}: {e}",
-                    self.result.bestmove.unwrap_or_default(),
-                    self.result.score
-                )));
+            match self.negamax(*self.game, depth, 0) {
+                // A new result was found, so update our best so far
+                Ok((bestmove, score)) => {
+                    self.result.bestmove = bestmove;
+                    self.result.score = score;
+                }
 
-                self.send_info(UciInfo::new().string(format!(
-                    "Falling back to result from depth {}: {} with score {}",
-                    depth - 1,
-                    res.bestmove.unwrap_or_default(),
-                    res.score,
-                )));
+                // The search was cancelled, so exit the ID loop.
+                Err(e) => {
+                    self.send_info(UciInfo::new().string(format!(
+                        "Search cancelled during depth {depth} while evaluating {} with score {}: {e}",
+                        self.result.bestmove.unwrap_or_default(),
+                        self.result.score
+                    )));
 
-                break;
+                    self.send_info(UciInfo::new().string(format!(
+                        "Falling back to result from depth {}: {} with score {}",
+                        depth - 1,
+                        self.result.bestmove.unwrap_or_default(),
+                        self.result.score,
+                    )));
+
+                    break;
+                }
             }
-
-            // If the search at the next depth succeeded, update the result.
-            res = self.result;
 
             // Send search info to the GUI
             let elapsed = self.config.starttime.elapsed();
             self.send_info(
                 UciInfo::new()
                     .depth(depth)
-                    .nodes(res.nodes)
-                    .score(res.score.into_uci())
-                    .nps((res.nodes as f32 / elapsed.as_secs_f32()).trunc())
+                    .nodes(self.result.nodes)
+                    .score(self.result.score.into_uci())
+                    .nps((self.result.nodes as f32 / elapsed.as_secs_f32()).trunc())
                     .time(elapsed.as_millis()),
             );
 
@@ -262,42 +269,38 @@ impl<'a> Search<'a> {
 
         // ID loop has concluded (either by finishing or timing out),
         //  so we return the result from the last successfully-completed search.
-        res
-    }
-
-    #[inline(always)]
-    fn send_info(&self, info: UciInfo) {
-        let resp = UciResponse::<String>::Info(Box::new(info));
-        println!("{resp}");
+        self.result
     }
 
     /// Primary location of search logic.
     ///
     /// Uses the [negamax](https://www.chessprogramming.org/Negamax) algorithm.
-    fn negamax(&mut self, game: Game, depth: usize, ply: i32) -> Result<Score> {
+    fn negamax(&mut self, game: Game, depth: usize, ply: i32) -> Result<(Option<Move>, Score)> {
+        // Regardless of how long we stay here, we've searched this node, so increment the counter.
         self.result.nodes += 1;
+
         // If we've reached a terminal node, evaluate the position
         if depth == 0 {
-            return Ok(Evaluator::new(&game).eval());
+            return Ok((None, Evaluator::new(&game).eval()));
         }
 
-        let moves = game.get_legal_moves();
-
         // If there are no legal moves, it's either mate or a draw.
+        let moves = game.get_legal_moves();
         if moves.is_empty() {
             let score = if game.is_in_check() {
-                // Prefer earlier mates
+                // Offset by ply to prefer earlier mates
                 -Score::MATE + ply
             } else {
                 // Drawing is better than losing
                 Score::DRAW
             };
 
-            return Ok(score);
+            return Ok((None, score));
         }
 
         // Start with a *really bad* initial score
         let mut score = -Score::INF;
+        let mut bestmove = None;
 
         for mv in moves {
             // We need to check several conditions periodically while searching, to make sure we can continue
@@ -320,16 +323,16 @@ impl<'a> Search<'a> {
             let new_game = game.with_move_made(mv);
 
             // Recurse
-            let new_score = -self.negamax(new_game, depth - 1, ply + 1)?;
+            let new_score = -self.negamax(new_game, depth - 1, ply + 1)?.1;
 
             // If the new score is better than the current score, update it.
-            score = score.max(new_score);
+            if new_score > score {
+                score = new_score;
+                bestmove = Some(mv);
+            }
         }
 
-        // We've searched all moves on this position, so we can be sure this score is useful.
-        self.result.score = score;
-
-        Ok(score)
+        Ok((bestmove, score))
     }
 
     /*
@@ -406,7 +409,7 @@ impl<'a> Search<'a> {
 mod tests {
     use super::*;
 
-    fn ensure_is_mate_in(fen: &str, config: SearchConfig, moves: i32) {
+    fn ensure_is_mate_in(fen: &str, config: SearchConfig, moves: i32) -> SearchResult {
         let is_searching = Arc::new(AtomicBool::new(true));
         let game = fen.parse().unwrap();
 
@@ -422,6 +425,7 @@ mod tests {
             moves,
             "Search on {fen:?} with config {config:#?} produced result not mate in {moves}.\nResult: {res:#?}"
         );
+        res
     }
 
     #[test]
@@ -432,7 +436,8 @@ mod tests {
             ..Default::default()
         };
 
-        ensure_is_mate_in(fen, config, 1);
+        let res = ensure_is_mate_in(fen, config, 1);
+        assert_eq!(res.bestmove.unwrap(), "b6a7")
     }
 
     #[test]
@@ -443,7 +448,8 @@ mod tests {
             ..Default::default()
         };
 
-        ensure_is_mate_in(fen, config, -1);
+        let res = ensure_is_mate_in(fen, config, -1);
+        assert_eq!(res.bestmove.unwrap(), "b8a8")
     }
 
     #[test]
@@ -458,7 +464,24 @@ mod tests {
 
         let res = search.start();
         assert!(res.bestmove.is_none());
-        assert!(res.score.is_mate());
-        assert_eq!(res.score.moves_to_mate(), 0);
+        assert_eq!(res.score, Score::DRAW,);
+    }
+
+    #[test]
+    fn test_obvious_capture_promote() {
+        // Pawn should take queen and also promote to queen
+        let fen = "3q1n2/4P3/8/8/8/8/k7/7K w - - 0 1";
+        let config = SearchConfig {
+            max_depth: 1,
+            ..Default::default()
+        };
+
+        let is_searching = Arc::new(AtomicBool::new(true));
+        let game = fen.parse().unwrap();
+
+        let search = Search::new(&game, is_searching, config);
+
+        let res = search.start();
+        assert_eq!(res.bestmove.unwrap(), "e7d8q");
     }
 }
