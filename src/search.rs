@@ -4,8 +4,6 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use anyhow::{bail, Result};
-use chessie::{Game, Move};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -13,6 +11,9 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+use anyhow::{bail, Result};
+use chessie::{Game, Move};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{Evaluator, Score};
@@ -226,7 +227,7 @@ impl<'a> Search<'a> {
             self.result.score = -Score::INF;
 
             // If the search returned an error, it was cancelled, so exit the iterative deepening loop.
-            match self.negamax(*self.game, depth, 0) {
+            match self.negamax(*self.game, depth, 0, -Score::INF, Score::INF) {
                 // A new result was found, so update our best so far
                 Ok((bestmove, score)) => {
                     self.result.bestmove = bestmove;
@@ -274,8 +275,15 @@ impl<'a> Search<'a> {
 
     /// Primary location of search logic.
     ///
-    /// Uses the [negamax](https://www.chessprogramming.org/Negamax) algorithm.
-    fn negamax(&mut self, game: Game, depth: usize, ply: i32) -> Result<(Option<Move>, Score)> {
+    /// Uses the [negamax](https://www.chessprogramming.org/Negamax) algorithm in a [fail soft](https://www.chessprogramming.org/Alpha-Beta#Negamax_Framework) framework.
+    fn negamax(
+        &mut self,
+        game: Game,
+        depth: usize,
+        ply: i32,
+        mut alpha: Score,
+        beta: Score,
+    ) -> Result<(Option<Move>, Score)> {
         // Regardless of how long we stay here, we've searched this node, so increment the counter.
         self.result.nodes += 1;
 
@@ -299,8 +307,8 @@ impl<'a> Search<'a> {
         }
 
         // Start with a *really bad* initial score
-        let mut score = -Score::INF;
-        let mut bestmove = None;
+        let mut best = -Score::INF;
+        let mut bestmove = moves.first().copied(); // Safe because we guaranteed `moves` to be nonempty above
 
         for mv in moves {
             // We need to check several conditions periodically while searching, to make sure we can continue
@@ -323,86 +331,27 @@ impl<'a> Search<'a> {
             let new_game = game.with_move_made(mv);
 
             // Recurse
-            let new_score = -self.negamax(new_game, depth - 1, ply + 1)?.1;
+            let score = -self.negamax(new_game, depth - 1, ply + 1, -beta, -alpha)?.1;
 
-            // If the new score is better than the current score, update it.
-            if new_score > score {
-                score = new_score;
-                bestmove = Some(mv);
+            // If we've found a better move than our current best, update the results
+            if score > best {
+                best = score;
+
+                if score > alpha {
+                    alpha = score;
+                    // PV found
+                    bestmove = Some(mv);
+                }
+
+                // Fail soft beta-cutoff.
+                if score >= beta {
+                    break;
+                }
             }
         }
 
-        Ok((bestmove, score))
+        Ok((bestmove, best))
     }
-
-    /*
-    /// Chooses a random legal move to play.
-    fn random_move(&mut self) -> SearchResult {
-        let mut res = self.result;
-        let moves = self.game.get_legal_moves();
-
-        // If there are any legal moves available, pick a random one.
-        if moves.is_empty() {
-            res.score = if self.game.is_in_check() {
-                // Prefer earlier mates
-                -Score::MATE
-            } else {
-                // Drawing is better than losing
-                Score::DRAW
-            };
-        } else {
-            // use some "random" seeds
-            let seeds = [
-                self.config
-                    .starttime
-                    .elapsed()
-                    .as_nanos()
-                    .wrapping_add_signed(self.config.starttime.elapsed().as_nanos() as i128)
-                    as u64,
-                self.config
-                    .starttime
-                    .elapsed()
-                    .as_nanos()
-                    .wrapping_rem_euclid(self.config.hard_timeout.as_nanos())
-                    as u64,
-                self.config
-                    .starttime
-                    .elapsed()
-                    .as_nanos()
-                    .wrapping_div_euclid(self.config.soft_timeout.as_nanos())
-                    as u64,
-                self.config
-                    .starttime
-                    .elapsed()
-                    .as_nanos()
-                    .wrapping_mul(self.config.starttime.elapsed().as_nanos())
-                    as u64,
-            ];
-
-            // Generate a random index into the move list
-            let i = (chessie::XoShiRo::from_seeds(seeds).get_next())
-                .wrapping_shl(moves.len() as u32)
-                .count_ones() as usize
-                % moves.len();
-
-            let mv = moves[i];
-            let new_game = self.game.with_move_made(mv);
-            // Remember; this is from the opponent's perspective, so we need to negate the score.
-            res.score = -Evaluator::new(&new_game).eval();
-            res.bestmove = Some(mv);
-
-            // Send some `info`
-            self.send_info(
-                UciInfo::new()
-                    .depth(1)
-                    .nodes(res.nodes)
-                    .score(res.score.into_uci()),
-            );
-        }
-
-        res
-    }
-     */
 }
 
 #[cfg(test)]
