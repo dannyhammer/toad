@@ -11,9 +11,9 @@ keywords = ["chess", "chess engine"]
 
 [dependencies]
 anyhow = "1.0.89"
-#chessie = "1.0.0"
+chessie = "1.1.0"
 #chessie = { path = "../chessie/chessie" }
-chessie = { git = "https://github.com/dannyhammer/chessie.git" }
+#chessie = { git = "https://github.com/dannyhammer/chessie.git" }
 clap = { version = "4.5.18", features = ["derive"] }
 #uci-parser = { path = "../uci-parser", features = ["parse-go-perft", "parse-position-kiwipete", "clamp-negatives"] }
 uci-parser = { git = "https://github.com/dannyhammer/uci-parser.git", features = ["parse-go-perft", "parse-position-kiwipete", "clamp-negatives"] }
