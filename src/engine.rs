@@ -19,13 +19,10 @@ use chessie::{print_perft, Game, Move};
 use clap::Parser;
 use uci_parser::{UciCommand, UciOption, UciParseError, UciResponse};
 
-use crate::{EngineCommand, Evaluator, Search, SearchConfig, SearchResult};
+use crate::{EngineCommand, Evaluator, Search, SearchConfig, SearchResult, BENCHMARK_FENS};
 
 /// Default depth at which to run the benchmark searches.
-const BENCH_DEPTH: usize = 4;
-
-/// Default file for benchmarking.
-const DEFAULT_BENCH_FILE: &str = "benches/standard.epd";
+const BENCH_DEPTH: usize = 5;
 
 /// The Toad chess engine.
 #[derive(Debug)]
@@ -98,11 +95,7 @@ impl Engine {
         // Loop on user input
         while let Ok(cmd) = self.receiver.recv() {
             match cmd {
-                EngineCommand::Bench {
-                    depth,
-                    file,
-                    pretty,
-                } => self.bench(depth, file, pretty)?,
+                EngineCommand::Bench { depth, pretty } => self.bench(depth, pretty)?,
 
                 EngineCommand::Display => self.display(),
 
@@ -182,23 +175,20 @@ impl Engine {
     }
 
     /// Execute the `bench` command, running a benchmark of a fixed search on a series of positions and displaying the results.
-    fn bench(&mut self, depth: Option<usize>, file: Option<String>, pretty: bool) -> Result<()> {
+    fn bench(&mut self, depth: Option<usize>, pretty: bool) -> Result<()> {
         // Set up the benchmarking config
         let config = SearchConfig {
             max_depth: depth.unwrap_or(BENCH_DEPTH),
             ..Default::default()
         };
 
-        let file = file.unwrap_or(String::from(DEFAULT_BENCH_FILE));
-        let Ok(benches) = std::fs::read_to_string(&file) else {
-            bail!("Could not read benchmark file {file:?}")
-        };
-        let num_tests = benches.chars().filter(|&c| c == '\n').count();
+        let benches = BENCHMARK_FENS;
+        let num_tests = benches.len();
         let mut possible_nodes = 0;
         let mut nodes = 0;
 
         // Run a fixed search on each position
-        for (i, epd) in benches.lines().enumerate() {
+        for (i, epd) in benches.into_iter().enumerate() {
             // Parse the FEN and the total node count
             let fen_end = epd.find(";").unwrap();
             let (fen, tests) = epd.split_at(fen_end);

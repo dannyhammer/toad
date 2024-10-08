@@ -20,10 +20,6 @@ pub enum EngineCommand {
         /// Override the default benchmark depth.
         #[arg(short, long, required = false)]
         depth: Option<usize>,
-
-        /// Override the default benchmark suite.
-        #[arg(short, long, required = false)]
-        file: Option<String>,
     },
 
     /// Print a visual representation of the current board state.
