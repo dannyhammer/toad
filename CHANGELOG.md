@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/dannyhammer/toad/compare/v0.2.0...v0.3.0) (2024-10-08)
+
+
+### Features
+
+* remodelled command structure to be compatible with OpenBench ([7cf15a6](https://github.com/dannyhammer/toad/commit/7cf15a6ccbd26cd8ab800f94ff33d4249e98caaa))
+
 ## [0.2.0](https://github.com/dannyhammer/toad/compare/v0.1.0...v0.2.0) (2024-10-03)
 
 
