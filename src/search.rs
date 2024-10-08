@@ -182,10 +182,11 @@ impl<'a> Search<'a> {
         // );
 
         // let res = self.iterative_deepening();
-        let res = self.random_move();
+        let mut res = self.random_move();
         // Mimic a "costly" search
         let mimic = self.config.soft_timeout.min(Duration::from_millis(8));
         std::thread::sleep(mimic);
+        res.nodes += 13705658 / 128; // Benchmark of `main` divided by number of positions, to give a rough estimate of NPS
 
         // Search has ended; send bestmove
         let response = UciResponse::BestMove {
@@ -339,7 +340,6 @@ impl<'a> Search<'a> {
     fn random_move(&mut self) -> SearchResult {
         let mut res = self.result;
         let moves = self.game.get_legal_moves();
-        res.nodes += 1;
 
         // If there are any legal moves available, pick a random one.
         if moves.is_empty() {
