@@ -6,12 +6,8 @@ It is built upon [`chessie`](https://crates.io/crates/chessie), my chess crate w
 ## Overview
 
 By default, Toad will print its version and authors and await input via `stdin`.
-For convenience, there are a few command-line flags you can specify to alter Toad's behavior when running.
-To see them all, run Toad with `--help`.
-Here are some useful ones:
-
--   `-c <command>`: Specify a command to be executed upon startup. Multi-word commands must be quoted, and multiple commands can be specified with multiple `-c` flags.
--   `-e`: Exit the program as soon as all commands have finished execution (this includes searches).
+For convenience, you can run any of Toad's commands on startup and Toad will exit immediately after that command's execution.
+Run the engine and execute the `help` command to see a list of available commands.
 
 ### UCI
 
@@ -32,14 +28,15 @@ The following UCI commands (and arguments) are supported:
 
 In addition to the above UCI commands, Toad also supports the following custom commands:
 
--   `bench [depth <n>] [file <path>]`: Execute a benchmark, running a fixed-depth search (`default=5`) on the positions specified by `file` (`default=benches/standard.epd`).
+-   `bench`: Execute a benchmark, running a fixed-depth search (`default=5`) on the positions specified by the `file` argument (`default=benches/standard.epd`).
 -   `display` (alias `d`): Display an ASCII representation of the current board state, including FEN string, Zobrist key, pinned pieces and checkers.
--   `eval [pretty]`: Print an evaluation of the current board state. If `pretty` is supplied, it will display more information about how the evaluation was computed.
+-   `eval`: Print an evaluation of the current board state. Additional flag(s) available to display more information about how the evaluation was computed.
+-   `exit`: Quits the program as quickly as possible. If the `cleanup` flag is supplied, it will await the completion of any active search threads before exiting.
 -   `fen`: Generate a FEN string of the current board state.
 -   `flip`: Toggles the side-to-move. Equivalent to playing a null move.
--   `perft <depth>`: Execute a perft on the current position at the supplied depth, printing the total nodes.
+-   `perft`: Execute a perft on the current position at a supplied depth, printing the total nodes.
     -   `go perft <depth>` will do the same, but will print a split perft instead.
--   `quit [true | false]`(alias `exit`): Quits the program as quickly as possible. If `true` is supplied, it will await the completion of any active search threads before exiting.
+-   `splitperft`: Execute a splitperft on the current position at a supplied depth, printing the total nodes.
 -   `position kiwipete`: Extension on the UCI `position` command that sets the current position to the [Kiwipete FEN](https://www.chessprogramming.org/Perft_Results#Position_2).
 
 ### UCI Options
