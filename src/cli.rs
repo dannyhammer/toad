@@ -52,6 +52,9 @@ pub enum EngineCommand {
     /// If `square` is provided, it will display all available moves from that square.
     Moves { square: Option<Square> },
 
+    /// Display the current value of the specified option.
+    Option { name: String },
+
     /// Performs a perft on the current position at the supplied depth, printing total node count.
     Perft { depth: usize },
 

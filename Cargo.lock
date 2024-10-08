@@ -65,8 +65,9 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
 name = "chessie"
-version = "1.0.0"
-source = "git+https://github.com/dannyhammer/chessie.git#beb144629d40e86a44acce2bd11fa1074a043cf0"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2bea3c02c1976b97038e706a65eef3a71d06ed07919bd3031ca734ec5f32993"
 dependencies = [
  "anyhow",
  "arrayvec",
@@ -75,8 +76,9 @@ dependencies = [
 
 [[package]]
 name = "chessie_types"
-version = "1.0.0"
-source = "git+https://github.com/dannyhammer/chessie.git#beb144629d40e86a44acce2bd11fa1074a043cf0"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e6731cf823004d7759ab9da16f11da5d21ef7e19d1b8d2ed219cb0d01d4f9ea"
 dependencies = [
  "anyhow",
 ]

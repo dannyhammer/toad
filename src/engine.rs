@@ -127,6 +127,14 @@ impl Engine {
                     println!("{moves_string}");
                 }
 
+                EngineCommand::Option { name } => {
+                    if let Some(value) = self.get_option(&name) {
+                        println!("{name} := {value}");
+                    } else {
+                        println!("{} has no option {name:?}", self.name());
+                    }
+                }
+
                 EngineCommand::Perft { depth } => {
                     print_perft::<false, false>(&self.game, depth);
                 }
@@ -166,7 +174,7 @@ impl Engine {
             // Debug(status) => self.debug.store(status, Ordering::Relaxed),
             IsReady => println!("{}", UciResponse::<&str>::ReadyOk),
 
-            // SetOption { name, value } => {}
+            SetOption { name, value } => self.set_option(&name, value)?,
 
             // Register { name, code } => {}
             UciNewGame => self.new_game(),
@@ -367,16 +375,61 @@ impl Engine {
     ///
     /// Prints engine's ID, version, and authors, and lists all UCI options.
     fn uci(&self) {
-        println!("id name {}", self.name());
-        println!("id author {}\n", self.authors());
+        println!("id name {}\nid author {}\n", self.name(), self.authors());
 
-        let opt_threads = UciOption::spin("Threads", 1, 1, 1);
-        println!("{}", UciResponse::Option(opt_threads));
-        let opt_hash = UciOption::spin("Hash", 1, 1, 1);
-        println!("{}", UciResponse::Option(opt_hash));
+        // Print all UCI options
+        for opt in self.options() {
+            println!("{}", UciResponse::Option(opt));
+        }
 
+        // We're ready to go!
         println!("{}", UciResponse::<&str>::UciOk)
     }
+
+    /// Convenience function to return an iterator over all UCI options this engine supports.
+    fn options(&self) -> impl Iterator<Item = UciOption<&str>> {
+        [
+            UciOption::spin("Threads", 1, 1, 1),
+            UciOption::spin("Hash", 1, 1, 1),
+        ]
+        .into_iter()
+    }
+
+    /// Handles the `setoption` command, setting option `name` to `value`, or toggling it if `value` is None.
+    ///
+    /// Will return an error if `name` isn't a valid option or `value` is not a valid value for that option.
+    fn set_option(&mut self, name: &str, _value: Option<String>) -> Result<()> {
+        match name {
+            "Hash" => bail!("{} currently has no hash tables", self.name()),
+            "Threads" => bail!("{} currently supports only 1 thread", self.name()),
+            _ => bail!("{} has no option named {name:?}", self.name()),
+        }
+
+        // if let Some(value) = value.as_ref() {
+        //     eprintln!("Option {name} has been set to {value}")
+        // } else {
+        //     eprintln!("Option {name} has been set")
+        // }
+
+        // Ok(())
+    }
+
+    /// Returns the current value of the option `name`, if it exists on this engine.
+    fn get_option(&self, name: &str) -> Option<String> {
+        let opt = self.options().find(|opt| opt.name == name)?;
+        let value = match opt.name {
+            "Hash" => String::from("1"),
+            "Threads" => String::from("1"),
+            _ => unreachable!(),
+        };
+
+        Some(value)
+    }
+
+    // fn send_info_string<T: fmt::Display>(&self, info: T) {
+    //     let resp = UciResponse::<T>::Info(Box::new(UciInfo::new().string(info)));
+    //     println!("{resp}");
+    // }
 }
 
 impl Default for Engine {

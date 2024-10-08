@@ -18,6 +18,7 @@ The following UCI commands (and arguments) are supported:
 
 -   `uci`
 -   `isready`
+-   `setoption name <x> [value <y>]`
 -   `ucinewgame`
 -   `position [fen <fenstring> | startpos] [moves <move_1> ... <move_i>]`
     -   Extended to include [`position kiwipete`](https://www.chessprogramming.org/Perft_Results#Position_2).
@@ -36,6 +37,7 @@ In addition to the above UCI commands, Toad also supports the following custom c
 -   `fen`: Generate a FEN string of the current board state.
 -   `flip`: Toggles the side-to-move. Equivalent to playing a null move.
 -   `moves`: Show all legal moves on the current position, or for a given square.
+-   `option`: Display the current value of the specified option.
 -   `perft`: Execute a perft on the current position at a supplied depth, printing the total nodes.
 -   `splitperft`: Execute a splitperft on the current position at a supplied depth, printing the total nodes.
 
