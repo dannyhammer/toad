@@ -13,10 +13,10 @@ use std::{
 };
 
 use anyhow::{bail, Result};
-use chessie::{Game, Move};
+use chessie::{Game, Move, PieceKind};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
-use crate::{Evaluator, Score};
+use crate::{value_of, Evaluator, Score};
 
 /// Maximum depth that can be searched
 pub const MAX_DEPTH: usize = 255;
@@ -287,13 +287,14 @@ impl<'a> Search<'a> {
         // Regardless of how long we stay here, we've searched this node, so increment the counter.
         self.result.nodes += 1;
 
-        // If we've reached a terminal node, evaluate the position
+        // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
+            // return self.quiescence_search(game, ply, alpha, beta);
             return Ok((None, Evaluator::new(&game).eval()));
         }
 
         // If there are no legal moves, it's either mate or a draw.
-        let moves = game.get_legal_moves();
+        let mut moves = game.get_legal_moves();
         if moves.is_empty() {
             let score = if game.is_in_check() {
                 // Offset by ply to prefer earlier mates
@@ -306,26 +307,16 @@ impl<'a> Search<'a> {
             return Ok((None, score));
         }
 
+        // Sort moves so that we look at "promising" ones first
+        moves.sort_by_cached_key(|mv| score_move(&game, mv));
+
         // Start with a *really bad* initial score
         let mut best = -Score::INF;
         let mut bestmove = moves.first().copied(); // Safe because we guaranteed `moves` to be nonempty above
 
         for mv in moves {
-            // We need to check several conditions periodically while searching, to make sure we can continue
-            // Condition 1: We've exceeded the hard limit of our allotted search time
-            if self.config.starttime.elapsed() >= self.config.hard_timeout {
-                let ms = self.config.hard_timeout.as_millis();
-                bail!("exceeded hard timeout of {ms}ms",);
-            } else
-            // Condition 2: The search was stopped by an external factor, like the `stop` command
-            if !self.is_searching.load(Ordering::Relaxed) {
-                bail!("cancelled by external command");
-            } else
-            // Condition 3: We've exceeded the maximum amount of nodes we're allowed to search
-            if self.result.nodes >= self.config.max_nodes {
-                let nodes = self.config.max_nodes;
-                bail!("exceeded node allowance of {nodes} nodes");
-            }
+            // Check if we can continue searching
+            self.check_conditions()?;
 
             // Copy-make the new position
             let new_game = game.with_move_made(mv);
@@ -351,6 +342,203 @@ impl<'a> Search<'a> {
         }
 
         Ok((bestmove, best))
+    }
+
+    /*
+    /// Quiescence Search (QSearch)
+    ///
+    /// A search that looks at only possible captures and capture-chains.
+    /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
+    fn quiescence_search(
+        &mut self,
+        game: Game,
+        ply: i32,
+        mut alpha: Score,
+        beta: Score,
+    ) -> Result<(Option<Move>, Score)> {
+        self.result.nodes += 1;
+
+        // Evaluate the current position, to serve as our baseline
+        let stand_pat = Evaluator::new(&game).eval();
+
+        // Beta cutoff; this position is "too good" and our opponent would never let us get here
+        if stand_pat >= beta {
+            return Ok((None, beta));
+        } else if stand_pat > alpha {
+            alpha = stand_pat;
+        }
+
+        // Generate only the legal captures
+        // TODO: Is there a more concise way of doing this?
+        // The `game.into_iter().only_captures()` doesn't cover en passant...
+        let mut captures = game
+            .get_legal_moves()
+            .into_iter()
+            .filter(|mv| mv.is_capture())
+            .collect::<chessie::MoveList>();
+
+        // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
+        // So, if there are no captures available, just return the current evaluation.
+        if captures.is_empty() {
+            return Ok((None, stand_pat));
+        }
+
+        captures.sort_by_cached_key(|mv| score_move(&game, mv));
+
+        let mut best = stand_pat;
+        let mut bestmove = captures.first().copied(); // Safe because we guaranteed `moves` to be nonempty above
+
+        for mv in captures {
+            // Check if we can continue searching
+            self.check_conditions()?;
+
+            // Copy-make the new position
+            let new_game = game.with_move_made(mv);
+
+            // Recursively search our opponent's responses
+            let score = -self.quiescence_search(new_game, ply + 1, -beta, -alpha)?.1;
+
+            // If we've found a better move than our current best, update our result
+            if score > best {
+                best = score;
+
+                if score > alpha {
+                    alpha = score;
+
+                    // PV found
+                    bestmove = Some(mv);
+                }
+
+                // Fail soft beta-cutoff.
+                if score >= beta {
+                    break;
+                }
+            }
+        }
+
+        Ok((bestmove, best)) // fail-soft
+    }
+     */
+
+    /// Checks if we've exceeded any conditions that would warrant the search to end.
+    ///
+    /// Returns an `Err` if the search needs to end, otherwise `Ok`.
+    #[inline(always)]
+    fn check_conditions(&self) -> Result<()> {
+        // We need to check several conditions periodically while searching, to make sure we can continue
+        // Condition 1: We've exceeded the hard limit of our allotted search time
+        if self.config.starttime.elapsed() >= self.config.hard_timeout {
+            let ms = self.config.hard_timeout.as_millis();
+            bail!("exceeded hard timeout of {ms}ms",);
+        } else
+        // Condition 2: The search was stopped by an external factor, like the `stop` command
+        if !self.is_searching.load(Ordering::Relaxed) {
+            bail!("cancelled by external command");
+        } else
+        // Condition 3: We've exceeded the maximum amount of nodes we're allowed to search
+        if self.result.nodes >= self.config.max_nodes {
+            let nodes = self.config.max_nodes;
+            bail!("exceeded node allowance of {nodes} nodes");
+        } else {
+            // We've not exceeded anything, so we can continue searching
+            Ok(())
+        }
+    }
+}
+
+#[inline(always)]
+fn score_move(game: &Game, mv: &Move) -> Score {
+    // Safe unwrap because we can't move unless there's a piece at `from`
+    let kind = game.kind_at(mv.from()).unwrap();
+    let mut score = Score(0);
+
+    // Capturing a high-value piece with a low-value piece is a good idea
+    if let Some(victim) = game.kind_at(mv.to()) {
+        score += MVV_LVA[kind][victim];
+    }
+
+    -score // We're sorting, so a lower number is better
+}
+
+/// This table represents values for [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) move ordering.
+///
+/// It is indexed by `[attacker][victim]`, and yields a "score" that is used when sorting moves.
+///
+/// The following table is produced:
+/// ```text
+///
+///                     VICTIM
+/// A       P     N     B     R     Q     K     
+/// T    +---------------------------------+
+/// T   P| 900   3100  3200  4900  8900  0     
+/// A   N| 680   2880  2980  4680  8680  0     
+/// C   B| 670   2870  2970  4670  8670  0     
+/// K   R| 500   2700  2800  4500  8500  0     
+/// E   Q| 100   2300  2400  4100  8100  0     
+/// R   K| 50    160   165   250   450   0     
+/// ```
+const MVV_LVA: [[i32; PieceKind::COUNT]; PieceKind::COUNT] = {
+    let mut matrix = [[0; PieceKind::COUNT]; PieceKind::COUNT];
+    let count = PieceKind::COUNT;
+
+    let mut attacker = 0;
+    while attacker < count {
+        let mut victim = 0;
+
+        // The -1 here is to remove scores for capturing the King
+        while victim < count - 1 {
+            let atk = PieceKind::from_bits_unchecked(attacker as u8);
+            let vtm = PieceKind::from_bits_unchecked(victim as u8);
+
+            // Rustic's way of doing things; Arbitrary increasing numbers for capturing pairs
+            // bench: 27609398 nodes 5716479 nps
+            // let score = (victim * 10 + (count - attacker)) as i32;
+
+            // Default MVV-LVA; Assigns negative values for King attacks
+            // bench: 30937536 nodes 5867022 nps
+            // let score = 10 * value_of(vtm) - value_of(atk);
+
+            // If the attacker is the King, the score is half the victim's value.
+            // This encourages the King to attack, but not as strongly as other pieces.
+            // bench: 27107011 nodes 5647285 nps
+            let score = if attacker == count - 1 {
+                value_of(vtm) / 2
+            } else {
+                // Standard MVV-LVA computation
+                10 * value_of(vtm) - value_of(atk)
+            };
+
+            matrix[attacker][victim] = score;
+            victim += 1;
+        }
+        attacker += 1;
+    }
+    matrix
+};
+
+/// Utility function to print the MVV-LVA table
+#[allow(dead_code)]
+fn print_mvv_lva_table() {
+    print!("\nX   ");
+    for victim in PieceKind::iter() {
+        let v = victim.char().to_ascii_uppercase();
+
+        print!("{v:<6}");
+    }
+    print!("\n +");
+    for _ in PieceKind::iter() {
+        print!("------");
+    }
+    println!("-+");
+    for attacker in PieceKind::iter() {
+        let a = attacker.char().to_ascii_uppercase();
+
+        print!("{a}| ");
+        for victim in PieceKind::iter() {
+            let score = MVV_LVA[attacker][victim];
+            print!("{score:<4}  ")
+        }
+        println!();
     }
 }
 

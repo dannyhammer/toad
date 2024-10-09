@@ -22,7 +22,7 @@ use uci_parser::{UciCommand, UciOption, UciParseError, UciResponse};
 use crate::{EngineCommand, Evaluator, Search, SearchConfig, SearchResult, BENCHMARK_FENS};
 
 /// Default depth at which to run the benchmark searches.
-const BENCH_DEPTH: usize = 6;
+const BENCH_DEPTH: usize = 7;
 
 /// The Toad chess engine.
 #[derive(Debug)]
@@ -214,31 +214,14 @@ impl Engine {
 
         let benches = BENCHMARK_FENS;
         let num_tests = benches.len();
-        let mut possible_nodes = 0;
         let mut nodes = 0;
 
         // Run a fixed search on each position
         for (i, epd) in benches.into_iter().enumerate() {
             // Parse the FEN and the total node count
-            let fen_end = epd.find(";").unwrap();
-            let (fen, tests) = epd.split_at(fen_end);
-            let tests = tests
-                .split(";")
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>();
 
-            // Count up the total number of nodes reachable from this position
-            for i in 1..=config.max_depth {
-                // Parse the node count, which is located after the depth value
-                // TODO: This will fail if depth > 6 (the highest depth in the default file, standard.epd)
-                let new_nodes = tests[0..i].iter().fold(0, |acc, n| {
-                    acc + n.get(2..).unwrap().trim().parse::<u64>().unwrap()
-                });
-
-                possible_nodes += new_nodes + 1; // Add 1 per depth because we search the root node, too!
-            }
-
-            println!("Benchmark position {}/{}: {fen:?}", i + 1, num_tests + 1);
+            let fen = epd.split(';').next().unwrap();
+            println!("Benchmark position {}/{}: {fen}", i + 1, num_tests);
 
             // Set up the game and start the search
             self.game = Game::from_fen(fen)?;
@@ -252,18 +235,18 @@ impl Engine {
         // Compute results
         let elapsed = config.starttime.elapsed();
         let nps = (nodes as f32 / elapsed.as_secs_f32()) as u64;
+        let m_nps = nodes as f32 / elapsed.as_secs_f32() / 1_000_000.0;
         let ms = elapsed.as_millis();
-        let prune = ((possible_nodes - nodes) as f32 / possible_nodes as f32) * 100.0;
 
         if pretty {
             // Display the results in a nice table
             println!();
-            println!("+----- Benchmark Complete -----+");
-            println!("| time (ms)      : {ms:<12}|");
-            println!("| nodes          : {nodes:<12}|");
-            println!("| nps            : {nps:<12}|");
-            println!("| prune rate (%) : {prune:<12.2}|");
-            println!("+------------------------------+");
+            println!("+--- Benchmark Complete ---+");
+            println!("| time (ms)  : {ms:<12}|");
+            println!("| nodes      : {nodes:<12}|");
+            println!("| nps        : {nps:<12}|");
+            println!("| Mnps       : {m_nps:<12.2}|");
+            println!("+--------------------------+");
         } else {
             println!("{nodes} nodes {nps} nps");
         }
