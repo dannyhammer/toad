@@ -496,17 +496,17 @@ const MVV_LVA: [[i32; PieceKind::COUNT]; PieceKind::COUNT] = {
 
             // Default MVV-LVA; Assigns negative values for King attacks
             // bench: 30937536 nodes 5867022 nps
-            // let score = 10 * value_of(vtm) - value_of(atk);
+            let score = 10 * value_of(vtm) - value_of(atk);
 
             // If the attacker is the King, the score is half the victim's value.
             // This encourages the King to attack, but not as strongly as other pieces.
             // bench: 27107011 nodes 5647285 nps
-            let score = if attacker == count - 1 {
-                value_of(vtm) / 2
-            } else {
-                // Standard MVV-LVA computation
-                10 * value_of(vtm) - value_of(atk)
-            };
+            // let score = if attacker == count - 1 {
+            //     value_of(vtm) / 2
+            // } else {
+            //     // Standard MVV-LVA computation
+            //     10 * value_of(vtm) - value_of(atk)
+            // };
 
             matrix[attacker][victim] = score;
             victim += 1;
