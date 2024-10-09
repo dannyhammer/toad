@@ -72,7 +72,7 @@ pub const fn value_of(kind: PieceKind) -> i32 {
         PieceKind::Bishop => 330,
         PieceKind::Rook => 500,
         PieceKind::Queen => 900,
-        PieceKind::King => 20_000,
+        PieceKind::King => 10,
     }
 }
 
