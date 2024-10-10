@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.0](https://github.com/dannyhammer/toad/compare/v0.4.0...v0.5.0) (2024-10-10)
+
+
+### Features
+
+* added `option` command ([3e39d6d](https://github.com/dannyhammer/toad/commit/3e39d6d9227d9a50fc3f58b93294446c2b2a7ac6))
+* added MVV-LVA move ordering ([1ce7206](https://github.com/dannyhammer/toad/commit/1ce7206bdefec0a6c6fd14c9e4a9b9ca1facbb4f))
+* adjusted King's value to be 10, so that MVV-LVA orders captures with King before captures with Pawn ([253d7f4](https://github.com/dannyhammer/toad/commit/253d7f4caf81cd78cfa1e374bb10135f045fb131))
+* integrated alpha-beta pruning to search ([3791a29](https://github.com/dannyhammer/toad/commit/3791a29c0235586b76b640c2f1a8c46d43d9f57e))
+
 ## [0.4.0](https://github.com/dannyhammer/toad/compare/v0.3.0...v0.4.0) (2024-10-08)
 
 
