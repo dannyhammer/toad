@@ -475,7 +475,7 @@ fn score_move(game: &Game, mv: &Move) -> Score {
 /// C   B| 670   2870  2970  4670  8670  0     
 /// K   R| 500   2700  2800  4500  8500  0     
 /// E   Q| 100   2300  2400  4100  8100  0     
-/// R   K| 990   3190  3290  4990  8990  0     
+/// R   K| 1000  3200  3300  5000  9000  0     
 /// ```
 const MVV_LVA: [[i32; PieceKind::COUNT]; PieceKind::COUNT] = {
     let mut matrix = [[0; PieceKind::COUNT]; PieceKind::COUNT];
@@ -494,9 +494,9 @@ const MVV_LVA: [[i32; PieceKind::COUNT]; PieceKind::COUNT] = {
             // bench: 27609398 nodes 5716479 nps
             // let score = (victim * 10 + (count - attacker)) as i32;
 
-            // Default MVV-LVA; With value_of(King) := 10, this orders Kx<piece> before Px<piece>
-            // bench: 27032804 nodes 5443765 nps
-            let score = 10 * value_of(vtm) - value_of(atk);
+            // Default MVV-LVA; Assigns negative values for King attacks
+            // bench: 30937536 nodes 5867022 nps
+            // let score = 10 * value_of(vtm) - value_of(atk);
 
             // If the attacker is the King, the score is half the victim's value.
             // This encourages the King to attack, but not as strongly as other pieces.
@@ -508,6 +508,15 @@ const MVV_LVA: [[i32; PieceKind::COUNT]; PieceKind::COUNT] = {
             //     10 * value_of(vtm) - value_of(atk)
             // };
 
+            // Default MVV-LVA except that the King is assigned a value of 0 if he is attacking
+            // bench: 27032804 nodes 8136592 nps
+            let score = if attacker == count - 1 {
+                10 * value_of(vtm)
+            } else {
+                // Standard MVV-LVA computation
+                10 * value_of(vtm) - value_of(atk)
+            };
+
             matrix[attacker][victim] = score;
             victim += 1;
         }
@@ -518,7 +527,7 @@ const MVV_LVA: [[i32; PieceKind::COUNT]; PieceKind::COUNT] = {
 
 /// Utility function to print the MVV-LVA table
 #[allow(dead_code)]
-fn print_mvv_lva_table() {
+pub fn print_mvv_lva_table() {
     print!("\nX   ");
     for victim in PieceKind::iter() {
         let v = victim.char().to_ascii_uppercase();
