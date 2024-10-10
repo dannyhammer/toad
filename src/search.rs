@@ -289,8 +289,7 @@ impl<'a> Search<'a> {
 
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
-            // return self.quiescence_search(game, ply, alpha, beta);
-            return Ok((None, Evaluator::new(&game).eval()));
+            return self.quiescence_search(game, ply, alpha, beta);
         }
 
         // If there are no legal moves, it's either mate or a draw.
@@ -344,7 +343,6 @@ impl<'a> Search<'a> {
         Ok((bestmove, best))
     }
 
-    /*
     /// Quiescence Search (QSearch)
     ///
     /// A search that looks at only possible captures and capture-chains.
@@ -386,7 +384,7 @@ impl<'a> Search<'a> {
         captures.sort_by_cached_key(|mv| score_move(&game, mv));
 
         let mut best = stand_pat;
-        let mut bestmove = captures.first().copied(); // Safe because we guaranteed `moves` to be nonempty above
+        let mut bestmove = captures.first().copied();
 
         for mv in captures {
             // Check if we can continue searching
@@ -418,7 +416,6 @@ impl<'a> Search<'a> {
 
         Ok((bestmove, best)) // fail-soft
     }
-     */
 
     /// Checks if we've exceeded any conditions that would warrant the search to end.
     ///
