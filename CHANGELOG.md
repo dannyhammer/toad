@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/dannyhammer/toad/compare/v0.5.0...v0.6.0) (2024-10-10)
+
+
+### Features
+
+* added quiescence search ([041a95d](https://github.com/dannyhammer/toad/commit/041a95d4d9a24513e23f53cdd8abe22f8048eae8))
+
 ## [0.5.0](https://github.com/dannyhammer/toad/compare/v0.4.0...v0.5.0) (2024-10-10)
 
 
