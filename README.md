@@ -72,6 +72,8 @@ Toad uses several state-of-the-art techniques in [chess programming](https://www
 -   Search:
     -   Based on the [Negamax](https://www.chessprogramming.org/Negamax) algorithm.
     -   [Alpha-Beta Pruning](https://www.chessprogramming.org/Alpha-Beta#Negamax_Framework) in a fail soft framework.
+    -   Move Ordering:
+        -   [MVV-LVA](https://www.chessprogramming.org/MVV-LVA)
 -   Evaluation:
     -   [Material difference](https://www.chessprogramming.org/Material)
 
