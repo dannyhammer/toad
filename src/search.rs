@@ -288,6 +288,7 @@ impl Search {
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
             return self.quiescence_search(game, ply, alpha, beta);
+            // return Ok((None, Evaluator::new(game).eval()));
         }
 
         // If there are no legal moves, it's either mate or a draw.
@@ -312,26 +313,38 @@ impl Search {
         let mut bestmove = moves.first().copied(); // Safe because we guaranteed `moves` to be nonempty above
 
         for mv in moves {
+            // if !["b1a3", "b8a6", "a3b1", "a6b8"].contains(&mv.to_uci().as_str()) {
+            //     continue;
+            // } else {
+            //     println!("Making {mv} on {}", game.to_fen());
+            // }
+
             // Check if we can continue searching
             self.check_conditions()?;
 
             // Copy-make the new position
             let new_game = game.with_move_made(mv);
-            self.history.push(*new_game.position());
 
             // Determine the score of making this move
             let score = if self.is_repetition(&new_game)
             /*|| new_game.can_draw_by_fifty()*/
             {
+                // eprintln!("{mv} on {} is repetition", game.to_fen());
                 Score::DRAW
             } else {
-                -self
-                    .negamax(&new_game, depth - 1, ply + 1, -beta, -alpha)?
-                    .1
-            };
+                // Append the move onto the history
+                self.history.push(*new_game.position());
 
-            // Remove the move from the history stack
-            self.history.pop();
+                // Recurse
+                let score = -self
+                    .negamax(&new_game, depth - 1, ply + 1, -beta, -alpha)?
+                    .1;
+
+                // Pop the move from the history
+                self.history.pop();
+
+                score
+            };
 
             // If we've found a better move than our current best, update the results
             if score > best {
@@ -402,15 +415,28 @@ impl Search {
 
             // Copy-make the new position
             let new_game = game.with_move_made(mv);
-            self.history.push(*new_game.position());
 
-            // Determine the score of making this move
-            let score = -self
-                .quiescence_search(&new_game, _ply + 1, -beta, -alpha)?
-                .1;
+            // Normally, repetitions can't occur in QSearch, because captures are irreversible.
+            // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
+            let score = if self.is_repetition(&new_game)
+            /*|| new_game.can_draw_by_fifty()*/
+            {
+                // eprintln!("{mv} on {} is repetition", game.to_fen());
+                Score::DRAW
+            } else {
+                // Append the move onto the history
+                self.history.push(*new_game.position());
 
-            // Remove the move from the history
-            self.history.pop();
+                // Recurse
+                let score = -self
+                    .quiescence_search(&new_game, _ply + 1, -beta, -alpha)?
+                    .1;
+
+                // Pop the move from the history
+                self.history.pop();
+
+                score
+            };
 
             // If we've found a better move than our current best, update our result
             if score > best {
@@ -461,7 +487,11 @@ impl Search {
     /// Checks if `game` is a repetition, comparing it to previous positions
     #[inline(always)]
     fn is_repetition(&self, game: &Game) -> bool {
+        // We can skip the previous position, because there's no way it can be a repetition
         for prev in self.history.iter().rev().skip(1) {
+            // eprintln!();
+            // eprintln!("PREV: {}", prev.to_fen());
+            // eprintln!("GAME: {}", game.to_fen());
             if prev.key() == game.key() {
                 return true;
             } else
