@@ -57,13 +57,9 @@ impl Engine {
         // Construct a channel for communication and threadpool for parallel tasks
         let (sender, receiver) = channel();
 
-        let game = Game::default();
-        let mut history = Vec::with_capacity(512);
-        history.push(*game.position());
-
         Self {
-            game,
-            history,
+            game: Game::default(),
+            history: Vec::with_capacity(512),
             sender,
             receiver,
             is_searching: Arc::default(),
@@ -193,7 +189,8 @@ impl Engine {
 
             SetOption { name, value } => self.set_option(&name, value)?,
 
-            // Register { name, code } => {}
+            Register { name: _, code: _ } => println!("Registration not necessary :)"),
+
             UciNewGame => self.new_game(),
 
             Position { fen, moves } => self.position(fen, moves)?,
@@ -241,7 +238,7 @@ impl Engine {
             println!("Benchmark position {}/{}: {fen}", i + 1, num_tests);
 
             // Set up the game and start the search
-            self.game = Game::from_fen(fen)?;
+            self.position(Some(fen), [])?;
             self.search_thread = self.start_search(config);
 
             // Await the search, appending the node count once concluded.
@@ -303,6 +300,9 @@ impl Engine {
             self.game = Game::default();
         }
 
+        // Since this is a new position, it has a new history
+        self.history.clear();
+
         // Apply the provided moves
         for mv_str in moves {
             let mv = Move::from_uci(&self.game, mv_str.as_ref())?;
@@ -314,8 +314,8 @@ impl Engine {
 
     // Makes the supplied move on the current position.
     fn make_move(&mut self, mv: Move) {
-        self.game.make_move(mv);
         self.history.push(*self.game.position());
+        self.game.make_move(mv);
     }
 
     /// Resets the engine's internal game state.
@@ -325,6 +325,7 @@ impl Engine {
     fn new_game(&mut self) {
         self.set_is_searching(false);
         self.game = Game::default();
+        self.history.clear();
     }
 
     /// Sets the search flag to signal that the engine is starting/stopping a search.
@@ -349,15 +350,15 @@ impl Engine {
         // Clone the parameters that will be sent into the thread
         let game = self.game;
         let is_searching = Arc::clone(&self.is_searching);
-        // let mut history = self.history.clone();
+        let mut history = self.history.clone();
         // Cloning a vec doesn't clone its capacity
-        // history.reserve(self.history.capacity());
+        history.reserve(self.history.capacity());
+        history.push(*game.position());
 
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
             // Launch the search, performing iterative deepening, negamax, a/b pruning, etc.
-            // Search::new(is_searching.clone(), config, history).start(&game)
-            Search::new(is_searching.clone(), config).start(&game)
+            Search::new(is_searching.clone(), config, history).start(&game)
         });
 
         Some(handle)
