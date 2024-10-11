@@ -13,7 +13,7 @@ use std::{
 };
 
 use anyhow::{bail, Result};
-use chessie::{Game, Move, PieceKind};
+use chessie::{Game, Move, PieceKind, Position};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{value_of, Evaluator, Score};
@@ -140,16 +140,24 @@ pub struct Search {
 
     /// Configuration variables for this instance of the search.
     config: SearchConfig,
+
+    /// Previous positions encountered during search.
+    history: Vec<Position>,
 }
 
 impl Search {
     /// Construct a new [`Search`] instance to execute.
     #[inline(always)]
-    pub fn new(is_searching: Arc<AtomicBool>, config: SearchConfig) -> Self {
+    pub fn new(
+        is_searching: Arc<AtomicBool>,
+        config: SearchConfig,
+        history: Vec<Position>,
+    ) -> Self {
         Self {
             nodes: 0,
             is_searching,
             config,
+            history,
         }
     }
 
@@ -157,6 +165,7 @@ impl Search {
     ///
     /// This is the entrypoint of the search, and prints UCI info before calling [`Self::iterative_deepening`],
     /// and concluding by sending the `bestmove` message and exiting.
+    #[inline(always)]
     pub fn start(mut self, game: &Game) -> SearchResult {
         self.send_info(UciInfo::new().string(format!("Starting search on {:?}", game.to_fen(),)));
         // println!(
@@ -308,15 +317,21 @@ impl Search {
 
             // Copy-make the new position
             let new_game = game.with_move_made(mv);
+            self.history.push(*new_game.position());
 
             // Determine the score of making this move
-            let score = if new_game.can_draw_by_fifty() {
+            let score = if self.is_repetition(&new_game)
+            /*|| new_game.can_draw_by_fifty()*/
+            {
                 Score::DRAW
             } else {
                 -self
                     .negamax(&new_game, depth - 1, ply + 1, -beta, -alpha)?
                     .1
             };
+
+            // Remove the move from the history stack
+            self.history.pop();
 
             // If we've found a better move than our current best, update the results
             if score > best {
@@ -387,15 +402,15 @@ impl Search {
 
             // Copy-make the new position
             let new_game = game.with_move_made(mv);
+            self.history.push(*new_game.position());
 
             // Determine the score of making this move
-            let score = if new_game.can_draw_by_fifty() {
-                Score::DRAW
-            } else {
-                -self
-                    .quiescence_search(&new_game, _ply + 1, -beta, -alpha)?
-                    .1
-            };
+            let score = -self
+                .quiescence_search(&new_game, _ply + 1, -beta, -alpha)?
+                .1;
+
+            // Remove the move from the history
+            self.history.pop();
 
             // If we've found a better move than our current best, update our result
             if score > best {
@@ -441,6 +456,22 @@ impl Search {
             // We've not exceeded anything, so we can continue searching
             Ok(())
         }
+    }
+
+    /// Checks if `game` is a repetition, comparing it to previous positions
+    #[inline(always)]
+    fn is_repetition(&self, game: &Game) -> bool {
+        for prev in self.history.iter().rev().skip(1) {
+            if prev.key() == game.key() {
+                return true;
+            } else
+            // The halfmove counter only resets on irreversible moves (captures, pawns, etc.) so it can't be a repetition.
+            if prev.halfmove() == 0 {
+                return false;
+            }
+        }
+
+        false
     }
 }
 
@@ -558,7 +589,7 @@ mod tests {
         let is_searching = Arc::new(AtomicBool::new(true));
         let game = fen.parse().unwrap();
 
-        let search = Search::new(is_searching, config);
+        let search = Search::new(is_searching, config, Vec::default());
 
         search.start(&game)
     }
