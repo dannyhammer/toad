@@ -330,7 +330,7 @@ impl Engine {
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
             // Launch the search, performing iterative deepening, negamax, a/b pruning, etc.
-            Search::new(&game, is_searching.clone(), config).start()
+            Search::new(is_searching.clone(), config).start(&game)
         });
 
         Some(handle)
