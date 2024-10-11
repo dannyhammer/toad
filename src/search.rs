@@ -313,12 +313,6 @@ impl Search {
         let mut bestmove = moves.first().copied(); // Safe because we guaranteed `moves` to be nonempty above
 
         for mv in moves {
-            // if !["b1a3", "b8a6", "a3b1", "a6b8"].contains(&mv.to_uci().as_str()) {
-            //     continue;
-            // } else {
-            //     println!("Making {mv} on {}", game.to_fen());
-            // }
-
             // Check if we can continue searching
             self.check_conditions()?;
 
@@ -326,8 +320,10 @@ impl Search {
             let new_game = game.with_move_made(mv);
 
             // Determine the score of making this move
-            let score = if self.is_repetition(&new_game) || new_game.can_draw_by_fifty() {
-                // eprintln!("{mv} on {} is repetition", game.to_fen());
+            let score = if self.is_repetition(&new_game)
+                || new_game.can_draw_by_fifty()
+                || new_game.can_draw_by_insufficient_material()
+            {
                 Score::DRAW
             } else {
                 // Append the move onto the history
@@ -416,12 +412,14 @@ impl Search {
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
-            let score = if new_game.can_draw_by_fifty() {
-                // eprintln!("{mv} on {} is repetition", game.to_fen());
+            let score = if self.is_repetition(&new_game)
+                || new_game.can_draw_by_fifty()
+                || new_game.can_draw_by_insufficient_material()
+            {
                 Score::DRAW
             } else {
                 // Append the move onto the history
-                // self.history.push(*new_game.position());
+                self.history.push(*new_game.position());
 
                 // Recurse
                 let score = -self
@@ -429,7 +427,7 @@ impl Search {
                     .1;
 
                 // Pop the move from the history
-                // self.history.pop();
+                self.history.pop();
 
                 score
             };
