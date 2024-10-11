@@ -310,7 +310,7 @@ impl Search {
             let new_game = game.with_move_made(mv);
 
             // Determine the score of making this move
-            let score = if game.can_draw_by_fifty() {
+            let score = if new_game.can_draw_by_fifty() {
                 Score::DRAW
             } else {
                 -self
@@ -389,7 +389,7 @@ impl Search {
             let new_game = game.with_move_made(mv);
 
             // Determine the score of making this move
-            let score = if game.can_draw_by_fifty() {
+            let score = if new_game.can_draw_by_fifty() {
                 Score::DRAW
             } else {
                 -self
