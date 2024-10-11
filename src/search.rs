@@ -140,9 +140,10 @@ pub struct Search {
 
     /// Configuration variables for this instance of the search.
     config: SearchConfig,
-
+    /*
     /// Previous positions encountered during search.
     history: Vec<Position>,
+     */
 }
 
 impl Search {
@@ -151,13 +152,13 @@ impl Search {
     pub fn new(
         is_searching: Arc<AtomicBool>,
         config: SearchConfig,
-        history: Vec<Position>,
+        // history: Vec<Position>,
     ) -> Self {
         Self {
             nodes: 0,
             is_searching,
             config,
-            history,
+            // history,
         }
     }
 
@@ -326,14 +327,12 @@ impl Search {
             let new_game = game.with_move_made(mv);
 
             // Determine the score of making this move
-            let score = if self.is_repetition(&new_game)
-            /*|| new_game.can_draw_by_fifty()*/
-            {
+            let score = if new_game.can_draw_by_fifty() {
                 // eprintln!("{mv} on {} is repetition", game.to_fen());
                 Score::DRAW
             } else {
                 // Append the move onto the history
-                self.history.push(*new_game.position());
+                // self.history.push(*new_game.position());
 
                 // Recurse
                 let score = -self
@@ -341,7 +340,7 @@ impl Search {
                     .1;
 
                 // Pop the move from the history
-                self.history.pop();
+                // self.history.pop();
 
                 score
             };
@@ -418,14 +417,12 @@ impl Search {
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
-            let score = if self.is_repetition(&new_game)
-            /*|| new_game.can_draw_by_fifty()*/
-            {
+            let score = if new_game.can_draw_by_fifty() {
                 // eprintln!("{mv} on {} is repetition", game.to_fen());
                 Score::DRAW
             } else {
                 // Append the move onto the history
-                self.history.push(*new_game.position());
+                // self.history.push(*new_game.position());
 
                 // Recurse
                 let score = -self
@@ -433,7 +430,7 @@ impl Search {
                     .1;
 
                 // Pop the move from the history
-                self.history.pop();
+                // self.history.pop();
 
                 score
             };
@@ -484,6 +481,7 @@ impl Search {
         }
     }
 
+    /*
     /// Checks if `game` is a repetition, comparing it to previous positions
     #[inline(always)]
     fn is_repetition(&self, game: &Game) -> bool {
@@ -503,6 +501,7 @@ impl Search {
 
         false
     }
+     */
 }
 
 /// Applies a score to the provided move, intended to be used when ordering moves during search.
@@ -619,7 +618,8 @@ mod tests {
         let is_searching = Arc::new(AtomicBool::new(true));
         let game = fen.parse().unwrap();
 
-        let search = Search::new(is_searching, config, Vec::default());
+        // let search = Search::new(is_searching, config, Vec::default());
+        let search = Search::new(is_searching, config);
 
         search.start(&game)
     }

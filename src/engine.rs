@@ -349,14 +349,15 @@ impl Engine {
         // Clone the parameters that will be sent into the thread
         let game = self.game;
         let is_searching = Arc::clone(&self.is_searching);
-        let mut history = self.history.clone();
+        // let mut history = self.history.clone();
         // Cloning a vec doesn't clone its capacity
-        history.reserve(self.history.capacity());
+        // history.reserve(self.history.capacity());
 
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
             // Launch the search, performing iterative deepening, negamax, a/b pruning, etc.
-            Search::new(is_searching.clone(), config, history).start(&game)
+            // Search::new(is_searching.clone(), config, history).start(&game)
+            Search::new(is_searching.clone(), config).start(&game)
         });
 
         Some(handle)
