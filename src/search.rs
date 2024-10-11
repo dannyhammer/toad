@@ -310,9 +310,13 @@ impl Search {
             let new_game = game.with_move_made(mv);
 
             // Determine the score of making this move
-            let score = -self
-                .negamax(&new_game, depth - 1, ply + 1, -beta, -alpha)?
-                .1;
+            let score = if game.can_draw_by_fifty() {
+                Score::DRAW
+            } else {
+                -self
+                    .negamax(&new_game, depth - 1, ply + 1, -beta, -alpha)?
+                    .1
+            };
 
             // If we've found a better move than our current best, update the results
             if score > best {
@@ -385,9 +389,13 @@ impl Search {
             let new_game = game.with_move_made(mv);
 
             // Determine the score of making this move
-            let score = -self
-                .quiescence_search(&new_game, _ply + 1, -beta, -alpha)?
-                .1;
+            let score = if game.can_draw_by_fifty() {
+                Score::DRAW
+            } else {
+                -self
+                    .quiescence_search(&new_game, _ply + 1, -beta, -alpha)?
+                    .1
+            };
 
             // If we've found a better move than our current best, update our result
             if score > best {
