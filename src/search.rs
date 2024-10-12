@@ -230,14 +230,20 @@ impl<'a> Search<'a> {
             && depth <= self.config.max_depth
         {
             // If the search returned an error, it was cancelled, so exit the iterative deepening loop.
-            if let Err(e) = self.negamax(game, depth, 0, alpha, beta) {
-                self.send_info(UciInfo::new().string(format!(
-                    "Search cancelled during depth {depth} while evaluating {} with score {}: {e}",
-                    result.bestmove.unwrap_or_default(),
-                    result.score
-                )));
+            match self.negamax(game, depth, 0, alpha, beta) {
+                // Success; update the score
+                Ok(score) => result.score = score,
 
-                break;
+                // Search was canceled; exit
+                Err(e) => {
+                    self.send_info(UciInfo::new().string(format!(
+                        "Search cancelled during depth {depth} while evaluating {} with score {}: {e}",
+                        result.bestmove.unwrap_or_default(),
+                        result.score
+                    )));
+
+                    break;
+                }
             }
 
             // Get the bestmove from the TTable
@@ -695,7 +701,7 @@ mod tests {
 
         let res = run_search(fen, config);
         assert!(res.bestmove.is_none());
-        assert_eq!(res.score, Score::DRAW,);
+        assert_eq!(res.score, Score::DRAW);
     }
 
     #[test]
