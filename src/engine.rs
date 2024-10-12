@@ -15,7 +15,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use chessie::{print_perft, Game, Move};
+use chessie::{print_perft, Game, Move, Position};
 use clap::Parser;
 use uci_parser::{UciCommand, UciOption, UciParseError, UciResponse};
 
@@ -32,6 +32,11 @@ pub struct Engine {
     /// This is modified whenever moves are played or new positions are given,
     /// and is reset whenever the engine is told to start a new game.
     game: Game,
+
+    /// All previous positions of `self.game`, including the current position.
+    ///
+    /// Updated when the engine makes a move or receives `position ... moves [move list]`.
+    history: Vec<Position>,
 
     /// One half of a channel, responsible for sending commands to the engine to execute.
     sender: Sender<EngineCommand>,
@@ -54,6 +59,7 @@ impl Engine {
 
         Self {
             game: Game::default(),
+            history: Vec::with_capacity(512),
             sender,
             receiver,
             is_searching: Arc::default(),
@@ -104,6 +110,13 @@ impl Engine {
                 EngineCommand::Fen => println!("{}", self.game.to_fen()),
 
                 EngineCommand::Flip => self.game.toggle_side_to_move(),
+
+                EngineCommand::MakeMove { mv_string } => {
+                    match Move::from_uci(&self.game, &mv_string) {
+                        Ok(mv) => self.make_move(mv),
+                        Err(e) => eprintln!("{e}"),
+                    }
+                }
 
                 EngineCommand::Moves { square } => {
                     // Get the legal moves
@@ -176,7 +189,8 @@ impl Engine {
 
             SetOption { name, value } => self.set_option(&name, value)?,
 
-            // Register { name, code } => {}
+            Register { name: _, code: _ } => println!("Registration not necessary :)"),
+
             UciNewGame => self.new_game(),
 
             Position { fen, moves } => self.position(fen, moves)?,
@@ -224,7 +238,7 @@ impl Engine {
             println!("Benchmark position {}/{}: {fen}", i + 1, num_tests);
 
             // Set up the game and start the search
-            self.game = Game::from_fen(fen)?;
+            self.position(Some(fen), [])?;
             self.search_thread = self.start_search(config);
 
             // Await the search, appending the node count once concluded.
@@ -286,13 +300,22 @@ impl Engine {
             self.game = Game::default();
         }
 
+        // Since this is a new position, it has a new history
+        self.history.clear();
+
         // Apply the provided moves
         for mv_str in moves {
             let mv = Move::from_uci(&self.game, mv_str.as_ref())?;
-            self.game.make_move(mv);
+            self.make_move(mv);
         }
 
         Ok(())
+    }
+
+    // Makes the supplied move on the current position.
+    fn make_move(&mut self, mv: Move) {
+        self.history.push(*self.game.position());
+        self.game.make_move(mv);
     }
 
     /// Resets the engine's internal game state.
@@ -302,6 +325,7 @@ impl Engine {
     fn new_game(&mut self) {
         self.set_is_searching(false);
         self.game = Game::default();
+        self.history.clear();
     }
 
     /// Sets the search flag to signal that the engine is starting/stopping a search.
@@ -326,11 +350,15 @@ impl Engine {
         // Clone the parameters that will be sent into the thread
         let game = self.game;
         let is_searching = Arc::clone(&self.is_searching);
+        let mut history = self.history.clone();
+        // Cloning a vec doesn't clone its capacity
+        history.reserve(self.history.capacity());
+        history.push(*game.position());
 
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
             // Launch the search, performing iterative deepening, negamax, a/b pruning, etc.
-            Search::new(&game, is_searching.clone(), config).start()
+            Search::new(is_searching.clone(), config, history).start(&game)
         });
 
         Some(handle)

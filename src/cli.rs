@@ -47,6 +47,11 @@ pub enum EngineCommand {
     /// Flips the side-to-move. Equivalent to playing a nullmove.
     Flip,
 
+    /// Apply the provided move to the game, if possible.
+    ///
+    /// No enforcement of legality, so you can move a White piece twice in a row, if you want.
+    MakeMove { mv_string: String },
+
     /// Shows all legal moves in the current position.
     ///
     /// If `square` is provided, it will display all available moves from that square.

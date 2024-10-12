@@ -13,7 +13,7 @@ use std::{
 };
 
 use anyhow::{bail, Result};
-use chessie::{Game, Move, PieceKind};
+use chessie::{Game, Move, PieceKind, Position};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{value_of, Evaluator, Score};
@@ -129,14 +129,9 @@ impl Default for SearchConfig {
 }
 
 /// Executes a search on the provided game at a specified depth.
-pub struct Search<'a> {
-    /// The game to search on.
-    ///
-    /// This game will be copied when moves are applied to it.
-    game: &'a Game,
-
-    /// The result of the search, updated as-needed during search.
-    result: SearchResult,
+pub struct Search {
+    /// Number of nodes searched.
+    nodes: u64,
 
     /// An atomic flag to determine if the search should be cancelled at any time.
     ///
@@ -145,34 +140,34 @@ pub struct Search<'a> {
 
     /// Configuration variables for this instance of the search.
     config: SearchConfig,
+
+    /// Previous positions encountered during search.
+    history: Vec<Position>,
 }
 
-impl<'a> Search<'a> {
-    /// Construct a new [`Search`] instance to execute on the provided [`Game`].
+impl Search {
+    /// Construct a new [`Search`] instance to execute.
     #[inline(always)]
-    pub fn new(game: &'a Game, is_searching: Arc<AtomicBool>, config: SearchConfig) -> Self {
-        let result = SearchResult {
-            // Initialize `bestmove` to the first move available
-            bestmove: game.into_iter().next(),
-            ..Default::default()
-        };
-
+    pub fn new(
+        is_searching: Arc<AtomicBool>,
+        config: SearchConfig,
+        history: Vec<Position>,
+    ) -> Self {
         Self {
-            game,
-            result,
+            nodes: 0,
             is_searching,
             config,
+            history,
         }
     }
 
-    /// Start the search, returning its results if the search was successful.
+    /// Start the search on the supplied [`Game`], returning a [`SearchResult`].
     ///
     /// This is the entrypoint of the search, and prints UCI info before calling [`Self::iterative_deepening`],
     /// and concluding by sending the `bestmove` message and exiting.
-    pub fn start(mut self) -> SearchResult {
-        self.send_info(
-            UciInfo::new().string(format!("Starting search on {:?}", self.game.to_fen(),)),
-        );
+    #[inline(always)]
+    pub fn start(mut self, game: &Game) -> SearchResult {
+        self.send_info(UciInfo::new().string(format!("Starting search on {:?}", game.to_fen())));
         // println!(
         //     "info string Soft timeout {}ms",
         //     self.config.soft_timeout.as_millis()
@@ -182,8 +177,7 @@ impl<'a> Search<'a> {
         //     self.config.hard_timeout.as_millis()
         // );
 
-        let res = self.iterative_deepening();
-        // let res = self.random_move();
+        let res = self.iterative_deepening(game);
 
         // Search has ended; send bestmove
         let response = UciResponse::BestMove {
@@ -193,7 +187,7 @@ impl<'a> Search<'a> {
 
         println!("{response}");
 
-        // Search has concluded, alert other threads that we are no longer searching
+        // Search has concluded, alert other thread(s) that we are no longer searching
         self.is_searching.store(false, Ordering::Relaxed);
 
         res
@@ -213,9 +207,17 @@ impl<'a> Search<'a> {
     /// However, with features such as move ordering, a/b pruning, and aspiration windows, ID enhances performance.
     ///
     /// After each iteration, we check if we've exceeded our `soft_timeout` and, if we haven't, we run a search at a greater depth.
-    fn iterative_deepening(&mut self) -> SearchResult {
+    fn iterative_deepening(&mut self, game: &Game) -> SearchResult {
+        // Initialize `bestmove` to the first move available
+        let mut result = SearchResult {
+            bestmove: game.into_iter().next(),
+            ..Default::default()
+        };
+
         // Start at depth 1 because a search at depth 0 makes no sense
         let mut depth = 1;
+        let alpha = -Score::INF;
+        let beta = Score::INF;
 
         // The actual Iterative Deepening loop
         while self.config.starttime.elapsed() < self.config.soft_timeout
@@ -224,29 +226,22 @@ impl<'a> Search<'a> {
         {
             // Reset score after each search, as there is no way to know what the bounds are.
             // We can use the score from the previous depth's search in Aspiration Windows: https://www.chessprogramming.org/Aspiration_Windows
-            self.result.score = -Score::INF;
+            result.score = -Score::INF;
 
             // If the search returned an error, it was cancelled, so exit the iterative deepening loop.
-            match self.negamax(*self.game, depth, 0, -Score::INF, Score::INF) {
+            match self.negamax(game, depth, 0, alpha, beta) {
                 // A new result was found, so update our best so far
                 Ok((bestmove, score)) => {
-                    self.result.bestmove = bestmove;
-                    self.result.score = score;
+                    result.bestmove = bestmove;
+                    result.score = score;
                 }
 
                 // The search was cancelled, so exit the ID loop.
                 Err(e) => {
                     self.send_info(UciInfo::new().string(format!(
                         "Search cancelled during depth {depth} while evaluating {} with score {}: {e}",
-                        self.result.bestmove.unwrap_or_default(),
-                        self.result.score
-                    )));
-
-                    self.send_info(UciInfo::new().string(format!(
-                        "Falling back to result from depth {}: {} with score {}",
-                        depth - 1,
-                        self.result.bestmove.unwrap_or_default(),
-                        self.result.score,
+                        result.bestmove.unwrap_or_default(),
+                        result.score
                     )));
 
                     break;
@@ -258,9 +253,9 @@ impl<'a> Search<'a> {
             self.send_info(
                 UciInfo::new()
                     .depth(depth)
-                    .nodes(self.result.nodes)
-                    .score(self.result.score.into_uci())
-                    .nps((self.result.nodes as f32 / elapsed.as_secs_f32()).trunc())
+                    .nodes(self.nodes)
+                    .score(result.score.into_uci())
+                    .nps((self.nodes as f32 / elapsed.as_secs_f32()).trunc())
                     .time(elapsed.as_millis()),
             );
 
@@ -268,9 +263,12 @@ impl<'a> Search<'a> {
             depth += 1;
         }
 
+        // Transfer the node count
+        result.nodes += self.nodes;
+
         // ID loop has concluded (either by finishing or timing out),
         //  so we return the result from the last successfully-completed search.
-        self.result
+        result
     }
 
     /// Primary location of search logic.
@@ -278,18 +276,19 @@ impl<'a> Search<'a> {
     /// Uses the [negamax](https://www.chessprogramming.org/Negamax) algorithm in a [fail soft](https://www.chessprogramming.org/Alpha-Beta#Negamax_Framework) framework.
     fn negamax(
         &mut self,
-        game: Game,
+        game: &Game,
         depth: usize,
         ply: i32,
         mut alpha: Score,
         beta: Score,
     ) -> Result<(Option<Move>, Score)> {
         // Regardless of how long we stay here, we've searched this node, so increment the counter.
-        self.result.nodes += 1;
+        self.nodes += 1;
 
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
             return self.quiescence_search(game, ply, alpha, beta);
+            // return Ok((None, Evaluator::new(game).eval()));
         }
 
         // If there are no legal moves, it's either mate or a draw.
@@ -307,7 +306,7 @@ impl<'a> Search<'a> {
         }
 
         // Sort moves so that we look at "promising" ones first
-        moves.sort_by_cached_key(|mv| score_move(&game, mv));
+        moves.sort_by_cached_key(|mv| score_move(game, mv));
 
         // Start with a *really bad* initial score
         let mut best = -Score::INF;
@@ -320,8 +319,26 @@ impl<'a> Search<'a> {
             // Copy-make the new position
             let new_game = game.with_move_made(mv);
 
-            // Recurse
-            let score = -self.negamax(new_game, depth - 1, ply + 1, -beta, -alpha)?.1;
+            // Determine the score of making this move
+            let score = if self.is_repetition(&new_game)
+                || new_game.can_draw_by_fifty()
+                || new_game.can_draw_by_insufficient_material()
+            {
+                Score::DRAW
+            } else {
+                // Append the move onto the history
+                self.history.push(*new_game.position());
+
+                // Recurse
+                let score = -self
+                    .negamax(&new_game, depth - 1, ply + 1, -beta, -alpha)?
+                    .1;
+
+                // Pop the move from the history
+                self.history.pop();
+
+                score
+            };
 
             // If we've found a better move than our current best, update the results
             if score > best {
@@ -349,15 +366,15 @@ impl<'a> Search<'a> {
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
     fn quiescence_search(
         &mut self,
-        game: Game,
-        ply: i32,
+        game: &Game,
+        _ply: i32,
         mut alpha: Score,
         beta: Score,
     ) -> Result<(Option<Move>, Score)> {
-        self.result.nodes += 1;
+        self.nodes += 1;
 
         // Evaluate the current position, to serve as our baseline
-        let stand_pat = Evaluator::new(&game).eval();
+        let stand_pat = Evaluator::new(game).eval();
 
         // Beta cutoff; this position is "too good" and our opponent would never let us get here
         if stand_pat >= beta {
@@ -381,7 +398,7 @@ impl<'a> Search<'a> {
             return Ok((None, stand_pat));
         }
 
-        captures.sort_by_cached_key(|mv| score_move(&game, mv));
+        captures.sort_by_cached_key(|mv| score_move(game, mv));
 
         let mut best = stand_pat;
         let mut bestmove = captures.first().copied();
@@ -393,8 +410,27 @@ impl<'a> Search<'a> {
             // Copy-make the new position
             let new_game = game.with_move_made(mv);
 
-            // Recursively search our opponent's responses
-            let score = -self.quiescence_search(new_game, ply + 1, -beta, -alpha)?.1;
+            // Normally, repetitions can't occur in QSearch, because captures are irreversible.
+            // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
+            let score = if self.is_repetition(&new_game)
+                || new_game.can_draw_by_fifty()
+                || new_game.can_draw_by_insufficient_material()
+            {
+                Score::DRAW
+            } else {
+                // Append the move onto the history
+                self.history.push(*new_game.position());
+
+                // Recurse
+                let score = -self
+                    .quiescence_search(&new_game, _ply + 1, -beta, -alpha)?
+                    .1;
+
+                // Pop the move from the history
+                self.history.pop();
+
+                score
+            };
 
             // If we've found a better move than our current best, update our result
             if score > best {
@@ -433,7 +469,7 @@ impl<'a> Search<'a> {
             bail!("cancelled by external command");
         } else
         // Condition 3: We've exceeded the maximum amount of nodes we're allowed to search
-        if self.result.nodes >= self.config.max_nodes {
+        if self.nodes >= self.config.max_nodes {
             let nodes = self.config.max_nodes;
             bail!("exceeded node allowance of {nodes} nodes");
         } else {
@@ -441,8 +477,26 @@ impl<'a> Search<'a> {
             Ok(())
         }
     }
+
+    /// Checks if `game` is a repetition, comparing it to previous positions
+    #[inline(always)]
+    fn is_repetition(&self, game: &Game) -> bool {
+        // We can skip the previous position, because there's no way it can be a repetition
+        for prev in self.history.iter().rev().skip(1) {
+            if prev.key() == game.key() {
+                return true;
+            } else
+            // The halfmove counter only resets on irreversible moves (captures, pawns, etc.) so it can't be a repetition.
+            if prev.halfmove() == 0 {
+                return false;
+            }
+        }
+
+        false
+    }
 }
 
+/// Applies a score to the provided move, intended to be used when ordering moves during search.
 #[inline(always)]
 fn score_move(game: &Game, mv: &Move) -> Score {
     // Safe unwrap because we can't move unless there's a piece at `from`
@@ -552,13 +606,17 @@ pub fn print_mvv_lva_table() {
 mod tests {
     use super::*;
 
-    fn ensure_is_mate_in(fen: &str, config: SearchConfig, moves: i32) -> SearchResult {
+    fn run_search(fen: &str, config: SearchConfig) -> SearchResult {
         let is_searching = Arc::new(AtomicBool::new(true));
         let game = fen.parse().unwrap();
 
-        let search = Search::new(&game, is_searching, config);
+        let search = Search::new(is_searching, config, Vec::default());
 
-        let res = search.start();
+        search.start(&game)
+    }
+
+    fn ensure_is_mate_in(fen: &str, config: SearchConfig, moves: i32) -> SearchResult {
+        let res = run_search(fen, config);
         assert!(
             res.score.is_mate(),
             "Search on {fen:?} with config {config:#?} produced result that is not mate.\nResult: {res:#?}"
@@ -600,12 +658,7 @@ mod tests {
         let fen = "k7/8/KQ6/8/8/8/8/8 b - - 0 1";
         let config = SearchConfig::default();
 
-        let is_searching = Arc::new(AtomicBool::new(true));
-        let game = fen.parse().unwrap();
-
-        let search = Search::new(&game, is_searching, config);
-
-        let res = search.start();
+        let res = run_search(fen, config);
         assert!(res.bestmove.is_none());
         assert_eq!(res.score, Score::DRAW,);
     }
@@ -619,12 +672,21 @@ mod tests {
             ..Default::default()
         };
 
-        let is_searching = Arc::new(AtomicBool::new(true));
-        let game = fen.parse().unwrap();
-
-        let search = Search::new(&game, is_searching, config);
-
-        let res = search.start();
+        let res = run_search(fen, config);
         assert_eq!(res.bestmove.unwrap(), "e7d8q");
+    }
+
+    #[test]
+    fn test_quick_search_finds_move() {
+        // If *any* legal move is available, it should be found, regardless of how much time was given.
+        let fen = chessie::FEN_STARTPOS;
+        let config = SearchConfig {
+            soft_timeout: Duration::from_millis(0),
+            hard_timeout: Duration::from_millis(0),
+            ..Default::default()
+        };
+
+        let res = run_search(fen, config);
+        assert!(res.bestmove.is_some());
     }
 }
