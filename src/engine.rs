@@ -9,7 +9,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{channel, Receiver, Sender},
-        Arc,
+        Arc, Mutex,
     },
     thread::{self, JoinHandle},
 };
@@ -19,10 +19,13 @@ use chessie::{print_perft, Game, Move, Position};
 use clap::Parser;
 use uci_parser::{UciCommand, UciOption, UciParseError, UciResponse};
 
-use crate::{EngineCommand, Evaluator, Search, SearchConfig, SearchResult, BENCHMARK_FENS};
+use crate::{
+    EngineCommand, Evaluator, Search, SearchConfig, SearchResult, TTable, BENCHMARK_FENS,
+    BYTES_IN_MB,
+};
 
 /// Default depth at which to run the benchmark searches.
-const BENCH_DEPTH: usize = 7;
+const BENCH_DEPTH: u8 = 7;
 
 /// The Toad chess engine.
 #[derive(Debug)]
@@ -49,10 +52,14 @@ pub struct Engine {
 
     /// Handle to the currently-running search thread, if one exists.
     search_thread: Option<JoinHandle<SearchResult>>,
+
+    /// Transposition table used to cache information found during search.
+    ttable: Arc<Mutex<TTable>>,
 }
 
 impl Engine {
     /// Constructs a new [`Engine`] instance to be executed with [`Engine::run`].
+    #[inline(always)]
     pub fn new() -> Self {
         // Construct a channel for communication and threadpool for parallel tasks
         let (sender, receiver) = channel();
@@ -64,21 +71,25 @@ impl Engine {
             receiver,
             is_searching: Arc::default(),
             search_thread: None,
+            ttable: Arc::default(),
         }
     }
 
     /// Returns a string of the engine's name and current version.
+    #[inline(always)]
     pub fn name(&self) -> String {
         format!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
     }
 
     /// Returns a string of all authors of this engine.
+    #[inline(always)]
     pub fn authors(&self) -> String {
         // Split multiple authors by comma-space
         env!("CARGO_PKG_AUTHORS").replace(':', ", ").to_string()
     }
 
     /// Sends an [`EngineCommand`] to the engine to be executed.
+    #[inline(always)]
     pub fn send_command(&self, command: EngineCommand) {
         // Safe unwrap: `send` can only fail if it's corresponding receiver doesn't exist,
         //  and the only way our engine's `Receiver` can no longer exist is when our engine
@@ -106,6 +117,16 @@ impl Engine {
                 EngineCommand::Display => self.display(),
 
                 EngineCommand::Eval { pretty } => self.eval(pretty),
+
+                EngineCommand::Exit { cleanup } => {
+                    // If requested, await the completion of any ongoing search threads
+                    if cleanup {
+                        self.stop_search();
+                    }
+
+                    // Exit the loop so the engine can quit
+                    break;
+                }
 
                 EngineCommand::Fen => println!("{}", self.game.to_fen()),
 
@@ -142,7 +163,7 @@ impl Engine {
 
                 EngineCommand::Option { name } => {
                     if let Some(value) = self.get_option(&name) {
-                        println!("{name} := {value}");
+                        println!("Option {name:?} := {value}");
                     } else {
                         println!("{} has no option {name:?}", self.name());
                     }
@@ -156,15 +177,7 @@ impl Engine {
                     print_perft::<false, true>(&self.game, depth);
                 }
 
-                EngineCommand::Exit { cleanup } => {
-                    // If requested, await the completion of any ongoing search threads
-                    if cleanup {
-                        self.stop_search();
-                    }
-
-                    // Exit the loop so the engine can quit
-                    break;
-                }
+                EngineCommand::HashInfo => self.hash_info(),
 
                 EngineCommand::Uci { cmd } => {
                     // Keep running, even on error
@@ -219,7 +232,7 @@ impl Engine {
     }
 
     /// Execute the `bench` command, running a benchmark of a fixed search on a series of positions and displaying the results.
-    fn bench(&mut self, depth: Option<usize>, pretty: bool) -> Result<()> {
+    fn bench(&mut self, depth: Option<u8>, pretty: bool) -> Result<()> {
         // Set up the benchmarking config
         let config = SearchConfig {
             max_depth: depth.unwrap_or(BENCH_DEPTH),
@@ -286,6 +299,51 @@ impl Engine {
         println!("{}", evaluator.eval());
     }
 
+    /// Display info about the internal hash table(s)
+    fn hash_info(&self) {
+        let ttable = self
+            .ttable
+            .lock()
+            .expect("A thread holding the TTable panicked");
+
+        let size = ttable.size();
+        let mb = size / BYTES_IN_MB;
+        let num = ttable.num_entries();
+        let cap = ttable.capacity();
+        let percent = num as f32 / cap as f32 * 100.0;
+        println!("TT info: {size} bytes ({mb} mb), {num}/{cap} entries ({percent:.2}%)");
+    }
+
+    /// Clears all hash tables in the engine.
+    ///
+    /// Called in between games.
+    #[inline(always)]
+    fn clear_hash_tables(&mut self) {
+        self.ttable
+            .lock()
+            .expect("A thread holding the TTable panicked")
+            .clear();
+    }
+
+    /// Makes the supplied move on the current position.
+    #[inline(always)]
+    fn make_move(&mut self, mv: Move) {
+        self.history.push(*self.game.position());
+        self.game.make_move(mv);
+    }
+
+    /// Resets the engine's internal game state.
+    ///
+    /// This clears all internal caches and hash tables, as well as search history.
+    /// It also cancels any ongoing searches, ignoring their results.
+    #[inline(always)]
+    fn new_game(&mut self) {
+        self.set_is_searching(false);
+        self.game = Game::default();
+        self.history.clear();
+        self.clear_hash_tables();
+    }
+
     /// Set the position to the supplied FEN string (defaults to the standard startpos if not supplied),
     /// and then apply `moves` one-by-one to the position.
     fn position<T: AsRef<str>>(
@@ -312,28 +370,14 @@ impl Engine {
         Ok(())
     }
 
-    // Makes the supplied move on the current position.
-    fn make_move(&mut self, mv: Move) {
-        self.history.push(*self.game.position());
-        self.game.make_move(mv);
-    }
-
-    /// Resets the engine's internal game state.
-    ///
-    /// This clears all internal caches and hash tables, as well as search history.
-    /// It also cancels any ongoing searches, ignoring their results.
-    fn new_game(&mut self) {
-        self.set_is_searching(false);
-        self.game = Game::default();
-        self.history.clear();
-    }
-
     /// Sets the search flag to signal that the engine is starting/stopping a search.
+    #[inline(always)]
     fn set_is_searching(&mut self, status: bool) {
         self.is_searching.store(status, Ordering::Relaxed);
     }
 
     /// Returns `true` if the engine is currently executing a searching.
+    #[inline(always)]
     fn is_searching(&self) -> bool {
         self.is_searching.load(Ordering::Relaxed)
     }
@@ -354,11 +398,17 @@ impl Engine {
         // Cloning a vec doesn't clone its capacity
         history.reserve(self.history.capacity());
         history.push(*game.position());
+        let ttable = Arc::clone(&self.ttable);
 
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
-            // Launch the search, performing iterative deepening, negamax, a/b pruning, etc.
-            Search::new(is_searching.clone(), config, history).start(&game)
+            // Lock the TTable at the start of the search so that only the search thread may modify it
+            let mut ttable = ttable.lock().unwrap();
+
+            let res = Search::new(is_searching, config, history, &mut ttable).start(&game);
+            // eprintln!("{} TT collisions", ttable.collisions());
+
+            res
         });
 
         Some(handle)
@@ -399,9 +449,11 @@ impl Engine {
 
     /// Convenience function to return an iterator over all UCI options this engine supports.
     fn options(&self) -> impl Iterator<Item = UciOption<&str>> {
+        let ttable_size = TTable::DEFAULT_SIZE / BYTES_IN_MB;
         [
+            UciOption::button("Clear Hash"),
+            UciOption::spin("Hash", ttable_size as i32, 1, 1_024),
             UciOption::spin("Threads", 1, 1, 1),
-            UciOption::spin("Hash", 1, 1, 1),
         ]
         .into_iter()
     }
@@ -409,28 +461,53 @@ impl Engine {
     /// Handles the `setoption` command, setting option `name` to `value`, or toggling it if `value` is None.
     ///
     /// Will return an error if `name` isn't a valid option or `value` is not a valid value for that option.
-    fn set_option(&mut self, name: &str, _value: Option<String>) -> Result<()> {
+    fn set_option(&mut self, name: &str, value: Option<String>) -> Result<()> {
         match name {
-            "Hash" => bail!("{} currently has no hash tables", self.name()),
+            "Clear Hash" => self.clear_hash_tables(),
+
+            "Hash" => {
+                let Some(value) = value else {
+                    bail!("usage: setoption name hash value <value>");
+                };
+
+                let mb = value
+                    .parse::<usize>()
+                    .context(format!("expected integer. got {value:?}"))?;
+
+                *self.ttable.lock().unwrap() = TTable::new(mb * BYTES_IN_MB); // multiply by # bytes in MB
+            }
+
             "Threads" => bail!("{} currently supports only 1 thread", self.name()),
-            _ => bail!("{} has no option named {name:?}", self.name()),
+
+            _ => {
+                if let Some(value) = value {
+                    bail!("Unrecognized option {name:?} with value {value:?}")
+                } else {
+                    bail!("Unrecognized option {name:?}")
+                }
+            }
         }
 
-        // if let Some(value) = value.as_ref() {
-        //     eprintln!("Option {name} has been set to {value}")
-        // } else {
-        //     eprintln!("Option {name} has been set")
-        // }
-
-        // Ok(())
+        Ok(())
     }
 
     /// Returns the current value of the option `name`, if it exists on this engine.
     fn get_option(&self, name: &str) -> Option<String> {
         let opt = self.options().find(|opt| opt.name == name)?;
         let value = match opt.name {
-            "Hash" => String::from("1"),
+            "Clear Hash" => String::default(),
+
+            "Hash" => {
+                let ttable = self
+                    .ttable
+                    .lock()
+                    .expect("A thread holding the TTable panicked");
+
+                format!("{}", ttable.size() / BYTES_IN_MB)
+            }
+
             "Threads" => String::from("1"),
+
             _ => unreachable!(),
         };
 
@@ -444,6 +521,7 @@ impl Engine {
 }
 
 impl Default for Engine {
+    #[inline(always)]
     fn default() -> Self {
         Self::new()
     }

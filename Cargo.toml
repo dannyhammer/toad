@@ -11,7 +11,7 @@ keywords = ["chess", "chess engine"]
 
 [dependencies]
 anyhow = "1.0.89"
-chessie = "1.2.0"
+chessie = "1.2.1"
 #chessie = { path = "../chessie/chessie" }
 #chessie = { git = "https://github.com/dannyhammer/chessie.git" }
 clap = { version = "4.5.18", features = ["derive"] }

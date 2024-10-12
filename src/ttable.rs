@@ -1,0 +1,317 @@
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+use chessie::{Move, ZobristKey};
+
+use crate::{Score, BYTES_IN_MB};
+
+/// Type of node encountered during search.
+///
+/// See [CPW](https://www.chessprogramming.org/Node_Types) for more.
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
+pub enum NodeType {
+    /// The score is exact.
+    Pv,
+
+    /// The score is less than alpha (upper bound).
+    All,
+
+    /// The score is greater than or equal to beta (lower bound).
+    Cut,
+}
+
+impl NodeType {
+    /// Creates a new [`NodeType`] based on the parameters as follows:
+    ///
+    /// ```text
+    /// if score <= alpha:
+    ///     UPPERBOUND
+    /// else if score >= beta:
+    ///     LOWERBOUND
+    /// else:
+    ///     EXACT
+    /// ```
+    #[inline(always)]
+    pub fn new(score: Score, alpha: Score, beta: Score) -> Self {
+        if score <= alpha {
+            Self::All
+        } else if score >= beta {
+            Self::Cut
+        } else {
+            Self::Pv
+        }
+    }
+}
+
+/// An entry into a hash table
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct TTableEntry {
+    /// Key of the node this entry represents.
+    pub key: ZobristKey,
+
+    /// Depth at which the data for this entry was found.
+    pub depth: u8,
+
+    /// Best move found for this position.
+    pub bestmove: Move,
+
+    /// Best score found for this position.
+    pub score: Score,
+
+    /// Node type of this entry.
+    pub node_type: NodeType,
+}
+
+impl TTableEntry {
+    #[inline(always)]
+    pub fn new(
+        key: ZobristKey,
+        bestmove: Move,
+        score: Score,
+        alpha: Score,
+        beta: Score,
+        depth: u8,
+        ply: i32,
+    ) -> Self {
+        // Determine what kind of node this is fist, before score adjustment
+        let node_type = NodeType::new(score, alpha, beta);
+
+        // Adjust the score (if it was mate) to the ply at which we found it
+        let score = score.absolute(ply);
+
+        Self {
+            key,
+            bestmove,
+            score,
+            depth,
+            node_type,
+        }
+    }
+
+    /*
+    /// Determine whether the score in this entry can be used and, if so, return it.
+    // Credit: https://github.com/sroelants/simbelmyne/blob/main/simbelmyne/src/transpositions.rs#L178
+    #[inline(always)]
+    pub fn try_score(&self, alpha: Score, beta: Score, depth: u8, ply: i32) -> Option<Score> {
+        // If this entry came from a shallower search, we can't use it's score.
+        if self.depth < depth {
+            return None;
+        }
+
+        let absolute_score = self.score.absolute(ply);
+        match self.node_type {
+            NodeType::Pv => Some(absolute_score),
+            NodeType::All if absolute_score <= alpha => Some(absolute_score),
+            NodeType::Cut if absolute_score >= beta => Some(absolute_score),
+            _ => None,
+        }
+    }
+     */
+}
+
+/// Transposition Table
+#[derive(Debug)]
+pub struct TTable(Vec<Option<TTableEntry>>);
+
+impl TTable {
+    /// Default size of the Transposition Table, in bytes
+    pub const DEFAULT_SIZE: usize = 16 * BYTES_IN_MB;
+
+    /// Create a new [`TTable`] that is `size` bytes.
+    ///
+    /// Its size will be `size_of::<TTableEntry>() * capacity`
+    #[inline(always)]
+    pub fn new(size: usize) -> Self {
+        Self::from_capacity(size / size_of::<TTableEntry>())
+    }
+
+    /// Create a new [`TTable`] that can hold `capacity` entries.
+    #[inline(always)]
+    pub fn from_capacity(capacity: usize) -> Self {
+        Self(vec![None; capacity])
+    }
+
+    /// Clears the entries of this [`TTable`].
+    #[inline(always)]
+    pub fn clear(&mut self) {
+        self.0.iter_mut().for_each(|entry| *entry = None);
+        // self.1 = 0;
+    }
+
+    /// Returns the number of entries that can fit within this [`TTable`]
+    #[inline(always)]
+    pub fn capacity(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns the size of this [`TTable`], in bytes.
+    #[inline(always)]
+    pub fn size(&self) -> usize {
+        self.0.len() * size_of::<TTableEntry>()
+    }
+
+    /// Returns the number of `Some` entries in this [`TTable`].
+    #[inline(always)]
+    pub fn num_entries(&self) -> usize {
+        self.0.iter().filter(|entry| entry.is_some()).count()
+    }
+
+    // /// Returns the number of collisions that have occurred since the last clearing.
+    // #[inline(always)]
+    // pub fn collisions(&self) -> usize {
+    //     self.1
+    // }
+
+    /// Map `key` to an index into this [`TTable`].
+    #[inline(always)]
+    pub fn index(&self, key: &ZobristKey) -> usize {
+        // TODO: Enforce size as a power of two so you can use & instead of %
+        key.inner() as usize % self.0.len()
+    }
+
+    /// Get the entry if and only if it matches the provided key
+    #[inline(always)]
+    pub fn get(&self, key: &ZobristKey) -> Option<&TTableEntry> {
+        let entry = self.entry(key);
+        if entry.is_some_and(|entry| &entry.key == key) {
+            return entry;
+        }
+        None
+    }
+
+    /*
+    /// Mutably get the entry if and only if it matches the provided key
+    #[inline(always)]
+    pub fn get_mut(&mut self, key: &ZobristKey) -> Option<&mut TTableEntry> {
+        let entry = self.entry_mut(key);
+        if entry.as_ref().is_some_and(|entry| &entry.key == key) {
+            return entry;
+        }
+        None
+    }
+     */
+
+    /// Store `entry` in the table at `entry.key`, overriding whatever was there.
+    #[inline(always)]
+    pub fn store(&mut self, entry: TTableEntry) {
+        let index = self.index(&entry.key);
+        // if let Some(other) = self.0[index].as_ref() {
+        //     if entry.key != other.key {
+        //         self.1 += 1;
+        //         // eprintln!(
+        //         //     "\tCollision at {index}:\n\t{}\n\t{}",
+        //         //     entry.key,
+        //         //     other.pos.to_fen(),
+        //         // );
+        //     }
+        // }
+        self.0[index] = Some(entry);
+    }
+
+    /// Get the entry, without regards for whether it matches the provided key
+    #[inline(always)]
+    fn entry(&self, key: &ZobristKey) -> Option<&TTableEntry> {
+        // We can safely index as we've initialized this ttable to be non-empty
+        self.0[self.index(key)].as_ref()
+    }
+
+    /*
+    /// Mutably get the entry, without regards for whether it matches the provided key
+    #[inline(always)]
+    fn entry_mut(&mut self, key: &ZobristKey) -> Option<&mut TTableEntry> {
+        let index = self.index(key);
+        self.0[index].as_mut()
+    }
+     */
+}
+
+impl Default for TTable {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::new(Self::DEFAULT_SIZE)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use chessie::*;
+
+    #[test]
+    fn test_ttable() {
+        // Create two positions whose Zobrist keys are equal mod 2
+        let pos1 = Game::default();
+        let mut pos2 = Game::from_fen(FEN_KIWIPETE).unwrap();
+
+        // Ensure that the two positions have Zobrist keys that are both odd/even
+        while pos1.key().inner() % 2 != pos2.key().inner() % 2 {
+            let mv = pos2.get_legal_moves()[0];
+            pos2 = pos2.with_move_made(mv);
+        }
+
+        // Create Zobrist keys for both positions
+        let key1 = pos1.key();
+        let key2 = pos2.key();
+
+        // Create entries for both positions
+        let startpos_entry = TTableEntry {
+            key: key1,
+            bestmove: Move::illegal(),
+            score: Score::DRAW,
+            depth: 0,
+            node_type: NodeType::Pv,
+        };
+
+        let kiwipete_entry = TTableEntry {
+            key: key2,
+            bestmove: Move::illegal(),
+            score: Score::MATE,
+            depth: 0,
+            node_type: NodeType::Pv,
+        };
+
+        // Create a TTable that can hold two elements.
+        // This is important as both elements will need to map to the same index
+        let mut tt = TTable::from_capacity(2);
+        assert_eq!(
+            tt.num_entries(),
+            0,
+            "TTable should initialize to being empty"
+        );
+
+        tt.store(startpos_entry.clone());
+        assert_eq!(
+            tt.num_entries(),
+            1,
+            "After storing one entry, TTable should only have 1 entry"
+        );
+        assert_eq!(
+            tt.entry(&key1),
+            Some(&startpos_entry),
+            "Getting an entry by key returns the appropriate entry"
+        );
+
+        tt.store(kiwipete_entry.clone());
+        assert_eq!(tt.num_entries(), 1, "After storing another entry that overwrites a previous one, TTable should only have 1 entry");
+
+        assert_ne!(
+            tt.entry(&key1),
+            Some(&startpos_entry),
+            "Cannot get an entry that has been overridden"
+        );
+
+        assert!(
+            tt.get(&key1).is_none(),
+            "Cannot get an entry that has been overridden"
+        );
+
+        assert_eq!(
+            tt.get(&key2),
+            Some(&kiwipete_entry),
+            "Getting an entry by key returns the appropriate entry"
+        );
+    }
+}
