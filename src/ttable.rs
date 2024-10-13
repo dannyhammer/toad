@@ -114,7 +114,19 @@ impl TTableEntry {
 
 /// Transposition Table
 #[derive(Debug)]
-pub struct TTable(Vec<Option<TTableEntry>>);
+pub struct TTable {
+    /// Internal cache of the TTable.
+    cache: Vec<Option<TTableEntry>>,
+
+    /// Number of collisions that have occurred since last clearing.
+    pub(crate) collisions: usize,
+
+    /// Number of accesses that have occurred since last clearing.
+    pub(crate) accesses: usize,
+
+    /// Number of hits that have occurred since last clearing.
+    pub(crate) hits: usize,
+}
 
 impl TTable {
     /// Default size of the Transposition Table, in bytes
@@ -131,45 +143,46 @@ impl TTable {
     /// Create a new [`TTable`] that can hold `capacity` entries.
     #[inline(always)]
     pub fn from_capacity(capacity: usize) -> Self {
-        Self(vec![None; capacity])
+        Self {
+            cache: vec![None; capacity],
+            collisions: 0,
+            accesses: 0,
+            hits: 0,
+        }
     }
 
     /// Clears the entries of this [`TTable`].
     #[inline(always)]
     pub fn clear(&mut self) {
-        self.0.iter_mut().for_each(|entry| *entry = None);
-        // self.1 = 0;
+        self.cache.iter_mut().for_each(|entry| *entry = None);
+        self.collisions = 0;
+        self.accesses = 0;
+        self.hits = 0;
     }
 
     /// Returns the number of entries that can fit within this [`TTable`]
     #[inline(always)]
     pub fn capacity(&self) -> usize {
-        self.0.len()
+        self.cache.len()
     }
 
     /// Returns the size of this [`TTable`], in bytes.
     #[inline(always)]
     pub fn size(&self) -> usize {
-        self.0.len() * size_of::<TTableEntry>()
+        self.cache.len() * size_of::<TTableEntry>()
     }
 
     /// Returns the number of `Some` entries in this [`TTable`].
     #[inline(always)]
     pub fn num_entries(&self) -> usize {
-        self.0.iter().filter(|entry| entry.is_some()).count()
+        self.cache.iter().filter(|entry| entry.is_some()).count()
     }
-
-    // /// Returns the number of collisions that have occurred since the last clearing.
-    // #[inline(always)]
-    // pub fn collisions(&self) -> usize {
-    //     self.1
-    // }
 
     /// Map `key` to an index into this [`TTable`].
     #[inline(always)]
     pub fn index(&self, key: &ZobristKey) -> usize {
         // TODO: Enforce size as a power of two so you can use & instead of %
-        key.inner() as usize % self.0.len()
+        key.inner() as usize % self.capacity()
     }
 
     /// Get the entry if and only if it matches the provided key
@@ -194,28 +207,18 @@ impl TTable {
     }
      */
 
-    /// Store `entry` in the table at `entry.key`, overriding whatever was there.
+    /// Store `entry` in the table at `entry.key`, overriding and returning whatever was there.
     #[inline(always)]
-    pub fn store(&mut self, entry: TTableEntry) {
+    pub fn store(&mut self, entry: TTableEntry) -> Option<TTableEntry> {
         let index = self.index(&entry.key);
-        // if let Some(other) = self.0[index].as_ref() {
-        //     if entry.key != other.key {
-        //         self.1 += 1;
-        //         // eprintln!(
-        //         //     "\tCollision at {index}:\n\t{}\n\t{}",
-        //         //     entry.key,
-        //         //     other.pos.to_fen(),
-        //         // );
-        //     }
-        // }
-        self.0[index] = Some(entry);
+        self.cache[index].replace(entry)
     }
 
     /// Get the entry, without regards for whether it matches the provided key
     #[inline(always)]
     fn entry(&self, key: &ZobristKey) -> Option<&TTableEntry> {
         // We can safely index as we've initialized this ttable to be non-empty
-        self.0[self.index(key)].as_ref()
+        self.cache[self.index(key)].as_ref()
     }
 
     /*
@@ -257,7 +260,7 @@ mod test {
         let key2 = pos2.key();
 
         // Create entries for both positions
-        let startpos_entry = TTableEntry {
+        let entry1 = TTableEntry {
             key: key1,
             bestmove: Move::illegal(),
             score: Score::DRAW,
@@ -265,7 +268,7 @@ mod test {
             node_type: NodeType::Pv,
         };
 
-        let kiwipete_entry = TTableEntry {
+        let entry2 = TTableEntry {
             key: key2,
             bestmove: Move::illegal(),
             score: Score::MATE,
@@ -282,7 +285,7 @@ mod test {
             "TTable should initialize to being empty"
         );
 
-        tt.store(startpos_entry.clone());
+        tt.store(entry1.clone());
         assert_eq!(
             tt.num_entries(),
             1,
@@ -290,16 +293,16 @@ mod test {
         );
         assert_eq!(
             tt.entry(&key1),
-            Some(&startpos_entry),
+            Some(&entry1),
             "Getting an entry by key returns the appropriate entry"
         );
 
-        tt.store(kiwipete_entry.clone());
+        tt.store(entry2.clone());
         assert_eq!(tt.num_entries(), 1, "After storing another entry that overwrites a previous one, TTable should only have 1 entry");
 
         assert_ne!(
             tt.entry(&key1),
-            Some(&startpos_entry),
+            Some(&entry1),
             "Cannot get an entry that has been overridden"
         );
 
@@ -310,7 +313,7 @@ mod test {
 
         assert_eq!(
             tt.get(&key2),
-            Some(&kiwipete_entry),
+            Some(&entry2),
             "Getting an entry by key returns the appropriate entry"
         );
     }

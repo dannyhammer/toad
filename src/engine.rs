@@ -4,6 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+use core::fmt;
 use std::{
     io,
     sync::{
@@ -15,9 +16,9 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use chessie::{print_perft, Game, Move, Position};
+use chessie::{print_perft, Game, Move, Position, Square};
 use clap::Parser;
-use uci_parser::{UciCommand, UciOption, UciParseError, UciResponse};
+use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
     EngineCommand, Evaluator, Search, SearchConfig, SearchResult, TTable, BENCHMARK_FENS,
@@ -55,6 +56,9 @@ pub struct Engine {
 
     /// Transposition table used to cache information found during search.
     ttable: Arc<Mutex<TTable>>,
+
+    /// Whether to display extra information during execution.
+    debug: bool,
 }
 
 impl Engine {
@@ -72,6 +76,7 @@ impl Engine {
             is_searching: Arc::default(),
             search_thread: None,
             ttable: Arc::default(),
+            debug: false,
         }
     }
 
@@ -139,27 +144,7 @@ impl Engine {
                     }
                 }
 
-                EngineCommand::Moves { square } => {
-                    // Get the legal moves
-                    let moves = if let Some(square) = square {
-                        self.game.get_legal_moves_from(square.into())
-                    } else {
-                        self.game.get_legal_moves()
-                    };
-
-                    // If there are none, print "(none)"
-                    let moves_string = if moves.is_empty() {
-                        String::from("(none)")
-                    } else {
-                        // Otherwise, join them by comma-space
-                        moves
-                            .into_iter()
-                            .map(|mv| mv.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    };
-                    println!("{moves_string}");
-                }
+                EngineCommand::Moves { square } => self.moves(square),
 
                 EngineCommand::Option { name } => {
                     if let Some(value) = self.get_option(&name) {
@@ -197,12 +182,13 @@ impl Engine {
         match uci {
             Uci => self.uci(),
 
-            // Debug(status) => self.debug.store(status, Ordering::Relaxed),
+            Debug(status) => self.debug = status,
+
             IsReady => println!("{}", UciResponse::<&str>::ReadyOk),
 
             SetOption { name, value } => self.set_option(&name, value)?,
 
-            Register { name: _, code: _ } => println!("Registration not necessary :)"),
+            Register { name: _, code: _ } => println!("{} requires no registration", self.name()),
 
             UciNewGame => self.new_game(),
 
@@ -214,7 +200,11 @@ impl Engine {
                     return Ok(());
                 }
 
-                self.search_thread = self.start_search(SearchConfig::new(options, &self.game));
+                self.search_thread = if self.debug {
+                    self.start_search::<true>(SearchConfig::new(options, &self.game))
+                } else {
+                    self.start_search::<false>(SearchConfig::new(options, &self.game))
+                };
             }
 
             Stop => self.set_is_searching(false),
@@ -222,10 +212,7 @@ impl Engine {
             // PonderHit => self.ponderhit(),
             Quit => self.send_command(EngineCommand::Exit { cleanup: false }),
 
-            _ => bail!(
-                "{} does not support UCI command {uci:?}",
-                env!("CARGO_PKG_NAME")
-            ),
+            _ => bail!("{} does not support UCI command {uci:?}", self.name()),
         }
 
         Ok(())
@@ -252,7 +239,7 @@ impl Engine {
 
             // Set up the game and start the search
             self.position(Some(fen), [])?;
-            self.search_thread = self.start_search(config);
+            self.search_thread = self.start_search::<false>(config);
 
             // Await the search, appending the node count once concluded.
             let res = self.stop_search().unwrap();
@@ -301,10 +288,7 @@ impl Engine {
 
     /// Display info about the internal hash table(s)
     fn hash_info(&self) {
-        let ttable = self
-            .ttable
-            .lock()
-            .expect("A thread holding the TTable panicked");
+        let ttable = self.ttable();
 
         let size = ttable.size();
         let mb = size / BYTES_IN_MB;
@@ -319,10 +303,7 @@ impl Engine {
     /// Called in between games.
     #[inline(always)]
     fn clear_hash_tables(&mut self) {
-        self.ttable
-            .lock()
-            .expect("A thread holding the TTable panicked")
-            .clear();
+        self.ttable().clear();
     }
 
     /// Makes the supplied move on the current position.
@@ -330,6 +311,28 @@ impl Engine {
     fn make_move(&mut self, mv: Move) {
         self.history.push(*self.game.position());
         self.game.make_move(mv);
+    }
+
+    fn moves(&self, square: Option<Square>) {
+        // Get the legal moves
+        let moves = if let Some(square) = square {
+            self.game.get_legal_moves_from(square.into())
+        } else {
+            self.game.get_legal_moves()
+        };
+
+        // If there are none, print "(none)"
+        let moves_string = if moves.is_empty() {
+            String::from("(none)")
+        } else {
+            // Otherwise, join them by comma-space
+            moves
+                .into_iter()
+                .map(|mv| mv.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        println!("{moves_string}");
     }
 
     /// Resets the engine's internal game state.
@@ -383,10 +386,13 @@ impl Engine {
     }
 
     /// Starts a search on the current position, given the parameters in `config`.
-    fn start_search(&mut self, config: SearchConfig) -> Option<JoinHandle<SearchResult>> {
+    fn start_search<const DEBUG: bool>(
+        &mut self,
+        config: SearchConfig,
+    ) -> Option<JoinHandle<SearchResult>> {
         // Cannot start a search if one is already running
         if self.is_searching() {
-            eprintln!("A search is already running");
+            Self::send_string("A search is already running");
             return None;
         }
         self.set_is_searching(true);
@@ -405,10 +411,7 @@ impl Engine {
             // Lock the TTable at the start of the search so that only the search thread may modify it
             let mut ttable = ttable.lock().unwrap();
 
-            let res = Search::new(is_searching, config, history, &mut ttable).start(&game);
-            // eprintln!("{} TT collisions", ttable.collisions());
-
-            res
+            Search::new(is_searching, config, history, &mut ttable).start::<DEBUG>(&game)
         });
 
         Some(handle)
@@ -422,7 +425,7 @@ impl Engine {
         // Attempt to join the thread handle to retrieve the result
         let id = handle.thread().id();
         let Ok(res) = handle.join() else {
-            eprintln!("Failed to join on thread {id:?}");
+            Self::send_string(format!("Failed to join on thread {id:?}"));
             return None;
         };
 
@@ -466,26 +469,35 @@ impl Engine {
             "Clear Hash" => self.clear_hash_tables(),
 
             "Hash" => {
-                let Some(value) = value else {
+                let Some(value) = value.as_ref() else {
                     bail!("usage: setoption name hash value <value>");
                 };
 
-                let mb = value
+                let mb = &value
                     .parse::<usize>()
                     .context(format!("expected integer. got {value:?}"))?;
 
-                *self.ttable.lock().unwrap() = TTable::new(mb * BYTES_IN_MB); // multiply by # bytes in MB
+                *self.ttable() = TTable::new(mb * BYTES_IN_MB); // multiply by # bytes in MB
             }
 
             "Threads" => bail!("{} currently supports only 1 thread", self.name()),
 
             _ => {
-                if let Some(value) = value {
+                if let Some(value) = value.as_ref() {
                     bail!("Unrecognized option {name:?} with value {value:?}")
                 } else {
                     bail!("Unrecognized option {name:?}")
                 }
             }
+        }
+
+        if self.debug {
+            let info = if let Some(value) = value.as_ref() {
+                format!("Option {name} set to {value}")
+            } else {
+                format!("Option {name} toggled")
+            };
+            Self::send_string(info);
         }
 
         Ok(())
@@ -497,14 +509,7 @@ impl Engine {
         let value = match opt.name {
             "Clear Hash" => String::default(),
 
-            "Hash" => {
-                let ttable = self
-                    .ttable
-                    .lock()
-                    .expect("A thread holding the TTable panicked");
-
-                format!("{}", ttable.size() / BYTES_IN_MB)
-            }
+            "Hash" => format!("{}", self.ttable().size() / BYTES_IN_MB),
 
             "Threads" => String::from("1"),
 
@@ -514,10 +519,20 @@ impl Engine {
         Some(value)
     }
 
-    // fn send_info_string<T: fmt::Display>(&self, info: T) {
-    //     let resp = UciResponse::<T>::Info(Box::new(UciInfo::new().string(info)));
-    //     println!("{resp}");
-    // }
+    /// Helper to send a [`UciInfo`] containing only a `string` message to `stdout`.
+    #[inline(always)]
+    fn send_string<T: fmt::Display>(info: T) {
+        let resp = UciResponse::<String>::Info(Box::new(UciInfo::new().string(info)));
+        println!("{resp}");
+    }
+
+    /// Helper function to fetch the TTable, panicking if impossible.
+    #[inline(always)]
+    fn ttable(&self) -> std::sync::MutexGuard<'_, TTable> {
+        self.ttable
+            .lock()
+            .expect("A thread holding the TTable panicked")
+    }
 }
 
 impl Default for Engine {
