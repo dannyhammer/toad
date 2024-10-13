@@ -13,13 +13,13 @@ use std::{
 };
 
 use anyhow::{bail, Result};
-use chessie::{Game, Move, PieceKind, Position};
+use chessie::{Game, Move, PieceKind, Position, ZobristKey};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
-use crate::{value_of, Evaluator, Score};
+use crate::{value_of, Evaluator, Score, TTable, TTableEntry};
 
 /// Maximum depth that can be searched
-pub const MAX_DEPTH: usize = 255;
+pub const MAX_DEPTH: u8 = u8::MAX;
 
 /// The result of a search, containing the best move found, score, and total nodes searched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -51,7 +51,7 @@ impl Default for SearchResult {
 #[derive(Debug, Clone, Copy)]
 pub struct SearchConfig {
     /// Maximum depth to execute the search.
-    pub max_depth: usize,
+    pub max_depth: u8,
 
     /// Node allowance.
     ///
@@ -83,7 +83,7 @@ impl SearchConfig {
 
         // If supplied, set the max depth / node allowance
         if let Some(depth) = options.depth {
-            config.max_depth = depth as usize;
+            config.max_depth = depth as u8;
         }
 
         if let Some(nodes) = options.nodes {
@@ -129,7 +129,7 @@ impl Default for SearchConfig {
 }
 
 /// Executes a search on the provided game at a specified depth.
-pub struct Search {
+pub struct Search<'a> {
     /// Number of nodes searched.
     nodes: u64,
 
@@ -143,21 +143,26 @@ pub struct Search {
 
     /// Previous positions encountered during search.
     history: Vec<Position>,
+
+    /// Transposition table used to cache information during search.
+    ttable: &'a mut TTable,
 }
 
-impl Search {
+impl<'a> Search<'a> {
     /// Construct a new [`Search`] instance to execute.
     #[inline(always)]
     pub fn new(
         is_searching: Arc<AtomicBool>,
         config: SearchConfig,
         history: Vec<Position>,
+        ttable: &'a mut TTable,
     ) -> Self {
         Self {
             nodes: 0,
             is_searching,
             config,
             history,
+            ttable,
         }
     }
 
@@ -224,19 +229,12 @@ impl Search {
             && self.is_searching.load(Ordering::Relaxed)
             && depth <= self.config.max_depth
         {
-            // Reset score after each search, as there is no way to know what the bounds are.
-            // We can use the score from the previous depth's search in Aspiration Windows: https://www.chessprogramming.org/Aspiration_Windows
-            result.score = -Score::INF;
-
             // If the search returned an error, it was cancelled, so exit the iterative deepening loop.
             match self.negamax(game, depth, 0, alpha, beta) {
-                // A new result was found, so update our best so far
-                Ok((bestmove, score)) => {
-                    result.bestmove = bestmove;
-                    result.score = score;
-                }
+                // Success; update the score
+                Ok(score) => result.score = score,
 
-                // The search was cancelled, so exit the ID loop.
+                // Search was canceled; exit
                 Err(e) => {
                     self.send_info(UciInfo::new().string(format!(
                         "Search cancelled during depth {depth} while evaluating {} with score {}: {e}",
@@ -248,6 +246,9 @@ impl Search {
                 }
             }
 
+            // Get the bestmove from the TTable
+            result.bestmove = self.ttable.get(&game.key()).map(|entry| entry.bestmove);
+
             // Send search info to the GUI
             let elapsed = self.config.starttime.elapsed();
             self.send_info(
@@ -256,18 +257,22 @@ impl Search {
                     .nodes(self.nodes)
                     .score(result.score.into_uci())
                     .nps((self.nodes as f32 / elapsed.as_secs_f32()).trunc())
-                    .time(elapsed.as_millis()),
+                    .time(elapsed.as_millis())
+                    .pv([result.bestmove.unwrap_or_default()]),
             );
 
             // Increase the depth for the next iteration
-            depth += 1;
+            match depth.checked_add(1) {
+                Some(new_depth) => depth = new_depth,
+                None => break,
+            }
         }
 
         // Transfer the node count
         result.nodes += self.nodes;
 
         // ID loop has concluded (either by finishing or timing out),
-        //  so we return the result from the last successfully-completed search.
+        // so we return the result from the last successfully-completed search.
         result
     }
 
@@ -277,11 +282,11 @@ impl Search {
     fn negamax(
         &mut self,
         game: &Game,
-        depth: usize,
+        depth: u8,
         ply: i32,
         mut alpha: Score,
         beta: Score,
-    ) -> Result<(Option<Move>, Score)> {
+    ) -> Result<Score> {
         // Regardless of how long we stay here, we've searched this node, so increment the counter.
         self.nodes += 1;
 
@@ -302,15 +307,17 @@ impl Search {
                 Score::DRAW
             };
 
-            return Ok((None, score));
+            return Ok(score);
         }
 
         // Sort moves so that we look at "promising" ones first
-        moves.sort_by_cached_key(|mv| score_move(game, mv));
+        let tt_move = self.get_tt_bestmove(game.key());
+        moves.sort_by_cached_key(|mv| score_move(game, mv, tt_move));
 
         // Start with a *really bad* initial score
         let mut best = -Score::INF;
-        let mut bestmove = moves.first().copied(); // Safe because we guaranteed `moves` to be nonempty above
+        let mut bestmove = moves[0]; // Safe because we guaranteed `moves` to be nonempty above
+        let original_alpha = alpha;
 
         for mv in moves {
             // Check if we can continue searching
@@ -330,9 +337,7 @@ impl Search {
                 self.history.push(*new_game.position());
 
                 // Recurse
-                let score = -self
-                    .negamax(&new_game, depth - 1, ply + 1, -beta, -alpha)?
-                    .1;
+                let score = -self.negamax(&new_game, depth - 1, ply + 1, -beta, -alpha)?;
 
                 // Pop the move from the history
                 self.history.pop();
@@ -347,7 +352,7 @@ impl Search {
                 if score > alpha {
                     alpha = score;
                     // PV found
-                    bestmove = Some(mv);
+                    bestmove = mv;
                 }
 
                 // Fail soft beta-cutoff.
@@ -357,7 +362,10 @@ impl Search {
             }
         }
 
-        Ok((bestmove, best))
+        // Save this node to the TTable
+        self.save_to_ttable(game.key(), bestmove, best, original_alpha, beta, depth, ply);
+
+        Ok(best)
     }
 
     /// Quiescence Search (QSearch)
@@ -367,18 +375,16 @@ impl Search {
     fn quiescence_search(
         &mut self,
         game: &Game,
-        _ply: i32,
+        ply: i32,
         mut alpha: Score,
         beta: Score,
-    ) -> Result<(Option<Move>, Score)> {
-        self.nodes += 1;
-
+    ) -> Result<Score> {
         // Evaluate the current position, to serve as our baseline
         let stand_pat = Evaluator::new(game).eval();
 
         // Beta cutoff; this position is "too good" and our opponent would never let us get here
         if stand_pat >= beta {
-            return Ok((None, beta));
+            return Ok(beta);
         } else if stand_pat > alpha {
             alpha = stand_pat;
         }
@@ -395,13 +401,19 @@ impl Search {
         // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
         // So, if there are no captures available, just return the current evaluation.
         if captures.is_empty() {
-            return Ok((None, stand_pat));
+            return Ok(stand_pat);
         }
 
-        captures.sort_by_cached_key(|mv| score_move(game, mv));
+        // Everything before this point is the same as if we called `eval()` in Negamax
+        // If we made it here, then we're examining this node
+        self.nodes += 1;
+
+        let tt_move = self.get_tt_bestmove(game.key());
+        captures.sort_by_cached_key(|mv| score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
-        let mut bestmove = captures.first().copied();
+        // let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
+        // let original_alpha = alpha;
 
         for mv in captures {
             // Check if we can continue searching
@@ -422,9 +434,7 @@ impl Search {
                 self.history.push(*new_game.position());
 
                 // Recurse
-                let score = -self
-                    .quiescence_search(&new_game, _ply + 1, -beta, -alpha)?
-                    .1;
+                let score = -self.quiescence_search(&new_game, ply + 1, -beta, -alpha)?;
 
                 // Pop the move from the history
                 self.history.pop();
@@ -440,7 +450,7 @@ impl Search {
                     alpha = score;
 
                     // PV found
-                    bestmove = Some(mv);
+                    // bestmove = mv;
                 }
 
                 // Fail soft beta-cutoff.
@@ -450,7 +460,10 @@ impl Search {
             }
         }
 
-        Ok((bestmove, best)) // fail-soft
+        // Save this node to the TTable
+        // self.save_to_ttable(game.key(), bestmove, best, original_alpha, beta, 0, ply);
+
+        Ok(best) // fail-soft
     }
 
     /// Checks if we've exceeded any conditions that would warrant the search to end.
@@ -494,11 +507,38 @@ impl Search {
 
         false
     }
+
+    /// Saves the provided data to an entry in the TTable.
+    #[allow(clippy::too_many_arguments)]
+    fn save_to_ttable(
+        &mut self,
+        key: ZobristKey,
+        bestmove: Move,
+        score: Score,
+        alpha: Score,
+        beta: Score,
+        depth: u8,
+        ply: i32,
+    ) {
+        self.ttable.store(TTableEntry::new(
+            key, bestmove, score, alpha, beta, depth, ply,
+        ));
+    }
+
+    /// Gets the bestmove for the provided position from the TTable, if it exists.
+    fn get_tt_bestmove(&self, key: ZobristKey) -> Option<Move> {
+        self.ttable.get(&key).map(|entry| entry.bestmove)
+    }
 }
 
 /// Applies a score to the provided move, intended to be used when ordering moves during search.
 #[inline(always)]
-fn score_move(game: &Game, mv: &Move) -> Score {
+fn score_move(game: &Game, mv: &Move, tt_move: Option<Move>) -> Score {
+    // TT move should be looked at first!
+    if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
+        return -Score::INF;
+    }
+
     // Safe unwrap because we can't move unless there's a piece at `from`
     let kind = game.kind_at(mv.from()).unwrap();
     let mut score = Score(0);
@@ -610,7 +650,8 @@ mod tests {
         let is_searching = Arc::new(AtomicBool::new(true));
         let game = fen.parse().unwrap();
 
-        let search = Search::new(is_searching, config, Vec::default());
+        let mut ttable = Default::default();
+        let search = Search::new(is_searching, config, Default::default(), &mut ttable);
 
         search.start(&game)
     }
@@ -660,7 +701,7 @@ mod tests {
 
         let res = run_search(fen, config);
         assert!(res.bestmove.is_none());
-        assert_eq!(res.score, Score::DRAW,);
+        assert_eq!(res.score, Score::DRAW);
     }
 
     #[test]

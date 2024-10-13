@@ -20,7 +20,7 @@ pub enum EngineCommand {
 
         /// Override the default benchmark depth.
         #[arg(short, long, required = false)]
-        depth: Option<usize>,
+        depth: Option<u8>,
     },
 
     /// Print a visual representation of the current board state.
@@ -46,6 +46,10 @@ pub enum EngineCommand {
 
     /// Flips the side-to-move. Equivalent to playing a nullmove.
     Flip,
+
+    /// Display information about the current hash table(s) in the engine.
+    #[command(aliases = ["tt", "ttable"])]
+    HashInfo,
 
     /// Apply the provided move to the game, if possible.
     ///

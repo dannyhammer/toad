@@ -36,6 +36,8 @@ In addition to the above UCI commands, Toad also supports the following custom c
 -   `exit`: Quits the program as quickly as possible. If the `cleanup` flag is supplied, it will await the completion of any active search threads before exiting.
 -   `fen`: Generate a FEN string of the current board state.
 -   `flip`: Toggles the side-to-move. Equivalent to playing a null move.
+-   `hashinfo`: Display info about the hash table(s).
+-   `makemove`: Apply the provided move to the current position, if possible.
 -   `moves`: Show all legal moves on the current position, or for a given square.
 -   `option`: Display the current value of the specified option.
 -   `perft`: Execute a perft on the current position at a supplied depth, printing the total nodes.
@@ -43,7 +45,8 @@ In addition to the above UCI commands, Toad also supports the following custom c
 
 ### UCI Options
 
-None, yet!
+-   `Clear Hash` - Clear the hash table(s).
+-   `Hash` - Set the size (in mb) of the hash table(s).
 
 ## Running
 
@@ -73,8 +76,11 @@ Toad uses several state-of-the-art techniques in [chess programming](https://www
     -   Based on the [Negamax](https://www.chessprogramming.org/Negamax) algorithm.
     -   [Alpha-Beta Pruning](https://www.chessprogramming.org/Alpha-Beta#Negamax_Framework) in a fail soft framework.
     -   [Quiescence Search](https://www.chessprogramming.org/Quiescence_Search) in a fail soft framework.
+    -   [Draw detection](https://www.chessprogramming.org/Draw) through insufficient material, 2-fold repetition, and the 50-move rule.
+    -   [Transposition Table](https://www.chessprogramming.org/Transposition_Table)
     -   Move Ordering:
         -   [MVV-LVA](https://www.chessprogramming.org/MVV-LVA)
+        -   [TT moves](https://www.chessprogramming.org/Hash_Move)
 -   Evaluation:
     -   [Material difference](https://www.chessprogramming.org/Material)
 

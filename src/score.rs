@@ -21,7 +21,7 @@ impl Score {
     /// Largest possible score ever achievable.
     pub const INF: Self = Self(i16::MAX as i32);
 
-    /// Score of mate in 1 ply.
+    /// Score of mate in the current position.
     pub const MATE: Self = Self(Self::INF.0 - 1);
 
     /// Score of a draw.
@@ -71,13 +71,18 @@ impl Score {
         relative_to_side / 2
     }
 
-    /*
     /// Normalize the score to the provided ply.
     ///
     /// Score will be relative to `ply`.
-    pub const fn relative(self, ply: i32) -> Self {
+    #[inline(always)]
+    pub fn relative(self, ply: i32) -> Self {
         if self.is_mate() {
-            Self(self.0 + ply)
+            // Self(self.0 + ply)
+            if self > Self::DRAW {
+                self + ply
+            } else {
+                self - ply
+            }
         } else {
             self
         }
@@ -86,19 +91,31 @@ impl Score {
     /// De-normalize the score from the provided ply.
     ///
     /// Score will be relative to root (0 ply).
-    pub const fn absolute(self, ply: i32) -> Self {
+    #[inline(always)]
+    pub fn absolute(self, ply: i32) -> Self {
         if self.is_mate() {
-            Self(self.0 - ply)
+            // Self(self.0 - ply)
+            if self > Self::DRAW {
+                self - ply
+            } else {
+                self + ply
+            }
         } else {
             self
         }
     }
-     */
 
     /// Returns the absolute value of this [`Score`].`
     #[inline(always)]
     pub const fn abs(self) -> Self {
         Self(self.0.abs())
+    }
+}
+
+impl From<Score> for UciScore {
+    #[inline(always)]
+    fn from(value: Score) -> Self {
+        value.into_uci()
     }
 }
 
@@ -169,11 +186,47 @@ impl fmt::Display for Score {
 impl fmt::Debug for Score {
     #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // self.0.fmt(f)
         if self.is_mate() {
-            write!(f, "{} (mate in {})", self.0, self.plies_to_mate())
+            write!(
+                f,
+                "{} (mate in {} plies {} moves)",
+                self.0,
+                self.plies_to_mate(),
+                self.moves_to_mate()
+            )
         } else {
             write!(f, "{}", self.0)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_relative_absolute() {
+        let plies = 3;
+
+        // Plies to mate
+        let our_mate = Score::MATE - plies;
+        assert_eq!(our_mate.plies_to_mate(), plies);
+
+        let their_mate = -(Score::MATE - plies);
+        assert_eq!(their_mate.plies_to_mate(), plies);
+
+        // Relative scores
+        let our_relative = our_mate.relative(plies);
+        assert_eq!(our_relative, Score::MATE);
+
+        let their_relative = their_mate.relative(plies);
+        assert_eq!(their_relative, -Score::MATE);
+
+        // Absolute scores
+        let our_absolute = our_relative.absolute(plies);
+        assert_eq!(our_absolute, our_mate);
+
+        let their_absolute = their_relative.absolute(plies);
+        assert_eq!(their_absolute, their_mate);
     }
 }
