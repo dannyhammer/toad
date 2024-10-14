@@ -8,7 +8,7 @@ use std::fmt;
 
 use chessie::{Color, File, Piece, PieceKind, Rank, Square};
 
-use crate::value_of;
+use crate::{value_of, Score};
 
 /// Piece-Square tables copied from [PeSTO](https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function#Source_Code)
 #[rustfmt::skip]
@@ -157,19 +157,18 @@ const KING_EG: Psqt = Psqt::new(PieceKind::King, [
 
 /// A [Piece-Square Table](https://www.chessprogramming.org/Piece-Square_Tables) for use in evaluation.
 #[derive(Debug)]
-pub struct Psqt([i32; Square::COUNT]);
+pub struct Psqt([Score; Square::COUNT]);
 
 impl Psqt {
-    /// Fetch the Piece-Square Table value for `piece` at `square`.
+    /// Fetch the mid-game and end-game evaluations for a `piece` at `square`.
     #[inline(always)]
-    pub fn eval(piece: Piece, square: Square, endgame_weight: i32) -> i32 {
+    pub fn evals(piece: Piece, square: Square) -> (Score, Score) {
         let (mg, eg) = Self::get_tables_for(piece.kind());
 
         // Get the rank-relative square for this piece
         let square = square.rank_relative_to(piece.color());
 
-        // Interpolate between the mid-game and end-game tables
-        lerp_i32(mg.get(square), eg.get(square), endgame_weight)
+        (mg.get(square), eg.get(square))
     }
 
     /// Fetch the Piece-Square Tables (middle-game and end-game) for the provided [`PieceKind`].
@@ -187,13 +186,13 @@ impl Psqt {
 
     /// Creates a new [`Psqt`] for the provided [`PieceKind`] and array of values.
     const fn new(kind: PieceKind, psqt: [i32; Square::COUNT]) -> Self {
-        let mut flipped = psqt;
+        let mut flipped = [Score::DRAW; Square::COUNT];
 
         let mut i = 0;
         while i < psqt.len() {
             // Flip the rank, not the file, so it can be used from White's perspective without modification
             // Also add in the value of this piece
-            flipped[i] = psqt[i ^ 56] + value_of(kind);
+            flipped[i] = Score(psqt[i ^ 56] + value_of(kind));
             // flipped[i] = value_of(kind); // Functions like a material-only eval
             i += 1;
         }
@@ -203,13 +202,13 @@ impl Psqt {
 
     /// Get the value of this PSQT at the provided square.
     #[inline(always)]
-    pub const fn get(&self, square: Square) -> i32 {
+    pub const fn get(&self, square: Square) -> Score {
         self.0[square.index()]
     }
 
     /// Get the value of this PSQT at the provided square, relative to `color`.
     #[inline(always)]
-    pub const fn get_relative(&self, square: Square, color: Color) -> i32 {
+    pub const fn get_relative(&self, square: Square, color: Color) -> Score {
         self.get(square.rank_relative_to(color))
     }
 }
@@ -246,39 +245,29 @@ impl fmt::Display for Psqt {
     }
 }
 
-/// Performs linear interpolation between `x` and `y` by `t`, as integer values.
-#[inline(always)]
-const fn lerp_i32(x: i32, y: i32, t: i32) -> i32 {
-    x + (y - x) * t / 100
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_eval_is_correct_for_colors() {
-        // For every possible endgame weight
-        for endgame_weight in 0..=100 {
-            // Over every possible square
-            for square in Square::iter() {
-                // For every piece
-                for kind in PieceKind::all() {
-                    // Assert that White's PSQT eval is equal to Black's equivalent PSQT eval
-                    let white = Psqt::eval(Piece::new(Color::White, kind), square, endgame_weight);
-                    let black = Psqt::eval(
-                        Piece::new(Color::Black, kind),
-                        square.rank_relative_to(Color::Black),
-                        endgame_weight,
-                    );
+        // Over every possible square
+        for square in Square::iter() {
+            // For every piece
+            for kind in PieceKind::all() {
+                // Assert that White's PSQT eval is equal to Black's equivalent PSQT eval
+                let white = Psqt::evals(Piece::new(Color::White, kind), square);
+                let black = Psqt::evals(
+                    Piece::new(Color::Black, kind),
+                    square.rank_relative_to(Color::Black),
+                );
 
-                    assert_eq!(
-                        white,
-                        black,
-                        "{} on {square} (weight := {endgame_weight}%): {white} (white) != {black} (black)",
-                        kind.name()
-                    );
-                }
+                assert_eq!(
+                    white,
+                    black,
+                    "{} on {square}: {white:?} (white) != {black:?} (black)",
+                    kind.name()
+                );
             }
         }
     }

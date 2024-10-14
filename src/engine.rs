@@ -285,11 +285,12 @@ impl Engine {
     /// Executes the `eval` command, printing an evaluation of the current position.
     fn eval(&self, pretty: bool) {
         let evaluator = Evaluator::new(&self.game);
-        if pretty {
-            print!("{evaluator}\n\nScore: ");
-        }
 
-        println!("{}", evaluator.eval());
+        if pretty {
+            println!("{evaluator}");
+        } else {
+            println!("{}", evaluator.eval());
+        }
     }
 
     /// Display info about the internal hash table(s)
@@ -396,10 +397,8 @@ impl Engine {
 
         // If there was a square provided, print the eval for that square
         if let Some(square) = square {
-            let mg_value = mg.get_relative(square, piece.color());
-            let eg_value = eg.get_relative(square, piece.color());
-
-            let value = Psqt::eval(piece, square, weight);
+            let (mg_value, eg_value) = Psqt::evals(piece, square);
+            let value = mg_value.lerp(eg_value, weight);
             println!("[{mg_value}, {eg_value}] := {value}");
         } else {
             // Otherwise, print both the middle-game and end-game tables

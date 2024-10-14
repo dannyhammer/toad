@@ -41,6 +41,7 @@ In addition to the above UCI commands, Toad also supports the following custom c
 -   `moves`: Show all legal moves on the current position, or for a given square.
 -   `option`: Display the current value of the specified option.
 -   `perft`: Execute a perft on the current position at a supplied depth, printing the total nodes.
+-   `psqt`: View the piece-square tables (or a square's value) for the provided piece.
 -   `splitperft`: Execute a splitperft on the current position at a supplied depth, printing the total nodes.
 
 ### UCI Options
@@ -83,6 +84,8 @@ Toad uses several state-of-the-art techniques in [chess programming](https://www
         -   [TT moves](https://www.chessprogramming.org/Hash_Move)
 -   Evaluation:
     -   [Material difference](https://www.chessprogramming.org/Material)
+    -   [Piece-Square Tables](https://www.chessprogramming.org/Piece-Square_Tables) with initial values from [PeSTO](https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function#Source_Code)
+    -   [Tapered Evaluation](https://www.chessprogramming.org/Tapered_Eval)
 
 More features will be added as development continues!
 

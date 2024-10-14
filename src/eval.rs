@@ -22,6 +22,7 @@ const INITIAL_MATERIAL_VALUE: i32 = value_of(PieceKind::Pawn) * 16
 /// Generally, a high score is good for White, and a low score is good for Black.
 /// However, during a negamax search, positions must be evaluated from the side-to-move's perspective.
 /// That is, if it is Black's turn, a "good" evaluation for Black will be a positive number.
+#[derive(Debug, Clone)]
 pub struct Evaluator<'a> {
     /// The game whose position to evaluate.
     game: &'a Game,
@@ -57,19 +58,26 @@ impl<'a> Evaluator<'a> {
     /// A positive/high number is good for the `color`, while a negative number is better for the opponent.
     /// A score of 0 is considered equal.
     #[inline(always)]
-    fn eval_for(self, color: Color) -> Score {
-        self.game
-            .board()
-            .iter()
-            .fold(Score::DRAW, |score, (square, piece)| {
-                let value = Psqt::eval(piece, square, self.endgame_weight);
+    fn eval_for(&self, color: Color) -> Score {
+        // By default, both scores are draws.
+        let mut mg = Score::DRAW;
+        let mut eg = Score::DRAW;
 
-                if piece.color() == color {
-                    score + value
-                } else {
-                    score - value
-                }
-            })
+        // Iterate over every occupied square
+        for (square, piece) in self.game.board() {
+            let (mg_psqt_score, eg_psqt_score) = Psqt::evals(piece, square);
+
+            // Flip scores appropriately to evaluate from `color`'s perspective
+            if color == piece.color() {
+                mg += mg_psqt_score;
+                eg += eg_psqt_score;
+            } else {
+                mg -= mg_psqt_score;
+                eg -= eg_psqt_score;
+            }
+        }
+
+        mg.lerp(eg, self.endgame_weight)
     }
 
     /// Fetches the value for the piece on the specified square, if one exists.
@@ -78,16 +86,16 @@ impl<'a> Evaluator<'a> {
     #[inline(always)]
     fn value_at(&self, square: Square) -> Option<Score> {
         self.game.piece_at(square).map(|piece| {
-            Score(
-                Psqt::eval(piece, square, self.endgame_weight)
-                    * piece.color().negation_multiplier() as i32,
-            )
+            let (mg, eg) = Psqt::evals(piece, square);
+            mg.lerp(eg, self.endgame_weight) * piece.color().negation_multiplier() as i32
         })
     }
 }
 
 impl fmt::Display for Evaluator<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let color = self.game.side_to_move();
+
         let ranks = Rank::iter().rev();
 
         write!(f, "  +")?;
@@ -137,7 +145,24 @@ impl fmt::Display for Evaluator<'_> {
             write!(f, "     {file}")?;
         }
 
+        let score = self.eval_for(color);
+
+        let winning_side = if score > Score::DRAW {
+            Some(color)
+        } else if score < Score::DRAW {
+            Some(color.opponent())
+        } else {
+            None
+        };
+
         writeln!(f, "\n\nEndgame: {}%", self.endgame_weight)?;
+        writeln!(
+            f,
+            "Winning side: {}",
+            winning_side.map(|c| c.name()).unwrap_or("N/A")
+        )?;
+        writeln!(f, "Score: {score}")?;
+
         Ok(())
     }
 }

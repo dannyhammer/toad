@@ -15,7 +15,7 @@ use crate::MAX_DEPTH;
 /// This value is internally capped at [`Self::INF`].
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct Score(pub(crate) i32);
+pub struct Score(pub i32);
 
 impl Score {
     /// Largest possible score ever achievable.
@@ -118,6 +118,12 @@ impl Score {
     pub fn normalize(&self) -> f32 {
         // let max = Score::MATE.0 as f32;
         self.0 as f32 / 100.0
+    }
+
+    /// Performs linear interpolation between `self` and `other` by `t` where `t` is `[0, 100]`.
+    #[inline(always)]
+    pub const fn lerp(self, other: Self, t: i32) -> Self {
+        Self(self.0 + (other.0 - self.0) * t / 100)
     }
 }
 
