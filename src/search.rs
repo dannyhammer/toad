@@ -106,8 +106,22 @@ impl SearchConfig {
             // Only calculate timeouts if a time was provided
             if let Some(time) = time {
                 let inc = inc.unwrap_or(Duration::ZERO);
-                config.soft_timeout = time / 20 + inc / 2; // Soft Timeout: 5% of time remaining + 50% time increment
-                config.hard_timeout = time / 5 + inc / 2; // Hard Timeout: 20% of time remaining + 50% time increment
+
+                // INPUT: go wtime 8000 btime 8000 winc 80 binc 80
+
+                let timeout = time / 20 + 3 * inc / 4; // 5% of time remaining + 75% time increment
+
+                // info string Soft timeout := 460ms
+                config.soft_timeout = 2 * timeout / 2;
+                // info string Soft timeout := 306ms
+                // config.soft_timeout = 2 * timeout / 3;
+                // info string Hard timeout := 920ms
+                config.hard_timeout = 2 * timeout;
+
+                // info string Soft timeout := 440ms
+                // config.soft_timeout = time / 20 + inc / 2; // Soft Timeout: 5% of time remaining + 50% time increment
+                // info string Hard timeout := 1640ms
+                // config.hard_timeout = time / 5 + inc / 2; // Hard Timeout: 20% of time remaining + 50% time increment
             }
         }
 

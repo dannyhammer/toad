@@ -16,6 +16,7 @@ Code for parsing UCI commands and responses is handled by a crate of mine, [`uci
 
 The following UCI commands (and arguments) are supported:
 
+-   `debug [ on | off ]`
 -   `uci`
 -   `isready`
 -   `setoption name <x> [value <y>]`
