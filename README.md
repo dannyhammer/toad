@@ -7,6 +7,8 @@ It is built upon [`chessie`](https://crates.io/crates/chessie), my chess crate w
 
 By default, Toad will print its version and authors and await input via `stdin`.
 For convenience, you can run any of Toad's commands on startup and Toad will exit immediately after that command's execution.
+To run multiple commands on startup, pass them in with the `-c "<command>"` flag.
+You can pass in the `--no-exit` flag to continue execution after the command(s) have finished executing.
 Run the engine and execute the `help` command to see a list of available commands.
 
 ### UCI
