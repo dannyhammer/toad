@@ -10,6 +10,8 @@ mod cli;
 mod engine;
 /// Evaluation of chess positions.
 mod eval;
+/// Piece-Square tables.
+mod psqt;
 /// Types and utilities for rating how good/bad a position is.
 mod score;
 /// Main engine logic; all search related code.
@@ -22,6 +24,7 @@ mod utils;
 pub use cli::*;
 pub use engine::*;
 use eval::*;
+use psqt::*;
 use score::*;
 use search::*;
 use ttable::*;

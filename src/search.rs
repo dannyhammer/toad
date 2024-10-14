@@ -418,7 +418,7 @@ impl<'a> Search<'a> {
     fn quiescence_search<const DEBUG: bool>(
         &mut self,
         game: &Game,
-        ply: i32,
+        _ply: i32,
         mut alpha: Score,
         beta: Score,
     ) -> Result<Score> {
@@ -477,7 +477,7 @@ impl<'a> Search<'a> {
                 self.history.push(*new_game.position());
 
                 // Recurse
-                let score = -self.quiescence_search::<DEBUG>(&new_game, ply + 1, -beta, -alpha)?;
+                let score = -self.quiescence_search::<DEBUG>(&new_game, _ply + 1, -beta, -alpha)?;
 
                 // Pop the move from the history
                 self.history.pop();
@@ -647,9 +647,9 @@ const MVV_LVA: [[i32; PieceKind::COUNT]; PieceKind::COUNT] = {
             // bench: 27609398 nodes 5716479 nps
             // let score = (victim * 10 + (count - attacker)) as i32;
 
-            // Default MVV-LVA; Assigns negative values for King attacks
-            // bench: 30937536 nodes 5867022 nps
-            // let score = 10 * value_of(vtm) - value_of(atk);
+            // Default MVV-LVA except that the King is assigned a value of 0 if he is attacking
+            // bench: 27032804 nodes 8136592 nps
+            let score = 10 * value_of(vtm) - value_of(atk);
 
             // If the attacker is the King, the score is half the victim's value.
             // This encourages the King to attack, but not as strongly as other pieces.
@@ -660,15 +660,6 @@ const MVV_LVA: [[i32; PieceKind::COUNT]; PieceKind::COUNT] = {
             //     // Standard MVV-LVA computation
             //     10 * value_of(vtm) - value_of(atk)
             // };
-
-            // Default MVV-LVA except that the King is assigned a value of 0 if he is attacking
-            // bench: 27032804 nodes 8136592 nps
-            let score = if attacker == count - 1 {
-                10 * value_of(vtm)
-            } else {
-                // Standard MVV-LVA computation
-                10 * value_of(vtm) - value_of(atk)
-            };
 
             matrix[attacker][victim] = score;
             victim += 1;
