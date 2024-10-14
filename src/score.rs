@@ -10,12 +10,12 @@ use uci_parser::UciScore;
 
 use crate::MAX_DEPTH;
 
-/// A numerical representation of the evaluation of a position / move.
+/// A numerical representation of the evaluation of a position / move, in units of ["centipawns"](https://www.chessprogramming.org/Score).
 ///
 /// This value is internally capped at [`Self::INF`].
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct Score(pub(crate) i32);
+pub struct Score(pub i32);
 
 impl Score {
     /// Largest possible score ever achievable.
@@ -109,6 +109,21 @@ impl Score {
     #[inline(always)]
     pub const fn abs(self) -> Self {
         Self(self.0.abs())
+    }
+
+    /// "Normalizes" a score so that it can be printed as a float.
+    ///
+    /// Presently, this just divides by 100, since a score represents a centipawn value.
+    #[inline(always)]
+    pub fn normalize(&self) -> f32 {
+        // let max = Score::MATE.0 as f32;
+        self.0 as f32 / 100.0
+    }
+
+    /// Performs linear interpolation between `self` and `other` by `t` where `t` is `[0, 100]`.
+    #[inline(always)]
+    pub const fn lerp(self, other: Self, t: i32) -> Self {
+        Self(self.0 + (other.0 - self.0) * t / 100)
     }
 }
 

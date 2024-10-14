@@ -4,7 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use chessie::Square;
+use chessie::{Piece, Square};
 use clap::Parser;
 use uci_parser::UciCommand;
 
@@ -59,13 +59,35 @@ pub enum EngineCommand {
     /// Shows all legal moves in the current position.
     ///
     /// If `square` is provided, it will display all available moves from that square.
-    Moves { square: Option<Square> },
+    Moves {
+        square: Option<Square>,
+
+        // If set, a Bitboard of all possible moves will also be displayed
+        #[arg(short, long, default_value = "false")]
+        pretty: bool,
+    },
 
     /// Display the current value of the specified option.
     Option { name: String },
 
     /// Performs a perft on the current position at the supplied depth, printing total node count.
     Perft { depth: usize },
+
+    /// Outputs the Piece-Square table value for the provided piece at the provided square, scaled with the endgame weight.
+    ///
+    /// If no square was provided, the entire table(s) will be printed.
+    /// If no endgame weight was provided, it will be computed from the current game state.
+    #[command(aliases = ["psq", "pst"])]
+    Psqt {
+        /// The piece whose Piece-Square table value(s) to fetch.
+        piece: Piece,
+
+        /// Evaluate `piece` at `square`.
+        square: Option<Square>,
+
+        /// Evaluate `piece` at `square` with the provided endgame weight [0-100].
+        endgame_weight: Option<i32>,
+    },
 
     /// Performs a split perft on the current position at the supplied depth.
     #[command(alias = "sperft")]

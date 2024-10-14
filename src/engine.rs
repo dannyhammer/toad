@@ -16,12 +16,12 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use chessie::{print_perft, Game, Move, Position, Square};
+use chessie::{print_perft, Bitboard, Game, Move, Piece, Position, Square};
 use clap::Parser;
 use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
-    EngineCommand, Evaluator, Search, SearchConfig, SearchResult, TTable, BENCHMARK_FENS,
+    EngineCommand, Evaluator, Psqt, Search, SearchConfig, SearchResult, TTable, BENCHMARK_FENS,
     BYTES_IN_MB,
 };
 
@@ -144,7 +144,7 @@ impl Engine {
                     }
                 }
 
-                EngineCommand::Moves { square } => self.moves(square),
+                EngineCommand::Moves { square, pretty } => self.moves(square, pretty),
 
                 EngineCommand::Option { name } => {
                     if let Some(value) = self.get_option(&name) {
@@ -157,6 +157,12 @@ impl Engine {
                 EngineCommand::Perft { depth } => {
                     print_perft::<false, false>(&self.game, depth);
                 }
+
+                EngineCommand::Psqt {
+                    piece,
+                    square,
+                    endgame_weight: weight,
+                } => self.psqt(piece, square, weight),
 
                 EngineCommand::Splitperft { depth } => {
                     print_perft::<false, true>(&self.game, depth);
@@ -279,11 +285,12 @@ impl Engine {
     /// Executes the `eval` command, printing an evaluation of the current position.
     fn eval(&self, pretty: bool) {
         let evaluator = Evaluator::new(&self.game);
-        if pretty {
-            print!("{evaluator}\n\nScore: ");
-        }
 
-        println!("{}", evaluator.eval());
+        if pretty {
+            println!("{evaluator}");
+        } else {
+            println!("{}", evaluator.eval());
+        }
     }
 
     /// Display info about the internal hash table(s)
@@ -313,7 +320,8 @@ impl Engine {
         self.game.make_move(mv);
     }
 
-    fn moves(&self, square: Option<Square>) {
+    /// Executes the `moves` command, displaying all available moves on the board, or for the given square.
+    fn moves(&self, square: Option<Square>, pretty: bool) {
         // Get the legal moves
         let moves = if let Some(square) = square {
             self.game.get_legal_moves_from(square.into())
@@ -322,17 +330,24 @@ impl Engine {
         };
 
         // If there are none, print "(none)"
-        let moves_string = if moves.is_empty() {
-            String::from("(none)")
+        if moves.is_empty() {
+            println!("(none)")
         } else {
-            // Otherwise, join them by comma-space
-            moves
-                .into_iter()
+            // Join by comma-space
+            let string = moves
+                .iter()
                 .map(|mv| mv.to_string())
                 .collect::<Vec<_>>()
-                .join(", ")
-        };
-        println!("{moves_string}");
+                .join(", ");
+
+            // If pretty-printing, also display a Bitboard of all possible destinations
+            if pretty {
+                let bb = moves.iter().map(|mv| mv.to()).collect::<Bitboard>();
+                println!("{bb:?}\n\nmoves: {string}");
+            } else {
+                println!("{string}");
+            }
+        }
     }
 
     /// Resets the engine's internal game state.
@@ -371,6 +386,37 @@ impl Engine {
         }
 
         Ok(())
+    }
+
+    /// Executes the `psqt` command, printing the piece-square table info for the provided piece.
+    fn psqt(&self, piece: Piece, square: Option<Square>, endgame_weight: Option<i32>) {
+        // Compute the current endgame weight, if it wasn't provided
+        let weight = endgame_weight.unwrap_or(Evaluator::new(&self.game).endgame_weight);
+        // Fetch the middle-game and end-game tables
+        let (mg, eg) = Psqt::get_tables_for(piece.kind());
+
+        // If there was a square provided, print the eval for that square
+        if let Some(square) = square {
+            let (mg_value, eg_value) = Psqt::evals(piece, square);
+            let value = mg_value.lerp(eg_value, weight);
+            println!("[{mg_value}, {eg_value}] := {value}");
+        } else {
+            // Otherwise, print both the middle-game and end-game tables
+            let name = piece.name();
+
+            // If the piece is Black, flip the tables when printing
+            let f = |psqt| {
+                if piece.is_white() {
+                    format!("{psqt}")
+                } else {
+                    format!("{psqt:#}")
+                }
+            };
+
+            println!("Mid-game table for {name}:\n{}", f(mg));
+            println!();
+            println!("End-game table for {name}:\n{}", f(eg));
+        }
     }
 
     /// Sets the search flag to signal that the engine is starting/stopping a search.
