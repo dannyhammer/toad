@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.6.0](https://github.com/dannyhammer/toad/compare/v0.5.0...v0.6.0) (2024-10-14)
+
+
+### Features
+
+* added `psqt` command to view Piece-Square table value for a given piece/square ([5a11b2f](https://github.com/dannyhammer/toad/commit/5a11b2f8ec6a185003347777a965f33b81f08f50))
+* added 50-move-rule draw detection in search ([6dfc16e](https://github.com/dannyhammer/toad/commit/6dfc16e92fd972a0fd8071c2d2bdf81768b4e091))
+* added 50-move-rule draw detection in search ([76c405f](https://github.com/dannyhammer/toad/commit/76c405ff8c5e7ceb630a892efb7c6f463ed3946d))
+* added draw by insufficient material check ([e54d937](https://github.com/dannyhammer/toad/commit/e54d9376ec0c6abdfa6051946996b16010b96354))
+* added Piece-Square tables (PeSTO's values) ([5a11b2f](https://github.com/dannyhammer/toad/commit/5a11b2f8ec6a185003347777a965f33b81f08f50))
+* added quiescence search ([041a95d](https://github.com/dannyhammer/toad/commit/041a95d4d9a24513e23f53cdd8abe22f8048eae8))
+* added repetition checks to qsearch ([e54d937](https://github.com/dannyhammer/toad/commit/e54d9376ec0c6abdfa6051946996b16010b96354))
+* added support for `debug` command ([533f7e9](https://github.com/dannyhammer/toad/commit/533f7e991657b546831f00dfd2e2c8165c88082d))
+* added TTable and TT move ordering ([fa94f94](https://github.com/dannyhammer/toad/commit/fa94f940279360fe639abe26d8c3d7512d3d5260))
+
+
+### Bug Fixes
+
+* fixed bug causing history to not be reset on ucinewgame ([ccfc15f](https://github.com/dannyhammer/toad/commit/ccfc15f339e2fae70ffffba1a15e3c888030d5bc))
+* fixed bug causing unit tests to fail and scores to not display ([3410c50](https://github.com/dannyhammer/toad/commit/3410c501b83c526f134fad96c8346454efcbf5dd))
+* fixed typo causing wrong variable to be used ([16590c3](https://github.com/dannyhammer/toad/commit/16590c3ba68a1caf38e31a4eaceb4cde698dc4c8))
+* hopefully fixed bug with is_repetition ([30ac9f7](https://github.com/dannyhammer/toad/commit/30ac9f7c40653a6d3e2775982d480d2e8ea8828a))
+
 ## [0.5.0](https://github.com/dannyhammer/toad/compare/v0.4.0...v0.5.0) (2024-10-10)
 
 
