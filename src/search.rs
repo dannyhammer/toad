@@ -5,6 +5,7 @@
  */
 
 use std::{
+    fmt,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -13,7 +14,7 @@ use std::{
 };
 
 use anyhow::{bail, Result};
-use chessie::{Game, Move, PieceKind, Position, ZobristKey};
+use chessie::{Game, Move, MoveList, PieceKind, Position, ZobristKey};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{value_of, Evaluator, Score, TTable, TTableEntry};
@@ -102,10 +103,12 @@ impl SearchConfig {
                 (options.btime, options.binc)
             };
 
-            let (time, inc) = (time.unwrap_or(Duration::MAX), inc.unwrap_or(Duration::ZERO));
-
-            config.soft_timeout = time / 20 + inc / 2; // Soft Timeout: 5% of time remaining + 50% time increment
-            config.hard_timeout = time / 5 + inc / 2; // Hard Timeout: 20% of time remaining + 50% time increment
+            // Only calculate timeouts if a time was provided
+            if let Some(time) = time {
+                let inc = inc.unwrap_or(Duration::ZERO);
+                config.soft_timeout = time / 20 + inc / 2; // Soft Timeout: 5% of time remaining + 50% time increment
+                config.hard_timeout = time / 5 + inc / 2; // Hard Timeout: 20% of time remaining + 50% time increment
+            }
         }
 
         config
@@ -171,26 +174,45 @@ impl<'a> Search<'a> {
     /// This is the entrypoint of the search, and prints UCI info before calling [`Self::iterative_deepening`],
     /// and concluding by sending the `bestmove` message and exiting.
     #[inline(always)]
-    pub fn start(mut self, game: &Game) -> SearchResult {
-        self.send_info(UciInfo::new().string(format!("Starting search on {:?}", game.to_fen())));
-        // println!(
-        //     "info string Soft timeout {}ms",
-        //     self.config.soft_timeout.as_millis()
-        // );
-        // println!(
-        //     "info string Hard timeout {}ms",
-        //     self.config.hard_timeout.as_millis()
-        // );
+    pub fn start<const DEBUG: bool>(mut self, game: &Game) -> SearchResult {
+        if DEBUG {
+            self.send_string(format!("Starting search on {:?}", game.to_fen()));
 
-        let res = self.iterative_deepening(game);
+            let soft = self.config.soft_timeout.as_millis();
+            let hard = self.config.hard_timeout.as_millis();
+            let nodes = self.config.max_nodes;
+            let depth = self.config.max_depth;
+
+            if soft < Duration::MAX.as_millis() {
+                self.send_string(format!("Soft timeout := {soft}ms"));
+            }
+            if hard < Duration::MAX.as_millis() {
+                self.send_string(format!("Hard timeout := {hard}ms"));
+            }
+            if nodes < u64::MAX {
+                self.send_string(format!("Max nodes := {nodes} nodes"));
+            }
+            if depth < MAX_DEPTH {
+                self.send_string(format!("Max depth := {depth}"));
+            }
+        }
+
+        let res = self.iterative_deepening::<DEBUG>(game);
+
+        if DEBUG {
+            let hits = self.ttable.hits;
+            let accesses = self.ttable.accesses;
+            let hit_rate = hits as f32 / accesses as f32 * 100.0;
+            let collisions = self.ttable.collisions;
+            let info = format!("TT stats: {hits} hits / {accesses} accesses ({hit_rate:.2}% hit rate), {collisions} collisions");
+            self.send_string(info);
+        }
 
         // Search has ended; send bestmove
-        let response = UciResponse::BestMove {
+        self.send_response(UciResponse::BestMove {
             bestmove: res.bestmove,
             ponder: None,
-        };
-
-        println!("{response}");
+        });
 
         // Search has concluded, alert other thread(s) that we are no longer searching
         self.is_searching.store(false, Ordering::Relaxed);
@@ -198,10 +220,23 @@ impl<'a> Search<'a> {
         res
     }
 
+    /// Sends a [`UciResponse`] to `stdout`.
+    #[inline(always)]
+    fn send_response<T: fmt::Display>(&self, response: UciResponse<T>) {
+        println!("{response}");
+    }
+
+    /// Sends a [`UciInfo`] to `stdout`.
     #[inline(always)]
     fn send_info(&self, info: UciInfo) {
-        let resp = UciResponse::<String>::Info(Box::new(info));
-        println!("{resp}");
+        let resp = UciResponse::<&str>::Info(Box::new(info));
+        self.send_response(resp);
+    }
+
+    /// Helper to send a [`UciInfo`] containing only a `string` message to `stdout`.
+    #[inline(always)]
+    fn send_string<T: fmt::Display>(&self, string: T) {
+        self.send_info(UciInfo::new().string(string));
     }
 
     /// Performs [iterative deepening](https://www.chessprogramming.org/Iterative_Deepening) (ID) on the Search's position.
@@ -212,7 +247,7 @@ impl<'a> Search<'a> {
     /// However, with features such as move ordering, a/b pruning, and aspiration windows, ID enhances performance.
     ///
     /// After each iteration, we check if we've exceeded our `soft_timeout` and, if we haven't, we run a search at a greater depth.
-    fn iterative_deepening(&mut self, game: &Game) -> SearchResult {
+    fn iterative_deepening<const DEBUG: bool>(&mut self, game: &Game) -> SearchResult {
         // Initialize `bestmove` to the first move available
         let mut result = SearchResult {
             bestmove: game.into_iter().next(),
@@ -230,24 +265,33 @@ impl<'a> Search<'a> {
             && depth <= self.config.max_depth
         {
             // If the search returned an error, it was cancelled, so exit the iterative deepening loop.
-            match self.negamax(game, depth, 0, alpha, beta) {
+            match self.negamax::<DEBUG>(game, depth, 0, alpha, beta) {
                 // Success; update the score
                 Ok(score) => result.score = score,
 
                 // Search was canceled; exit
                 Err(e) => {
-                    self.send_info(UciInfo::new().string(format!(
-                        "Search cancelled during depth {depth} while evaluating {} with score {}: {e}",
-                        result.bestmove.unwrap_or_default(),
-                        result.score
-                    )));
+                    if DEBUG {
+                        if let Some(bestmove) = result.bestmove {
+                            self.send_string(format!(
+                                "Search cancelled during depth {depth} while evaluating {bestmove} with score {}: {e}",
+                                result.score
+                                ));
+                        } else {
+                            self.send_string(format!(
+                                "Search cancelled during depth {depth} with score {} and no bestmove: {e}",
+                                result.score
+                            ));
+                        }
+                    }
 
                     break;
                 }
             }
 
             // Get the bestmove from the TTable
-            result.bestmove = self.ttable.get(&game.key()).map(|entry| entry.bestmove);
+            // This is guaranteed to be a cache hit, so don't log it as such
+            result.bestmove = self.get_tt_bestmove::<false>(game.key());
 
             // Send search info to the GUI
             let elapsed = self.config.starttime.elapsed();
@@ -279,7 +323,7 @@ impl<'a> Search<'a> {
     /// Primary location of search logic.
     ///
     /// Uses the [negamax](https://www.chessprogramming.org/Negamax) algorithm in a [fail soft](https://www.chessprogramming.org/Alpha-Beta#Negamax_Framework) framework.
-    fn negamax(
+    fn negamax<const DEBUG: bool>(
         &mut self,
         game: &Game,
         depth: u8,
@@ -292,8 +336,7 @@ impl<'a> Search<'a> {
 
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
-            return self.quiescence_search(game, ply, alpha, beta);
-            // return Ok((None, Evaluator::new(game).eval()));
+            return self.quiescence_search::<DEBUG>(game, ply, alpha, beta);
         }
 
         // If there are no legal moves, it's either mate or a draw.
@@ -311,7 +354,7 @@ impl<'a> Search<'a> {
         }
 
         // Sort moves so that we look at "promising" ones first
-        let tt_move = self.get_tt_bestmove(game.key());
+        let tt_move = self.get_tt_bestmove::<DEBUG>(game.key());
         moves.sort_by_cached_key(|mv| score_move(game, mv, tt_move));
 
         // Start with a *really bad* initial score
@@ -337,7 +380,7 @@ impl<'a> Search<'a> {
                 self.history.push(*new_game.position());
 
                 // Recurse
-                let score = -self.negamax(&new_game, depth - 1, ply + 1, -beta, -alpha)?;
+                let score = -self.negamax::<DEBUG>(&new_game, depth - 1, ply + 1, -beta, -alpha)?;
 
                 // Pop the move from the history
                 self.history.pop();
@@ -363,7 +406,7 @@ impl<'a> Search<'a> {
         }
 
         // Save this node to the TTable
-        self.save_to_ttable(game.key(), bestmove, best, original_alpha, beta, depth, ply);
+        self.save_to_ttable::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, depth, ply);
 
         Ok(best)
     }
@@ -372,7 +415,7 @@ impl<'a> Search<'a> {
     ///
     /// A search that looks at only possible captures and capture-chains.
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
-    fn quiescence_search(
+    fn quiescence_search<const DEBUG: bool>(
         &mut self,
         game: &Game,
         ply: i32,
@@ -395,8 +438,8 @@ impl<'a> Search<'a> {
         let mut captures = game
             .get_legal_moves()
             .into_iter()
-            .filter(|mv| mv.is_capture())
-            .collect::<chessie::MoveList>();
+            .filter(Move::is_capture)
+            .collect::<MoveList>();
 
         // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
         // So, if there are no captures available, just return the current evaluation.
@@ -408,7 +451,7 @@ impl<'a> Search<'a> {
         // If we made it here, then we're examining this node
         self.nodes += 1;
 
-        let tt_move = self.get_tt_bestmove(game.key());
+        let tt_move = self.get_tt_bestmove::<DEBUG>(game.key());
         captures.sort_by_cached_key(|mv| score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
@@ -434,7 +477,7 @@ impl<'a> Search<'a> {
                 self.history.push(*new_game.position());
 
                 // Recurse
-                let score = -self.quiescence_search(&new_game, ply + 1, -beta, -alpha)?;
+                let score = -self.quiescence_search::<DEBUG>(&new_game, ply + 1, -beta, -alpha)?;
 
                 // Pop the move from the history
                 self.history.pop();
@@ -460,7 +503,8 @@ impl<'a> Search<'a> {
             }
         }
 
-        // Save this node to the TTable
+        // Save this node to the TTable IF AND ONLY IF we don't already have an entry with a BETTER move for this
+        // Since QSearch doesn't search *every* move, we could possibly have a non-capture move that's better for this position than anything we found during this search.
         // self.save_to_ttable(game.key(), bestmove, best, original_alpha, beta, 0, ply);
 
         Ok(best) // fail-soft
@@ -510,7 +554,7 @@ impl<'a> Search<'a> {
 
     /// Saves the provided data to an entry in the TTable.
     #[allow(clippy::too_many_arguments)]
-    fn save_to_ttable(
+    fn save_to_ttable<const DEBUG: bool>(
         &mut self,
         key: ZobristKey,
         bestmove: Move,
@@ -520,14 +564,32 @@ impl<'a> Search<'a> {
         depth: u8,
         ply: i32,
     ) {
-        self.ttable.store(TTableEntry::new(
-            key, bestmove, score, alpha, beta, depth, ply,
-        ));
+        let entry = TTableEntry::new(key, bestmove, score, alpha, beta, depth, ply);
+        let old = self.ttable.store(entry);
+
+        if DEBUG {
+            // If a previous entry existed and had a *different* key, this was a collision
+            if old.is_some_and(|old| old.key != key) {
+                self.ttable.collisions += 1;
+            }
+        }
     }
 
     /// Gets the bestmove for the provided position from the TTable, if it exists.
-    fn get_tt_bestmove(&self, key: ZobristKey) -> Option<Move> {
-        self.ttable.get(&key).map(|entry| entry.bestmove)
+    fn get_tt_bestmove<const DEBUG: bool>(&mut self, key: ZobristKey) -> Option<Move> {
+        let mv = self.ttable.get(&key).map(|entry| entry.bestmove);
+
+        if DEBUG {
+            // Regardless whether this was a hit, it was still an access
+            self.ttable.accesses += 1;
+
+            // If a move was found, this was a hit
+            if mv.is_some() {
+                self.ttable.hits += 1;
+            }
+        }
+
+        mv
     }
 }
 
@@ -653,7 +715,7 @@ mod tests {
         let mut ttable = Default::default();
         let search = Search::new(is_searching, config, Default::default(), &mut ttable);
 
-        search.start(&game)
+        search.start::<false>(&game)
     }
 
     fn ensure_is_mate_in(fen: &str, config: SearchConfig, moves: i32) -> SearchResult {
