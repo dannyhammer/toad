@@ -109,7 +109,7 @@ impl SearchConfig {
 
                 // INPUT: go wtime 8000 btime 8000 winc 80 binc 80
 
-                let timeout = time / 20 + 3 * inc / 4; // 5% of time remaining + 75% time increment
+                let timeout = time / 20 + inc / 2; // 5% of time remaining + 50% time increment
 
                 // info string Soft timeout := 460ms
                 config.soft_timeout = timeout;
@@ -121,10 +121,10 @@ impl SearchConfig {
                 // config.hard_timeout = 2 * timeout;
 
                 // info string Hard timeout := 1380ms
-                // config.hard_timeout = 3 * timeout;
+                config.hard_timeout = 3 * timeout;
 
                 // info string Hard timeout := 1840ms
-                config.hard_timeout = 4 * timeout;
+                // config.hard_timeout = 4 * timeout;
 
                 // CURRENT WAY:
                 // info string Soft timeout := 440ms
