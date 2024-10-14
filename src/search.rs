@@ -111,20 +111,20 @@ impl SearchConfig {
 
                 let timeout = time / 20 + inc / 2; // 5% of time remaining + 50% time increment
 
-                // info string Soft timeout := 460ms
+                // info string Soft timeout := 440ms
                 config.soft_timeout = timeout;
 
-                // info string Soft timeout := 306ms
+                // info string Soft timeout := 293ms
                 // config.soft_timeout = 2 * timeout / 3;
 
-                // info string Hard timeout := 920ms
+                // info string Hard timeout := 880ms
                 // config.hard_timeout = 2 * timeout;
 
-                // info string Hard timeout := 1380ms
-                config.hard_timeout = 3 * timeout;
+                // info string Hard timeout := 1320ms
+                // config.hard_timeout = 3 * timeout;
 
-                // info string Hard timeout := 1840ms
-                // config.hard_timeout = 4 * timeout;
+                // info string Hard timeout := 1760ms
+                config.hard_timeout = 4 * timeout;
 
                 // CURRENT WAY:
                 // info string Soft timeout := 440ms
