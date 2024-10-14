@@ -17,7 +17,6 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use chessie::{print_perft, Bitboard, Game, Move, Piece, Position, Square};
-use clap::Parser;
 use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
@@ -77,6 +76,7 @@ impl Engine {
             search_thread: None,
             ttable: Arc::default(),
             debug: false,
+            // debug: true,
         }
     }
 
@@ -625,13 +625,13 @@ fn input_handler(sender: Sender<EngineCommand>) -> Result<()> {
 
             // If it's not a UCI command, check if it's an engine-specific command
             Err(UciParseError::UnrecognizedCommand { cmd: _ }) => {
-                match EngineCommand::try_parse_from(buf.split_ascii_whitespace()) {
+                match buf.parse() {
                     Ok(cmd) => sender
                         .send(cmd)
                         .context("Failed to send command to engine")?,
 
                     // If it wasn't a custom command, either, print an error.
-                    Err(err) => eprintln!("{err}"),
+                    Err(err) => err.print()?,
                 }
             }
 

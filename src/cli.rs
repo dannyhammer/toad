@@ -4,13 +4,20 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+use std::str::FromStr;
+
 use chessie::{Piece, Square};
 use clap::Parser;
 use uci_parser::UciCommand;
 
 /// A command to be sent to the engine.
 #[derive(Debug, Clone, Parser)]
-#[command(multicall = true, about, rename_all = "lower")]
+#[command(
+    multicall = true,
+    about,
+    rename_all = "lower",
+    override_usage("<ENGINE COMMAND> | <UCI COMMAND>")
+)]
 pub enum EngineCommand {
     /// Run a benchmark with the provided parameters.
     Bench {
@@ -93,14 +100,27 @@ pub enum EngineCommand {
     #[command(alias = "sperft")]
     Splitperft { depth: usize },
 
-    /// Execute a UCI command on the engine.
-    ///
-    /// If you want to send a UCI command on engine startup, you must prefix it with `uci` like so: `./<engine> uci "go depth 5"`.
-    ///
-    /// During runtime, however, UCI commands are accessible normally, so you don't need to call this prefix.
-    // #[command(skip)]
-    // #[command(flatten)]
-    // Uci(UciCommand),
-    #[command(allow_external_subcommands = true)]
+    /// Wrapper over UCI commands sent to the engine.
+    #[command(skip)]
     Uci { cmd: UciCommand },
+}
+
+impl FromStr for EngineCommand {
+    type Err = clap::Error;
+    /// Attempt to parse an [`EngineCommand`] from a string.
+    ///
+    /// If this fails, it will attempt to parse the string as a [`UciCommand`].
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match Self::try_parse_from(s.split_ascii_whitespace()) {
+            Ok(cmd) => Ok(cmd),
+            Err(e) => {
+                // If parsing failed, attempt to parse as a UciCommand
+                if let Ok(cmd) = UciCommand::new(s) {
+                    Ok(Self::Uci { cmd })
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
 }

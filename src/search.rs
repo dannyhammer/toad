@@ -106,6 +106,7 @@ impl SearchConfig {
             // Only calculate timeouts if a time was provided
             if let Some(time) = time {
                 let inc = inc.unwrap_or(Duration::ZERO);
+
                 config.soft_timeout = time / 20 + inc / 2; // Soft Timeout: 5% of time remaining + 50% time increment
                 config.hard_timeout = time / 5 + inc / 2; // Hard Timeout: 20% of time remaining + 50% time increment
             }
