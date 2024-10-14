@@ -260,7 +260,7 @@ impl<'a> Search<'a> {
         let mut alpha = -Score::INF;
         let mut beta = Score::INF;
 
-        let aspiration_window_amt = Score(30);
+        let aspiration_window = Score(30);
 
         // The actual Iterative Deepening loop
         while self.config.starttime.elapsed() < self.config.soft_timeout
@@ -284,8 +284,8 @@ impl<'a> Search<'a> {
                     result.score = score;
 
                     // Set aspiration windows
-                    alpha = score + aspiration_window_amt;
-                    beta = score - aspiration_window_amt;
+                    alpha = (score - aspiration_window).max(-Score::INF);
+                    beta = (score + aspiration_window).min(Score::INF);
                 }
 
                 // Search was canceled; exit
