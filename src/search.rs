@@ -257,8 +257,10 @@ impl<'a> Search<'a> {
 
         // Start at depth 1 because a search at depth 0 makes no sense
         let mut depth = 1;
-        let alpha = -Score::INF;
-        let beta = Score::INF;
+        let mut alpha = -Score::INF;
+        let mut beta = Score::INF;
+
+        let aspiration_window_amt = Score(30);
 
         // The actual Iterative Deepening loop
         while self.config.starttime.elapsed() < self.config.soft_timeout
@@ -267,8 +269,24 @@ impl<'a> Search<'a> {
         {
             // If the search returned an error, it was cancelled, so exit the iterative deepening loop.
             match self.negamax::<DEBUG>(game, depth, 0, alpha, beta) {
-                // Success; update the score
-                Ok(score) => result.score = score,
+                // Success; update the score and set windows
+                Ok(score) => {
+                    // If our evaluation fell outside of our aspiration window, we must do a full re-search
+                    if score <= alpha || score >= beta {
+                        alpha = -Score::INF;
+                        beta = Score::INF;
+
+                        // Don't increase depth; just re-try this iteration
+                        continue;
+                    }
+
+                    // Otherwise, we can update our score and a/b bounds
+                    result.score = score;
+
+                    // Set aspiration windows
+                    alpha = score + aspiration_window_amt;
+                    beta = score - aspiration_window_amt;
+                }
 
                 // Search was canceled; exit
                 Err(e) => {
@@ -609,11 +627,6 @@ fn score_move(game: &Game, mv: &Move, tt_move: Option<Move>) -> Score {
     // Capturing a high-value piece with a low-value piece is a good idea
     if let Some(victim) = game.kind_at(mv.to()) {
         score += MVV_LVA[kind][victim];
-    }
-
-    // Promoting is also a good idea
-    if let Some(promotion) = mv.promotion() {
-        score += value_of(promotion);
     }
 
     -score // We're sorting, so a lower number is better
