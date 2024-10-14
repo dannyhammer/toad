@@ -266,7 +266,7 @@ impl<'a> Search<'a> {
             && depth <= self.config.max_depth
         {
             // If the search returned an error, it was cancelled, so exit the iterative deepening loop.
-            match self.negamax::<DEBUG>(game, depth, 0, alpha, beta) {
+            match self.negamax::<DEBUG, true>(game, depth, 0, alpha, beta) {
                 // Success; update the score
                 Ok(score) => result.score = score,
 
@@ -324,7 +324,7 @@ impl<'a> Search<'a> {
     /// Primary location of search logic.
     ///
     /// Uses the [negamax](https://www.chessprogramming.org/Negamax) algorithm in a [fail soft](https://www.chessprogramming.org/Alpha-Beta#Negamax_Framework) framework.
-    fn negamax<const DEBUG: bool>(
+    fn negamax<const DEBUG: bool, const PV: bool>(
         &mut self,
         game: &Game,
         depth: u8,
@@ -363,7 +363,7 @@ impl<'a> Search<'a> {
         let mut bestmove = moves[0]; // Safe because we guaranteed `moves` to be nonempty above
         let original_alpha = alpha;
 
-        for mv in moves {
+        for (i, mv) in moves.into_iter().enumerate() {
             // Check if we can continue searching
             self.check_conditions()?;
 
@@ -378,10 +378,36 @@ impl<'a> Search<'a> {
                 Score::DRAW
             } else {
                 // Append the move onto the history
+                // TODO: Should this bbe OUTSIDE the `score` calculation?
                 self.history.push(*new_game.position());
 
-                // Recurse
-                let score = -self.negamax::<DEBUG>(&new_game, depth - 1, ply + 1, -beta, -alpha)?;
+                // Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
+                let score = if i == 0 {
+                    // Recurse on the principle variation
+                    -self.negamax::<DEBUG, PV>(&new_game, depth - 1, ply + 1, -beta, -alpha)?
+                } else {
+                    // Search with a null window
+                    let mut score = -self.negamax::<DEBUG, false>(
+                        &new_game,
+                        depth - 1,
+                        ply + 1,
+                        -alpha - 1,
+                        -alpha,
+                    )?;
+
+                    // If it failed, perform a full re-search with the full a/b bounds
+                    if alpha < score && score < beta {
+                        score = -self.negamax::<DEBUG, PV>(
+                            &new_game,
+                            depth - 1,
+                            ply + 1,
+                            -beta,
+                            -alpha,
+                        )?;
+                    }
+
+                    score
+                };
 
                 // Pop the move from the history
                 self.history.pop();
@@ -609,11 +635,6 @@ fn score_move(game: &Game, mv: &Move, tt_move: Option<Move>) -> Score {
     // Capturing a high-value piece with a low-value piece is a good idea
     if let Some(victim) = game.kind_at(mv.to()) {
         score += MVV_LVA[kind][victim];
-    }
-
-    // Promoting is also a good idea
-    if let Some(promotion) = mv.promotion() {
-        score += value_of(promotion);
     }
 
     -score // We're sorting, so a lower number is better
