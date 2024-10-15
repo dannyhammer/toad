@@ -67,7 +67,6 @@ fn init(toad: &Engine) {
             match args.parse() {
                 // If this succeeds, send it to the engine
                 Ok(cmd) => {
-                    eprintln!("Parsed {cmd:?}");
                     toad.send_command(cmd);
                     toad.send_command(EngineCommand::Exit { cleanup: true });
                 }
