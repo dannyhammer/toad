@@ -42,26 +42,6 @@ impl AspirationWindow {
         Score(30)
     }
 
-    /// Create a new [`AspirationWindow`] centered around `score`.
-    #[inline(always)]
-    fn new(score: Score) -> Self {
-        // If the score is mate, the windows are less helpful, so reset them
-        let (alpha, beta) = if score.is_mate() {
-            (-Score::INF, Score::INF)
-        } else {
-            (
-                (score - Self::delta()).max(-Score::INF),
-                (score + Self::delta()).min(Score::INF),
-            )
-        };
-
-        Self {
-            alpha,
-            beta,
-            // center: score,
-        }
-    }
-
     /// Create a new, infinite window.
     ///
     /// Useful as an initial window, before any bounds/scores are known
@@ -74,6 +54,28 @@ impl AspirationWindow {
         }
     }
 
+    /// Create a new [`AspirationWindow`] centered around `score`.
+    #[inline(always)]
+    fn new(score: Score) -> Self {
+        // If the score is mate, the windows are less helpful, so reset them
+        let (alpha, beta) = 
+        // if score.is_mate() {
+        //     (-Score::INF, Score::INF)
+        // } else {
+            (
+                (score - Self::delta()).max(-Score::INF),
+                (score + Self::delta()).min(Score::INF),
+            );
+        // };
+
+        Self {
+            alpha,
+            beta,
+            // center: score,
+        }
+    }
+
+    /*
     /// Widens the window's `alpha` bound, expanding it downwards.
     ///
     /// Currently, this just resets the bound to negative infinity.
@@ -102,6 +104,7 @@ impl AspirationWindow {
     fn fails_high(&self, score: Score) -> bool {
         self.beta != Score::INF && score >= self.beta
     }
+     */
 }
 
 /// The result of a search, containing the best move found, score, and total nodes searched.
@@ -353,11 +356,19 @@ impl<'a> Search<'a> {
                 // Success; update the score and set windows
                 Ok(score) => {
                     // If the evaluation fell outside the bounds, widen them and re-search
-                    if window.fails_low(score) {
-                        window.widen_down();
-                        continue;
-                    } else if window.fails_high(score) {
-                        window.widen_up();
+                    // if window.fails_low(score) {
+                    //     window.widen_down();
+                    //     continue;
+                    // } else if window.fails_high(score) {
+                    //     window.widen_up();
+                    //     continue;
+                    // }
+
+                    // If the evaluation fell outside the bounds, widen them and re-search
+                    if score <= window.alpha || score >= window.beta {
+                        window = AspirationWindow::infinite();
+
+                        // Don't increase depth; just re-try this iteration
                         continue;
                     }
 
