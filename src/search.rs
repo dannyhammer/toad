@@ -13,14 +13,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{bail, Result};
 use chessie::{Game, Move, MoveList, PieceKind, Position, ZobristKey};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{value_of, Evaluator, Score, TTable, TTableEntry};
 
 /// Maximum depth that can be searched
-pub const MAX_DEPTH: u8 = u8::MAX;
+pub const MAX_DEPTH: u8 = u8::MAX / 2;
 
 /// The result of a search, containing the best move found, score, and total nodes searched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -33,6 +32,9 @@ pub struct SearchResult {
 
     /// Evaluation of the position after `bestmove` is made.
     pub score: Score,
+
+    // The depth of the search that produced this result.
+    pub depth: u8,
 }
 
 impl Default for SearchResult {
@@ -44,6 +46,7 @@ impl Default for SearchResult {
             nodes: 0,
             bestmove: None,
             score: -Score::INF,
+            depth: 1,
         }
     }
 }
@@ -234,6 +237,22 @@ impl<'a> Search<'a> {
         self.send_response(resp);
     }
 
+    /// Sends UCI info about the conclusion of this search.
+    #[inline(always)]
+    fn send_end_of_search_info(&self, result: &SearchResult) {
+        let elapsed = self.config.starttime.elapsed();
+
+        self.send_info(
+            UciInfo::new()
+                .depth(result.depth)
+                .nodes(self.nodes)
+                .score(result.score)
+                .nps((self.nodes as f32 / elapsed.as_secs_f32()).trunc())
+                .time(elapsed.as_millis())
+                .pv(result.bestmove),
+        );
+    }
+
     /// Helper to send a [`UciInfo`] containing only a `string` message to `stdout`.
     #[inline(always)]
     fn send_string<T: fmt::Display>(&self, string: T) {
@@ -256,61 +275,48 @@ impl<'a> Search<'a> {
         };
 
         // Start at depth 1 because a search at depth 0 makes no sense
-        let mut depth = 1;
         let alpha = -Score::INF;
         let beta = Score::INF;
 
         // The actual Iterative Deepening loop
         while self.config.starttime.elapsed() < self.config.soft_timeout
             && self.is_searching.load(Ordering::Relaxed)
-            && depth <= self.config.max_depth
+            && result.depth <= self.config.max_depth
         {
-            // If the search returned an error, it was cancelled, so exit the iterative deepening loop.
-            match self.negamax::<DEBUG, true>(game, depth, 0, alpha, beta) {
-                // Success; update the score
-                Ok(score) => result.score = score,
+            // Start a new search at the current depth
+            let score = self.negamax::<DEBUG, true>(game, result.depth, 0, alpha, beta);
 
-                // Search was canceled; exit
-                Err(e) => {
-                    if DEBUG {
-                        if let Some(bestmove) = result.bestmove {
-                            self.send_string(format!(
-                                "Search cancelled during depth {depth} while evaluating {bestmove} with score {}: {e}",
-                                result.score
+            // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
+            // Instead, we should break out of the ID loop, using the result from the previous iteration
+            if self.should_stop() {
+                if DEBUG {
+                    if let Some(bestmove) = self.get_tt_bestmove::<false>(game.key()) {
+                        self.send_string(format!(
+                                "Search cancelled during depth {} while evaluating {bestmove} with score {score}",
+                                result.depth,
                                 ));
-                        } else {
-                            self.send_string(format!(
-                                "Search cancelled during depth {depth} with score {} and no bestmove: {e}",
-                                result.score
-                            ));
-                        }
+                    } else {
+                        self.send_string(format!(
+                            "Search cancelled during depth {} with score {score} and no bestmove",
+                            result.depth,
+                        ));
                     }
-
-                    break;
                 }
+                break;
             }
+
+            // Otherwise, we need to update the "current" result with the results from the new search
+            result.score = score;
 
             // Get the bestmove from the TTable
             // This is guaranteed to be a cache hit, so don't log it as such
             result.bestmove = self.get_tt_bestmove::<false>(game.key());
 
             // Send search info to the GUI
-            let elapsed = self.config.starttime.elapsed();
-            self.send_info(
-                UciInfo::new()
-                    .depth(depth)
-                    .nodes(self.nodes)
-                    .score(result.score.into_uci())
-                    .nps((self.nodes as f32 / elapsed.as_secs_f32()).trunc())
-                    .time(elapsed.as_millis())
-                    .pv([result.bestmove.unwrap_or_default()]),
-            );
+            self.send_end_of_search_info(&result);
 
             // Increase the depth for the next iteration
-            match depth.checked_add(1) {
-                Some(new_depth) => depth = new_depth,
-                None => break,
-            }
+            result.depth += 1;
         }
 
         // Transfer the node count
@@ -331,7 +337,7 @@ impl<'a> Search<'a> {
         ply: i32,
         mut alpha: Score,
         beta: Score,
-    ) -> Result<Score> {
+    ) -> Score {
         // Regardless of how long we stay here, we've searched this node, so increment the counter.
         self.nodes += 1;
 
@@ -351,7 +357,7 @@ impl<'a> Search<'a> {
                 Score::DRAW
             };
 
-            return Ok(score);
+            return score;
         }
 
         // Sort moves so that we look at "promising" ones first
@@ -364,9 +370,6 @@ impl<'a> Search<'a> {
         let original_alpha = alpha;
 
         for (i, mv) in moves.into_iter().enumerate() {
-            // Check if we can continue searching
-            self.check_conditions()?;
-
             // Copy-make the new position
             let new_game = game.with_move_made(mv);
 
@@ -384,7 +387,7 @@ impl<'a> Search<'a> {
                 // Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
                 let score = if i == 0 {
                     // Recurse on the principle variation
-                    -self.negamax::<DEBUG, PV>(&new_game, depth - 1, ply + 1, -beta, -alpha)?
+                    -self.negamax::<DEBUG, PV>(&new_game, depth - 1, ply + 1, -beta, -alpha)
                 } else {
                     // Search with a null window
                     let mut score = -self.negamax::<DEBUG, false>(
@@ -393,7 +396,7 @@ impl<'a> Search<'a> {
                         ply + 1,
                         -alpha - 1,
                         -alpha,
-                    )?;
+                    );
 
                     // If it failed, perform a full re-search with the full a/b bounds
                     if alpha < score && score < beta {
@@ -403,7 +406,7 @@ impl<'a> Search<'a> {
                             ply + 1,
                             -beta,
                             -alpha,
-                        )?;
+                        );
                     }
 
                     score
@@ -430,12 +433,17 @@ impl<'a> Search<'a> {
                     break;
                 }
             }
+
+            // Check if we can continue searching
+            if self.should_stop() {
+                break;
+            }
         }
 
         // Save this node to the TTable
         self.save_to_ttable::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, depth, ply);
 
-        Ok(best)
+        best
     }
 
     /// Quiescence Search (QSearch)
@@ -448,13 +456,13 @@ impl<'a> Search<'a> {
         _ply: i32,
         mut alpha: Score,
         beta: Score,
-    ) -> Result<Score> {
+    ) -> Score {
         // Evaluate the current position, to serve as our baseline
         let stand_pat = Evaluator::new(game).eval();
 
         // Beta cutoff; this position is "too good" and our opponent would never let us get here
         if stand_pat >= beta {
-            return Ok(beta);
+            return beta;
         } else if stand_pat > alpha {
             alpha = stand_pat;
         }
@@ -471,7 +479,7 @@ impl<'a> Search<'a> {
         // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
         // So, if there are no captures available, just return the current evaluation.
         if captures.is_empty() {
-            return Ok(stand_pat);
+            return stand_pat;
         }
 
         // Everything before this point is the same as if we called `eval()` in Negamax
@@ -486,9 +494,6 @@ impl<'a> Search<'a> {
         // let original_alpha = alpha;
 
         for mv in captures {
-            // Check if we can continue searching
-            self.check_conditions()?;
-
             // Copy-make the new position
             let new_game = game.with_move_made(mv);
 
@@ -504,7 +509,7 @@ impl<'a> Search<'a> {
                 self.history.push(*new_game.position());
 
                 // Recurse
-                let score = -self.quiescence_search::<DEBUG>(&new_game, _ply + 1, -beta, -alpha)?;
+                let score = -self.quiescence_search::<DEBUG>(&new_game, _ply + 1, -beta, -alpha);
 
                 // Pop the move from the history
                 self.history.pop();
@@ -528,38 +533,37 @@ impl<'a> Search<'a> {
                     break;
                 }
             }
+
+            // Check if we can continue searching
+            if self.should_stop() {
+                break;
+            }
         }
 
         // Save this node to the TTable IF AND ONLY IF we don't already have an entry with a BETTER move for this
         // Since QSearch doesn't search *every* move, we could possibly have a non-capture move that's better for this position than anything we found during this search.
         // self.save_to_ttable(game.key(), bestmove, best, original_alpha, beta, 0, ply);
 
-        Ok(best) // fail-soft
+        best // fail-soft
     }
 
     /// Checks if we've exceeded any conditions that would warrant the search to end.
     ///
     /// Returns an `Err` if the search needs to end, otherwise `Ok`.
     #[inline(always)]
-    fn check_conditions(&self) -> Result<()> {
+    fn should_stop(&self) -> bool {
         // We need to check several conditions periodically while searching, to make sure we can continue
         // Condition 1: We've exceeded the hard limit of our allotted search time
-        if self.config.starttime.elapsed() >= self.config.hard_timeout {
-            let ms = self.config.hard_timeout.as_millis();
-            bail!("exceeded hard timeout of {ms}ms",);
-        } else
+        self.config.starttime.elapsed() >= self.config.hard_timeout ||
+            // let ms = self.config.hard_timeout.as_millis();
+            // bail!("exceeded hard timeout of {ms}ms",);
         // Condition 2: The search was stopped by an external factor, like the `stop` command
-        if !self.is_searching.load(Ordering::Relaxed) {
-            bail!("cancelled by external command");
-        } else
+        !self.is_searching.load(Ordering::Relaxed) ||
+            // bail!("cancelled by external command");
         // Condition 3: We've exceeded the maximum amount of nodes we're allowed to search
-        if self.nodes >= self.config.max_nodes {
-            let nodes = self.config.max_nodes;
-            bail!("exceeded node allowance of {nodes} nodes");
-        } else {
-            // We've not exceeded anything, so we can continue searching
-            Ok(())
-        }
+        self.nodes >= self.config.max_nodes
+        // let nodes = self.config.max_nodes;
+        // bail!("exceeded node allowance of {nodes} nodes");
     }
 
     /// Checks if `game` is a repetition, comparing it to previous positions
