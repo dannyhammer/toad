@@ -611,11 +611,6 @@ fn score_move(game: &Game, mv: &Move, tt_move: Option<Move>) -> Score {
         score += MVV_LVA[kind][victim];
     }
 
-    // Promoting is also a good idea
-    if let Some(promotion) = mv.promotion() {
-        score += value_of(promotion);
-    }
-
     -score // We're sorting, so a lower number is better
 }
 
