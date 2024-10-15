@@ -23,6 +23,7 @@ use crate::{value_of, Evaluator, Score, TTable, TTableEntry};
 pub const MAX_DEPTH: u8 = u8::MAX;
 
 /// Represents a window around a search result to act as our a/b bounds.
+/*
 struct AspirationWindow {
     /// Upper bound of the window
     alpha: Score,
@@ -39,7 +40,7 @@ impl AspirationWindow {
     /// Returns a delta value to set the window's size.
     #[inline(always)]
     fn delta() -> Score {
-        Score(30)
+        Score(50)
     }
 
     /// Create a new, infinite window.
@@ -58,7 +59,7 @@ impl AspirationWindow {
     #[inline(always)]
     fn new(score: Score) -> Self {
         // If the score is mate, the windows are less helpful, so reset them
-        let (alpha, beta) = 
+        let (alpha, beta) =
         // if score.is_mate() {
         //     (-Score::INF, Score::INF)
         // } else {
@@ -106,6 +107,7 @@ impl AspirationWindow {
     }
      */
 }
+ */
 
 /// The result of a search, containing the best move found, score, and total nodes searched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -344,7 +346,10 @@ impl<'a> Search<'a> {
         let mut depth = 1;
 
         // Create a default aspiration window for the alpha/beta bounds
-        let mut window = AspirationWindow::infinite();
+        // let mut window = AspirationWindow::infinite();
+        let mut alpha = -Score::INF;
+        let mut beta = Score::INF;
+        let window = Score(30);
 
         // The actual Iterative Deepening loop
         while self.config.starttime.elapsed() < self.config.soft_timeout
@@ -352,7 +357,7 @@ impl<'a> Search<'a> {
             && depth <= self.config.max_depth
         {
             // If the search returned an error, it was cancelled, so exit the iterative deepening loop.
-            match self.negamax::<DEBUG, true>(game, depth, 0, window.alpha, window.beta) {
+            match self.negamax::<DEBUG, true>(game, depth, 0, alpha, beta) {
                 // Success; update the score and set windows
                 Ok(score) => {
                     // If the evaluation fell outside the bounds, widen them and re-search
@@ -365,9 +370,15 @@ impl<'a> Search<'a> {
                     // }
 
                     // If the evaluation fell outside the bounds, widen them and re-search
-                    if score <= window.alpha || score >= window.beta {
-                        window = AspirationWindow::infinite();
+                    if score <= alpha || score >= beta {
+                        alpha = -Score::INF;
+                        beta = Score::INF;
 
+                        if DEBUG {
+                            self.send_string(format!(
+                                "Search fell outside AW at depth {depth}. Resetting AW to infinite"
+                            ));
+                        }
                         // Don't increase depth; just re-try this iteration
                         continue;
                     }
@@ -376,7 +387,8 @@ impl<'a> Search<'a> {
                     result.score = score;
 
                     // Set the new aspiration window around this iteration's score
-                    window = AspirationWindow::new(score);
+                    alpha = (score - window).max(-Score::INF);
+                    beta = (score + window).min(Score::INF);
                 }
 
                 // Search was canceled; exit
