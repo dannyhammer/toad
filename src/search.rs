@@ -23,7 +23,6 @@ use crate::{value_of, Evaluator, Score, TTable, TTableEntry};
 pub const MAX_DEPTH: u8 = u8::MAX;
 
 /// Represents a window around a search result to act as our a/b bounds.
-/*
 struct AspirationWindow {
     /// Upper bound of the window
     alpha: Score,
@@ -34,13 +33,18 @@ struct AspirationWindow {
     /// Value the window is centered around
     center: Score,
      */
+    /// Number of times that a score has been returned above beta.
+    beta_fails: i32,
+
+    /// Number of times that a score has been returned below alpha.
+    alpha_fails: i32,
 }
 
 impl AspirationWindow {
     /// Returns a delta value to set the window's size.
     #[inline(always)]
     fn delta() -> Score {
-        Score(50)
+        Score(30)
     }
 
     /// Create a new, infinite window.
@@ -52,37 +56,45 @@ impl AspirationWindow {
             alpha: -Score::INF,
             beta: Score::INF,
             // center: Score::DRAW,
+            beta_fails: 0,
+            alpha_fails: 0,
         }
     }
 
-    /// Create a new [`AspirationWindow`] centered around `score`.
+    /// Sets the bounds of `self` to be centered around `score`.
     #[inline(always)]
-    fn new(score: Score) -> Self {
+    fn set(&mut self, score: Score) {
         // If the score is mate, the windows are less helpful, so reset them
-        let (alpha, beta) =
-        // if score.is_mate() {
-        //     (-Score::INF, Score::INF)
-        // } else {
-            (
-                (score - Self::delta()).max(-Score::INF),
-                (score + Self::delta()).min(Score::INF),
-            );
-        // };
+        if score.is_mate() {
+            self.alpha = -Score::INF;
+            self.beta = Score::INF;
+        } else {
+            let delta_alpha = Self::delta() * (self.alpha_fails + 1);
+            self.alpha = (score - delta_alpha).max(-Score::INF);
 
-        Self {
-            alpha,
-            beta,
-            // center: score,
-        }
+            let delta_beta = Self::delta() * (self.beta_fails + 1);
+            self.beta = (score + delta_beta).min(Score::INF);
+        };
+
+        // In either case, reset the failure counts
+        // self.alpha_fails = 0;
+        // self.beta_fails = 0;
     }
 
-    /*
     /// Widens the window's `alpha` bound, expanding it downwards.
     ///
     /// Currently, this just resets the bound to negative infinity.
     #[inline(always)]
-    fn widen_down(&mut self) {
-        self.alpha = -Score::INF;
+    fn widen_down(&mut self, score: Score) {
+        // Compute a gradually-increasing delta
+        let delta = Self::delta() * (self.alpha_fails + 1);
+
+        // By convention, we widen both bounds on a fail low.
+        self.beta = ((self.alpha + self.beta) / 2).min(Score::INF);
+        self.alpha = (score - delta).max(-Score::INF);
+
+        // Increase number of failures
+        self.alpha_fails += 1;
     }
 
     /// Widens the window's `beta` bound, expanding it upwards.
@@ -90,8 +102,15 @@ impl AspirationWindow {
     ///
     /// Currently, this just resets the bound to positive infinity.
     #[inline(always)]
-    fn widen_up(&mut self) {
-        self.beta = Score::INF;
+    fn widen_up(&mut self, score: Score) {
+        // Compute a gradually-increasing delta
+        let delta = Self::delta() * (self.beta_fails + 1);
+
+        // Widen the beta bound
+        self.beta = (score + delta).min(Score::INF);
+
+        // Increase number of failures
+        self.beta_fails += 1;
     }
 
     /// Returns `true` if `score` fails low, meaning it is below alpha and the window must be expanded downwards.
@@ -105,9 +124,7 @@ impl AspirationWindow {
     fn fails_high(&self, score: Score) -> bool {
         self.beta != Score::INF && score >= self.beta
     }
-     */
 }
- */
 
 /// The result of a search, containing the best move found, score, and total nodes searched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -346,49 +363,56 @@ impl<'a> Search<'a> {
         let mut depth = 1;
 
         // Create a default aspiration window for the alpha/beta bounds
-        // let mut window = AspirationWindow::infinite();
-        let mut alpha = -Score::INF;
-        let mut beta = Score::INF;
-        let window = Score(30);
+        let mut window = AspirationWindow::infinite();
 
         // The actual Iterative Deepening loop
-        while self.config.starttime.elapsed() < self.config.soft_timeout
+        'ID: while self.config.starttime.elapsed() < self.config.soft_timeout
             && self.is_searching.load(Ordering::Relaxed)
             && depth <= self.config.max_depth
         {
+            if DEBUG {
+                self.send_string(format!(
+                    "Attempting ID at depth {depth} with AW ({}, {})",
+                    window.alpha, window.beta
+                ));
+            }
+
+            // Aspiration Window loop; this loop is exited when appropriate AW bounds are found
+            // 'AW: loop {
             // If the search returned an error, it was cancelled, so exit the iterative deepening loop.
-            match self.negamax::<DEBUG, true>(game, depth, 0, alpha, beta) {
+            match self.negamax::<DEBUG, true>(game, depth, 0, window.alpha, window.beta) {
                 // Success; update the score and set windows
                 Ok(score) => {
                     // If the evaluation fell outside the bounds, widen them and re-search
-                    // if window.fails_low(score) {
-                    //     window.widen_down();
-                    //     continue;
-                    // } else if window.fails_high(score) {
-                    //     window.widen_up();
-                    //     continue;
-                    // }
-
-                    // If the evaluation fell outside the bounds, widen them and re-search
-                    if score <= alpha || score >= beta {
-                        alpha = -Score::INF;
-                        beta = Score::INF;
+                    if window.fails_low(score) {
+                        window.widen_down(score);
+                        if DEBUG {
+                            self.send_string(format!(
+                                "AW failed low at depth {depth} due to score := {score}. Widening alpha/beta down to ({}, {})", window.alpha, window.beta
+                            ));
+                        }
+                        continue;
+                    } else if window.fails_high(score) {
+                        window.widen_up(score);
 
                         if DEBUG {
                             self.send_string(format!(
-                                "Search fell outside AW at depth {depth}. Resetting AW to infinite"
+                                "AW failed high at depth {depth} due to := {score}. Widening beta up to {}",
+                                window.beta
                             ));
                         }
-                        // Don't increase depth; just re-try this iteration
                         continue;
                     }
+
+                    // AW bounds set; break out of this loop
+                    // break 'AW;
 
                     // Otherwise, we can update our score and a/b bounds
                     result.score = score;
 
                     // Set the new aspiration window around this iteration's score
-                    alpha = (score - window).max(-Score::INF);
-                    beta = (score + window).min(Score::INF);
+                    // window = AspirationWindow::new(score);
+                    window.set(score);
                 }
 
                 // Search was canceled; exit
@@ -407,9 +431,10 @@ impl<'a> Search<'a> {
                         }
                     }
 
-                    break;
+                    break 'ID; // Break out of the Iterative Deepening loop
                 }
             }
+            // }
 
             // Get the bestmove from the TTable
             // This is guaranteed to be a cache hit, so don't log it as such
@@ -540,13 +565,14 @@ impl<'a> Search<'a> {
             if score > best {
                 best = score;
 
+                // If the score is better than alpha, it is our new best possible move.
                 if score > alpha {
                     alpha = score;
                     // PV found
                     bestmove = mv;
                 }
 
-                // Fail soft beta-cutoff.
+                // Fail soft beta-cutoff; the opponent has a better alternative they would choose, so they won't let us go down this line.
                 if score >= beta {
                     break;
                 }
@@ -637,6 +663,7 @@ impl<'a> Search<'a> {
             if score > best {
                 best = score;
 
+                // If the score is better than alpha, it is our new best possible move.
                 if score > alpha {
                     alpha = score;
 
@@ -644,7 +671,7 @@ impl<'a> Search<'a> {
                     // bestmove = mv;
                 }
 
-                // Fail soft beta-cutoff.
+                // Fail soft beta-cutoff; the opponent has a better alternative they would choose, so they won't let us go down this line.
                 if score >= beta {
                     break;
                 }
