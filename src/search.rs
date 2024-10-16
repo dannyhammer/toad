@@ -433,10 +433,12 @@ impl<'a> Search<'a> {
     fn quiescence<const DEBUG: bool>(
         &mut self,
         game: &Game,
-        _ply: i32,
+        ply: i32,
         mut alpha: Score,
         beta: Score,
     ) -> Score {
+        let original_alpha = alpha;
+
         // Evaluate the current position, to serve as our baseline
         let stand_pat = Evaluator::new(game).eval();
 
@@ -470,8 +472,7 @@ impl<'a> Search<'a> {
         captures.sort_by_cached_key(|mv| score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
-        // let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
-        // let original_alpha = alpha;
+        let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
 
         for mv in captures {
             // Copy-make the new position and append onto the history
@@ -483,7 +484,7 @@ impl<'a> Search<'a> {
             let score = if self.can_draw(&new_game) {
                 Score::DRAW
             } else {
-                -self.quiescence::<DEBUG>(&new_game, _ply + 1, -beta, -alpha)
+                -self.quiescence::<DEBUG>(&new_game, ply + 1, -beta, -alpha)
             };
 
             // Pop the move from the history
@@ -497,7 +498,7 @@ impl<'a> Search<'a> {
                     alpha = score;
 
                     // PV found
-                    // bestmove = mv;
+                    bestmove = mv;
                 }
 
                 // Fail soft beta-cutoff.
@@ -514,7 +515,11 @@ impl<'a> Search<'a> {
 
         // Save this node to the TTable IF AND ONLY IF we don't already have an entry with a BETTER move for this
         // Since QSearch doesn't search *every* move, we could possibly have a non-capture move that's better for this position than anything we found during this search.
-        // self.save_to_ttable(game.key(), bestmove, best, original_alpha, beta, 0, ply);
+        let tt_entry = self.ttable.get(&game.key());
+        if tt_entry.is_none() || tt_entry.is_some_and(|entry| entry.score < best) {
+            // This could potentially be overriding good moves if the stored move was found at a higher ply than the current ply
+            self.save_to_ttable::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, 0, ply);
+        }
 
         best // fail-soft
     }
