@@ -343,7 +343,7 @@ impl<'a> Search<'a> {
 
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
-            return self.quiescence_search::<DEBUG>(game, ply, alpha, beta);
+            return self.quiescence::<DEBUG>(game, ply, alpha, beta);
         }
 
         // If there are no legal moves, it's either mate or a draw.
@@ -370,53 +370,33 @@ impl<'a> Search<'a> {
         let original_alpha = alpha;
 
         for (i, mv) in moves.into_iter().enumerate() {
-            // Copy-make the new position
-            let new_game = game.with_move_made(mv);
+            // Copy-make the new position and append onto the history
+            let new = game.with_move_made(mv);
+            self.history.push(*new.position());
+            let mut score;
 
             // Determine the score of making this move
-            let score = if self.is_repetition(&new_game)
-                || new_game.can_draw_by_fifty()
-                || new_game.can_draw_by_insufficient_material()
-            {
-                Score::DRAW
+            if self.can_draw(&new) {
+                score = Score::DRAW;
             } else {
-                // Append the move onto the history
-                // TODO: Should this bbe OUTSIDE the `score` calculation?
-                self.history.push(*new_game.position());
-
                 // Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
-                let score = if i == 0 {
+                if i == 0 {
                     // Recurse on the principle variation
-                    -self.negamax::<DEBUG, PV>(&new_game, depth - 1, ply + 1, -beta, -alpha)
+                    score = -self.negamax::<DEBUG, PV>(&new, depth - 1, ply + 1, -beta, -alpha);
                 } else {
                     // Search with a null window
-                    let mut score = -self.negamax::<DEBUG, false>(
-                        &new_game,
-                        depth - 1,
-                        ply + 1,
-                        -alpha - 1,
-                        -alpha,
-                    );
+                    score =
+                        -self.negamax::<DEBUG, false>(&new, depth - 1, ply + 1, -alpha - 1, -alpha);
 
                     // If it failed, perform a full re-search with the full a/b bounds
                     if alpha < score && score < beta {
-                        score = -self.negamax::<DEBUG, PV>(
-                            &new_game,
-                            depth - 1,
-                            ply + 1,
-                            -beta,
-                            -alpha,
-                        );
+                        score = -self.negamax::<DEBUG, PV>(&new, depth - 1, ply + 1, -beta, -alpha);
                     }
-
-                    score
                 };
-
-                // Pop the move from the history
-                self.history.pop();
-
-                score
             };
+
+            // Pop the move from the history
+            self.history.pop();
 
             // If we've found a better move than our current best, update the results
             if score > best {
@@ -450,7 +430,7 @@ impl<'a> Search<'a> {
     ///
     /// A search that looks at only possible captures and capture-chains.
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
-    fn quiescence_search<const DEBUG: bool>(
+    fn quiescence<const DEBUG: bool>(
         &mut self,
         game: &Game,
         _ply: i32,
@@ -494,28 +474,20 @@ impl<'a> Search<'a> {
         // let original_alpha = alpha;
 
         for mv in captures {
-            // Copy-make the new position
+            // Copy-make the new position and append onto the history
             let new_game = game.with_move_made(mv);
+            self.history.push(*new_game.position());
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
-            let score = if self.is_repetition(&new_game)
-                || new_game.can_draw_by_fifty()
-                || new_game.can_draw_by_insufficient_material()
-            {
+            let score = if self.can_draw(&new_game) {
                 Score::DRAW
             } else {
-                // Append the move onto the history
-                self.history.push(*new_game.position());
-
-                // Recurse
-                let score = -self.quiescence_search::<DEBUG>(&new_game, _ply + 1, -beta, -alpha);
-
-                // Pop the move from the history
-                self.history.pop();
-
-                score
+                -self.quiescence::<DEBUG>(&new_game, _ply + 1, -beta, -alpha)
             };
+
+            // Pop the move from the history
+            self.history.pop();
 
             // If we've found a better move than our current best, update our result
             if score > best {
@@ -581,6 +553,14 @@ impl<'a> Search<'a> {
         }
 
         false
+    }
+
+    /// Returns `true` if `game` can be claimed as a draw
+    #[inline(always)]
+    fn can_draw(&self, game: &Game) -> bool {
+        self.is_repetition(&game)
+            || game.can_draw_by_fifty()
+            || game.can_draw_by_insufficient_material()
     }
 
     /// Saves the provided data to an entry in the TTable.
