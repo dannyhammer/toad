@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chessie::{Game, Move, MoveList, PieceKind, Position, ZobristKey};
+use chessie::{Game, Move, MoveList, PieceKind, ZobristKey};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{value_of, Evaluator, Score, TTable, TTableEntry};
@@ -149,7 +149,7 @@ pub struct Search<'a> {
     config: SearchConfig,
 
     /// Previous positions encountered during search.
-    history: Vec<Position>,
+    history: Vec<ZobristKey>,
 
     /// Transposition table used to cache information during search.
     ttable: &'a mut TTable,
@@ -161,7 +161,7 @@ impl<'a> Search<'a> {
     pub fn new(
         is_searching: Arc<AtomicBool>,
         config: SearchConfig,
-        history: Vec<Position>,
+        history: Vec<ZobristKey>,
         ttable: &'a mut TTable,
     ) -> Self {
         Self {
@@ -372,7 +372,7 @@ impl<'a> Search<'a> {
         for (i, mv) in moves.into_iter().enumerate() {
             // Copy-make the new position and append onto the history
             let new = game.with_move_made(mv);
-            self.history.push(*new.position());
+            self.history.push(new.key());
             let mut score;
 
             // Determine the score of making this move
@@ -475,15 +475,15 @@ impl<'a> Search<'a> {
 
         for mv in captures {
             // Copy-make the new position and append onto the history
-            let new_game = game.with_move_made(mv);
-            self.history.push(*new_game.position());
+            let new = game.with_move_made(mv);
+            self.history.push(new.key());
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
-            let score = if self.can_draw(&new_game) {
+            let score = if self.can_draw(&new) {
                 Score::DRAW
             } else {
-                -self.quiescence::<DEBUG>(&new_game, _ply + 1, -beta, -alpha)
+                -self.quiescence::<DEBUG>(&new, _ply + 1, -beta, -alpha)
             };
 
             // Pop the move from the history
@@ -540,15 +540,11 @@ impl<'a> Search<'a> {
 
     /// Checks if `game` is a repetition, comparing it to previous positions
     #[inline(always)]
-    fn is_repetition(&self, game: &Game) -> bool {
+    fn is_repetition(&self, key: ZobristKey) -> bool {
         // We can skip the previous position, because there's no way it can be a repetition
         for prev in self.history.iter().rev().skip(1) {
-            if prev.key() == game.key() {
+            if *prev == key {
                 return true;
-            } else
-            // The halfmove counter only resets on irreversible moves (captures, pawns, etc.) so it can't be a repetition.
-            if prev.halfmove() == 0 {
-                return false;
             }
         }
 
@@ -558,7 +554,7 @@ impl<'a> Search<'a> {
     /// Returns `true` if `game` can be claimed as a draw
     #[inline(always)]
     fn can_draw(&self, game: &Game) -> bool {
-        self.is_repetition(&game)
+        self.is_repetition(game.key())
             || game.can_draw_by_fifty()
             || game.can_draw_by_insufficient_material()
     }

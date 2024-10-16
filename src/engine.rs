@@ -16,7 +16,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use chessie::{print_perft, Bitboard, Game, Move, Piece, Position, Square};
+use chessie::{print_perft, Bitboard, Game, Move, Piece, Square, ZobristKey};
 use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
@@ -39,7 +39,7 @@ pub struct Engine {
     /// All previous positions of `self.game`, including the current position.
     ///
     /// Updated when the engine makes a move or receives `position ... moves [move list]`.
-    history: Vec<Position>,
+    history: Vec<ZobristKey>,
 
     /// One half of a channel, responsible for sending commands to the engine to execute.
     sender: Sender<EngineCommand>,
@@ -316,7 +316,7 @@ impl Engine {
     /// Makes the supplied move on the current position.
     #[inline(always)]
     fn make_move(&mut self, mv: Move) {
-        self.history.push(*self.game.position());
+        self.history.push(self.game.key());
         self.game.make_move(mv);
     }
 
@@ -449,7 +449,7 @@ impl Engine {
         let mut history = self.history.clone();
         // Cloning a vec doesn't clone its capacity
         history.reserve(self.history.capacity());
-        history.push(*game.position());
+        history.push(game.key());
         let ttable = Arc::clone(&self.ttable);
 
         // Spawn a thread to conduct the search
