@@ -1,5 +1,5 @@
 ---
-name: 'New Feature:'
+name: New Feature
 about: Suggest a new feature for the engine
 title: "[Feature]"
 labels: enhancement
