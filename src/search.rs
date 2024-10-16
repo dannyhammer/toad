@@ -339,6 +339,7 @@ impl<'a> Search<'a> {
         beta: Score,
     ) -> Score {
         // Regardless of how long we stay here, we've searched this node, so increment the counter.
+        // TODO: Move this below the recursive call, so that PVS re-searches don't cause it to increment (and do the same for qsearch)
         self.nodes += 1;
 
         // If we've reached a terminal node, evaluate the current position
@@ -370,15 +371,17 @@ impl<'a> Search<'a> {
         let original_alpha = alpha;
 
         for (i, mv) in moves.into_iter().enumerate() {
-            // Copy-make the new position and append onto the history
+            // Copy-make the new position
             let new = game.with_move_made(mv);
-            self.history.push(*new.position());
             let mut score;
 
             // Determine the score of making this move
             if self.can_draw(&new) {
                 score = Score::DRAW;
             } else {
+                // Append the move onto the history
+                self.history.push(*new.position());
+
                 // Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
                 if i == 0 {
                     // Recurse on the principle variation
@@ -393,10 +396,10 @@ impl<'a> Search<'a> {
                         score = -self.negamax::<DEBUG, PV>(&new, depth - 1, ply + 1, -beta, -alpha);
                     }
                 };
-            };
 
-            // Pop the move from the history
-            self.history.pop();
+                // Pop the move from the history
+                self.history.pop();
+            };
 
             // If we've found a better move than our current best, update the results
             if score > best {
@@ -475,20 +478,21 @@ impl<'a> Search<'a> {
         let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
 
         for mv in captures {
-            // Copy-make the new position and append onto the history
+            // Copy-make the new position
             let new_game = game.with_move_made(mv);
-            self.history.push(*new_game.position());
+            let score;
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
-            let score = if self.can_draw(&new_game) {
-                Score::DRAW
+            if self.can_draw(&new_game) {
+                score = Score::DRAW;
             } else {
-                -self.quiescence::<DEBUG>(&new_game, ply + 1, -beta, -alpha)
-            };
+                self.history.push(*new_game.position());
 
-            // Pop the move from the history
-            self.history.pop();
+                score = -self.quiescence::<DEBUG>(&new_game, ply + 1, -beta, -alpha);
+
+                self.history.pop();
+            }
 
             // If we've found a better move than our current best, update our result
             if score > best {
