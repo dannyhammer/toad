@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.0](https://github.com/dannyhammer/toad/compare/v0.6.0...v0.7.0) (2024-10-15)
+
+
+### Features
+
+* added support to send multiple commands on startup ([9f1ff3b](https://github.com/dannyhammer/toad/commit/9f1ff3b8c2bcd2d861b733ee2268310055e761c1))
+* added support to send UCI commands on startup ([9f1ff3b](https://github.com/dannyhammer/toad/commit/9f1ff3b8c2bcd2d861b733ee2268310055e761c1))
+* implemented PVS ([16f4f47](https://github.com/dannyhammer/toad/commit/16f4f4790c2d72042ec05c2accd077f09bb93f40))
+* promotions are given a bonus when scoring moves ([2e591de](https://github.com/dannyhammer/toad/commit/2e591de877f64355fa3311b07836115fe38bddde))
+
 ## [0.6.0](https://github.com/dannyhammer/toad/compare/v0.5.0...v0.6.0) (2024-10-14)
 
 
