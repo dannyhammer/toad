@@ -285,6 +285,27 @@ impl<'a> Search<'a> {
         {
             // Start a new search at the current depth
             let score = self.negamax::<DEBUG, true>(game, result.depth, 0, alpha, beta);
+
+            // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
+            // Instead, we should break out of the ID loop, using the result from the previous iteration
+            if self.should_stop() {
+                if DEBUG {
+                    if let Some(bestmove) = self.get_tt_bestmove::<false>(game.key()) {
+                        self.send_string(format!(
+                                "Search cancelled during depth {} while evaluating {bestmove} with score {score}",
+                                result.depth,
+                                ));
+                    } else {
+                        self.send_string(format!(
+                            "Search cancelled during depth {} with score {score} and no bestmove",
+                            result.depth,
+                        ));
+                    }
+                }
+                break;
+            }
+
+            // Otherwise, we need to update the "current" result with the results from the new search
             result.score = score;
 
             // Get the bestmove from the TTable
