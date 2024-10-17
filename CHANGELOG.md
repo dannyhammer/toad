@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/dannyhammer/toad/compare/v0.7.0...v0.8.0) (2024-10-17)
+
+
+### Features
+
+* QSearch now stores moves in TT ([4224004](https://github.com/dannyhammer/toad/commit/4224004e434c6ee72fcc9f5025768069f8984504))
+
 ## [0.7.0](https://github.com/dannyhammer/toad/compare/v0.6.0...v0.7.0) (2024-10-15)
 
 
