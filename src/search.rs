@@ -16,7 +16,7 @@ use std::{
 use chessie::{Game, Move, MoveList, PieceKind, Position, ZobristKey};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
-use crate::{value_of, Evaluator, Score, TTable, TTableEntry};
+use crate::{tune, value_of, Evaluator, Score, TTable, TTableEntry};
 
 /// Maximum depth that can be searched
 pub const MAX_DEPTH: u8 = u8::MAX / 2;
@@ -108,10 +108,10 @@ impl SearchConfig {
 
             // Only calculate timeouts if a time was provided
             if let Some(time) = time {
-                let inc = inc.unwrap_or(Duration::ZERO);
+                let inc = inc.unwrap_or(Duration::ZERO) / tune::time_inc_divisor!();
 
-                config.soft_timeout = time / 20 + inc / 2; // Soft Timeout: 5% of time remaining + 50% time increment
-                config.hard_timeout = time / 5 + inc / 2; // Hard Timeout: 20% of time remaining + 50% time increment
+                config.soft_timeout = time / tune::soft_timeout_divisor!() + inc;
+                config.hard_timeout = time / tune::hard_timeout_divisor!() + inc;
             }
         }
 
@@ -142,7 +142,7 @@ pub struct Search<'a> {
 
     /// An atomic flag to determine if the search should be cancelled at any time.
     ///
-    /// If this is ever `false`, the search will exit as soon as possible.
+    /// If this is ever `false`, the search must exit as soon as possible.
     is_searching: Arc<AtomicBool>,
 
     /// Configuration variables for this instance of the search.
@@ -278,6 +278,10 @@ impl<'a> Search<'a> {
         let alpha = -Score::INF;
         let beta = Score::INF;
 
+        /****************************************************************************************************
+         * Iterative Deepening loop
+         ****************************************************************************************************/
+
         // The actual Iterative Deepening loop
         while self.config.starttime.elapsed() < self.config.soft_timeout
             && self.is_searching.load(Ordering::Relaxed)
@@ -288,7 +292,7 @@ impl<'a> Search<'a> {
 
             // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
             // Instead, we should break out of the ID loop, using the result from the previous iteration
-            if self.should_stop() {
+            if self.search_cancelled() {
                 if DEBUG {
                     if let Some(bestmove) = self.get_tt_bestmove::<false>(game.key()) {
                         self.send_string(format!(
@@ -304,6 +308,10 @@ impl<'a> Search<'a> {
                 }
                 break;
             }
+
+            /****************************************************************************************************
+             * Update current best score
+             ****************************************************************************************************/
 
             // Otherwise, we need to update the "current" result with the results from the new search
             result.score = score;
@@ -370,19 +378,25 @@ impl<'a> Search<'a> {
         let mut bestmove = moves[0]; // Safe because we guaranteed `moves` to be nonempty above
         let original_alpha = alpha;
 
+        /****************************************************************************************************
+         * Primary move loop
+         ****************************************************************************************************/
+
         for (i, mv) in moves.into_iter().enumerate() {
             // Copy-make the new position
             let new = game.with_move_made(mv);
             let mut score;
 
             // Determine the score of making this move
-            if self.can_draw(&new) {
+            if self.is_draw(&new) {
                 score = Score::DRAW;
             } else {
                 // Append the move onto the history
                 self.history.push(*new.position());
 
-                // Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
+                /****************************************************************************************************
+                 * Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
+                 ****************************************************************************************************/
                 if i == 0 {
                     // Recurse on the principle variation
                     score = -self.negamax::<DEBUG, PV>(&new, depth - 1, ply + 1, -beta, -alpha);
@@ -401,6 +415,10 @@ impl<'a> Search<'a> {
                 self.history.pop();
             };
 
+            /****************************************************************************************************
+             * Score evaluation & bounds adjustments
+             ****************************************************************************************************/
+
             // If we've found a better move than our current best, update the results
             if score > best {
                 best = score;
@@ -418,13 +436,13 @@ impl<'a> Search<'a> {
             }
 
             // Check if we can continue searching
-            if self.should_stop() {
+            if self.search_cancelled() {
                 break;
             }
         }
 
         // Save this node to the TTable
-        self.save_to_ttable::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, depth, ply);
+        self.save_to_tt::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, depth, ply);
 
         best
     }
@@ -440,6 +458,7 @@ impl<'a> Search<'a> {
         mut alpha: Score,
         beta: Score,
     ) -> Score {
+        // TODO: Is this supposed to go before or after the stand_pat comparison?
         let original_alpha = alpha;
 
         // Evaluate the current position, to serve as our baseline
@@ -477,23 +496,30 @@ impl<'a> Search<'a> {
         let mut best = stand_pat;
         let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
 
+        /****************************************************************************************************
+         * Primary move loop
+         ****************************************************************************************************/
+
         for mv in captures {
             // Copy-make the new position
-            let new_game = game.with_move_made(mv);
+            let new = game.with_move_made(mv);
             let score;
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
-            if self.can_draw(&new_game) {
+            if self.is_draw(&new) {
                 score = Score::DRAW;
             } else {
-                self.history.push(*new_game.position());
+                self.history.push(*new.position());
 
-                score = -self.quiescence::<DEBUG>(&new_game, ply + 1, -beta, -alpha);
+                score = -self.quiescence::<DEBUG>(&new, ply + 1, -beta, -alpha);
 
                 self.history.pop();
             }
 
+            /****************************************************************************************************
+             * Score evaluation & bounds adjustments
+             ****************************************************************************************************/
             // If we've found a better move than our current best, update our result
             if score > best {
                 best = score;
@@ -512,39 +538,31 @@ impl<'a> Search<'a> {
             }
 
             // Check if we can continue searching
-            if self.should_stop() {
+            if self.search_cancelled() {
                 break;
             }
         }
 
-        // Save this node to the TTable IF AND ONLY IF we don't already have an entry with a BETTER move for this
+        // Save this node to the TTable IF AND ONLY IF we don't already have an entry with a BETTER move for this position.
         // Since QSearch doesn't search *every* move, we could possibly have a non-capture move that's better for this position than anything we found during this search.
         let tt_entry = self.ttable.get(&game.key());
         if tt_entry.is_none() || tt_entry.is_some_and(|entry| entry.score < best) {
             // This could potentially be overriding good moves if the stored move was found at a higher ply than the current ply
-            self.save_to_ttable::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, 0, ply);
+            self.save_to_tt::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, 0, ply);
         }
 
         best // fail-soft
     }
 
     /// Checks if we've exceeded any conditions that would warrant the search to end.
-    ///
-    /// Returns an `Err` if the search needs to end, otherwise `Ok`.
     #[inline(always)]
-    fn should_stop(&self) -> bool {
-        // We need to check several conditions periodically while searching, to make sure we can continue
+    fn search_cancelled(&self) -> bool {
         // Condition 1: We've exceeded the hard limit of our allotted search time
         self.config.starttime.elapsed() >= self.config.hard_timeout ||
-            // let ms = self.config.hard_timeout.as_millis();
-            // bail!("exceeded hard timeout of {ms}ms",);
         // Condition 2: The search was stopped by an external factor, like the `stop` command
         !self.is_searching.load(Ordering::Relaxed) ||
-            // bail!("cancelled by external command");
         // Condition 3: We've exceeded the maximum amount of nodes we're allowed to search
         self.nodes >= self.config.max_nodes
-        // let nodes = self.config.max_nodes;
-        // bail!("exceeded node allowance of {nodes} nodes");
     }
 
     /// Checks if `game` is a repetition, comparing it to previous positions
@@ -566,15 +584,15 @@ impl<'a> Search<'a> {
 
     /// Returns `true` if `game` can be claimed as a draw
     #[inline(always)]
-    fn can_draw(&self, game: &Game) -> bool {
-        self.is_repetition(&game)
+    fn is_draw(&self, game: &Game) -> bool {
+        self.is_repetition(game)
             || game.can_draw_by_fifty()
             || game.can_draw_by_insufficient_material()
     }
 
     /// Saves the provided data to an entry in the TTable.
     #[allow(clippy::too_many_arguments)]
-    fn save_to_ttable<const DEBUG: bool>(
+    fn save_to_tt<const DEBUG: bool>(
         &mut self,
         key: ZobristKey,
         bestmove: Move,
