@@ -541,11 +541,8 @@ impl<'a> Search<'a> {
             }
         }
 
-        // Save this node to the TTable if there isn't an entry here or the entry was found in another QSearch
-        let tt_entry = self.ttable.get(&game.key());
-        if tt_entry.is_none() || tt_entry.is_some_and(|entry| entry.depth > 0) {
-            self.save_to_tt::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, 0, ply);
-        }
+        // Save this node to the TTable
+        self.save_to_tt::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, 0, ply);
 
         best // fail-soft
     }
