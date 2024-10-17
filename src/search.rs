@@ -233,7 +233,7 @@ impl<'a> Search<'a> {
     /// Sends a [`UciInfo`] to `stdout`.
     #[inline(always)]
     fn send_info(&self, info: UciInfo) {
-        let resp = UciResponse::<&str>::Info(Box::new(info));
+        let resp = UciResponse::info(info);
         self.send_response(resp);
     }
 
@@ -256,7 +256,7 @@ impl<'a> Search<'a> {
     /// Helper to send a [`UciInfo`] containing only a `string` message to `stdout`.
     #[inline(always)]
     fn send_string<T: fmt::Display>(&self, string: T) {
-        self.send_info(UciInfo::new().string(string));
+        self.send_response(UciResponse::info_string(string));
     }
 
     /// Performs [iterative deepening](https://www.chessprogramming.org/Iterative_Deepening) (ID) on the Search's position.
@@ -458,9 +458,6 @@ impl<'a> Search<'a> {
         mut alpha: Score,
         beta: Score,
     ) -> Score {
-        // TODO: Is this supposed to go before or after the stand_pat comparison?
-        let original_alpha = alpha;
-
         // Evaluate the current position, to serve as our baseline
         let stand_pat = Evaluator::new(game).eval();
 
@@ -495,6 +492,7 @@ impl<'a> Search<'a> {
 
         let mut best = stand_pat;
         let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
+        let original_alpha = alpha;
 
         /****************************************************************************************************
          * Primary move loop
@@ -543,8 +541,11 @@ impl<'a> Search<'a> {
             }
         }
 
-        // Save this node to the TTable
-        self.save_to_tt::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, 0, ply);
+        // Save this node to the TTable if there isn't an entry here or the entry was found in another QSearch
+        let tt_entry = self.ttable.get(&game.key());
+        if tt_entry.is_none() || tt_entry.is_some_and(|entry| entry.depth > 0) {
+            self.save_to_tt::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, 0, ply);
+        }
 
         best // fail-soft
     }
