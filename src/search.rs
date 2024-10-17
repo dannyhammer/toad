@@ -459,7 +459,7 @@ impl<'a> Search<'a> {
         beta: Score,
     ) -> Score {
         // TODO: Is this supposed to go before or after the stand_pat comparison?
-        let original_alpha = alpha;
+        // let original_alpha = alpha;
 
         // Evaluate the current position, to serve as our baseline
         let stand_pat = Evaluator::new(game).eval();
@@ -494,7 +494,7 @@ impl<'a> Search<'a> {
         captures.sort_by_cached_key(|mv| score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
-        let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
+        // let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
 
         /****************************************************************************************************
          * Primary move loop
@@ -528,7 +528,7 @@ impl<'a> Search<'a> {
                     alpha = score;
 
                     // PV found
-                    bestmove = mv;
+                    // bestmove = mv;
                 }
 
                 // Fail soft beta-cutoff.
@@ -545,11 +545,11 @@ impl<'a> Search<'a> {
 
         // Save this node to the TTable IF AND ONLY IF we don't already have an entry with a BETTER move for this position.
         // Since QSearch doesn't search *every* move, we could possibly have a non-capture move that's better for this position than anything we found during this search.
-        let tt_entry = self.ttable.get(&game.key());
-        if tt_entry.is_none() || tt_entry.is_some_and(|entry| entry.score < best) {
-            // This could potentially be overriding good moves if the stored move was found at a higher ply than the current ply
-            self.save_to_tt::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, 0, ply);
-        }
+        // let tt_entry = self.ttable.get(&game.key());
+        // if tt_entry.is_none() || tt_entry.is_some_and(|entry| entry.score < best) {
+        //     // This could potentially be overriding good moves if the stored move was found at a higher ply than the current ply
+        //     self.save_to_tt::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, 0, ply);
+        // }
 
         best // fail-soft
     }

@@ -244,7 +244,7 @@ impl Engine {
 
             // Set up the game and start the search
             self.position(Some(fen), [])?;
-            self.search_thread = self.start_search::<true>(config);
+            self.search_thread = self.start_search::<false>(config);
 
             // Await the search, appending the node count once concluded.
             let res = self.stop_search().unwrap();
@@ -271,7 +271,7 @@ impl Engine {
         }
 
         // Re-set the internal game state.
-        // self.new_game();
+        self.new_game();
 
         Ok(())
     }
