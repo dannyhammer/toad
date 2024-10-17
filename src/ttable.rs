@@ -129,15 +129,21 @@ pub struct TTable {
 }
 
 impl TTable {
-    /// Default size of the Transposition Table, in bytes
-    pub const DEFAULT_SIZE: usize = 16 * BYTES_IN_MB;
+    /// Default size of the Transposition Table, in megabytes.
+    pub const DEFAULT_SIZE: usize = 16;
 
-    /// Create a new [`TTable`] that is `size` bytes.
+    /// Minimum size of the Transposition Table, in megabytes.
+    pub const MIN_SIZE: usize = 1;
+
+    /// Maximum size of the Transposition Table, in megabytes.
+    pub const MAX_SIZE: usize = 1_024;
+
+    /// Create a new [`TTable`] that is `size` megabytes.
     ///
     /// Its size will be `size_of::<TTableEntry>() * capacity`
     #[inline(always)]
     pub fn new(size: usize) -> Self {
-        Self::from_capacity(size / size_of::<TTableEntry>())
+        Self::from_capacity((size * BYTES_IN_MB) / size_of::<TTableEntry>())
     }
 
     /// Create a new [`TTable`] that can hold `capacity` entries.
@@ -166,10 +172,10 @@ impl TTable {
         self.cache.len()
     }
 
-    /// Returns the size of this [`TTable`], in bytes.
+    /// Returns the size of this [`TTable`], in megabytes.
     #[inline(always)]
     pub fn size(&self) -> usize {
-        self.cache.len() * size_of::<TTableEntry>()
+        self.cache.len() * size_of::<TTableEntry>() / BYTES_IN_MB
     }
 
     /// Returns the number of `Some` entries in this [`TTable`].
@@ -181,38 +187,24 @@ impl TTable {
     /// Map `key` to an index into this [`TTable`].
     #[inline(always)]
     pub fn index(&self, key: &ZobristKey) -> usize {
-        // TODO: Enforce size as a power of two so you can use & instead of %
-        key.inner() as usize % self.capacity()
+        // key.inner() as usize % self.capacity()
+        // Not sure if this is guaranteed to work, actually
+        key.inner() as usize & (self.capacity() - 1)
     }
 
     /// Get the entry if and only if it matches the provided key
     #[inline(always)]
     pub fn get(&self, key: &ZobristKey) -> Option<&TTableEntry> {
-        let entry = self.entry(key);
-        if entry.is_some_and(|entry| &entry.key == key) {
-            return entry;
-        }
-        None
+        self.entry(key).filter(|e| &e.key == key)
     }
 
     /*
     /// Mutably get the entry if and only if it matches the provided key
     #[inline(always)]
     pub fn get_mut(&mut self, key: &ZobristKey) -> Option<&mut TTableEntry> {
-        let entry = self.entry_mut(key);
-        if entry.as_ref().is_some_and(|entry| &entry.key == key) {
-            return entry;
-        }
-        None
+        self.entry_mut(key).filter(|e| &e.key == key)
     }
      */
-
-    /// Store `entry` in the table at `entry.key`, overriding and returning whatever was there.
-    #[inline(always)]
-    pub fn store(&mut self, entry: TTableEntry) -> Option<TTableEntry> {
-        let index = self.index(&entry.key);
-        self.cache[index].replace(entry)
-    }
 
     /// Get the entry, without regards for whether it matches the provided key
     #[inline(always)]
@@ -226,9 +218,16 @@ impl TTable {
     #[inline(always)]
     fn entry_mut(&mut self, key: &ZobristKey) -> Option<&mut TTableEntry> {
         let index = self.index(key);
-        self.0[index].as_mut()
+        self.cache[index].as_mut()
     }
      */
+
+    /// Store `entry` in the table at `entry.key`, overriding and returning whatever was there.
+    #[inline(always)]
+    pub fn store(&mut self, entry: TTableEntry) -> Option<TTableEntry> {
+        let index = self.index(&entry.key);
+        self.cache[index].replace(entry)
+    }
 }
 
 impl Default for TTable {

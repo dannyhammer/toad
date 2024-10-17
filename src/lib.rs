@@ -18,6 +18,8 @@ mod score;
 mod search;
 /// Hash table for storing data during search.
 mod ttable;
+/// Constants and magic numbers that can be tuned to tweak engine performance.
+mod tune;
 /// Misc utility functions, constants, and types.
 mod utils;
 

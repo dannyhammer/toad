@@ -4,7 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use std::fmt;
+use std::{cmp::Ordering, fmt};
 
 use chessie::{Board, Color, File, Game, PieceKind, Rank, Square};
 
@@ -147,12 +147,10 @@ impl fmt::Display for Evaluator<'_> {
 
         let score = self.eval_for(color);
 
-        let winning_side = if score > Score::DRAW {
-            Some(color)
-        } else if score < Score::DRAW {
-            Some(color.opponent())
-        } else {
-            None
+        let winning_side = match score.cmp(&Score::DRAW) {
+            Ordering::Greater => Some(color),
+            Ordering::Less => Some(color.opponent()),
+            Ordering::Equal => None,
         };
 
         writeln!(f, "\n\nEndgame: {}%", self.endgame_weight)?;

@@ -6,7 +6,7 @@
 
  
 /// Number of bytes in a megabyte
-pub const BYTES_IN_MB: usize = 1_048_576;
+pub const BYTES_IN_MB: usize = 1024 * 1024;
 
 
 pub const BENCHMARK_FENS: [&str; 128] = 

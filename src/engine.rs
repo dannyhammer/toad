@@ -21,7 +21,6 @@ use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
     EngineCommand, Evaluator, Psqt, Search, SearchConfig, SearchResult, TTable, BENCHMARK_FENS,
-    BYTES_IN_MB,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -298,11 +297,10 @@ impl Engine {
         let ttable = self.ttable();
 
         let size = ttable.size();
-        let mb = size / BYTES_IN_MB;
         let num = ttable.num_entries();
         let cap = ttable.capacity();
         let percent = num as f32 / cap as f32 * 100.0;
-        println!("TT info: {size} bytes ({mb} mb), {num}/{cap} entries ({percent:.2}%)");
+        println!("TT info: {size}mb @ {num}/{cap} entries ({percent:.2}% full)");
     }
 
     /// Clears all hash tables in the engine.
@@ -498,10 +496,14 @@ impl Engine {
 
     /// Convenience function to return an iterator over all UCI options this engine supports.
     fn options(&self) -> impl Iterator<Item = UciOption<&str>> {
-        let ttable_size = TTable::DEFAULT_SIZE / BYTES_IN_MB;
         [
             UciOption::button("Clear Hash"),
-            UciOption::spin("Hash", ttable_size as i32, 1, 1_024),
+            UciOption::spin(
+                "Hash",
+                TTable::DEFAULT_SIZE as i32,
+                TTable::MIN_SIZE as i32,
+                TTable::MAX_SIZE as i32,
+            ),
             UciOption::spin("Threads", 1, 1, 1),
         ]
         .into_iter()
@@ -512,20 +514,31 @@ impl Engine {
     /// Will return an error if `name` isn't a valid option or `value` is not a valid value for that option.
     fn set_option(&mut self, name: &str, value: Option<String>) -> Result<()> {
         match name {
+            // Clear all hash tables
             "Clear Hash" => self.clear_hash_tables(),
 
+            // Re-size the hash table
             "Hash" => {
                 let Some(value) = value.as_ref() else {
                     bail!("usage: setoption name hash value <value>");
                 };
 
-                let mb = &value
+                let mb = value
                     .parse::<usize>()
                     .context(format!("expected integer. got {value:?}"))?;
 
-                *self.ttable() = TTable::new(mb * BYTES_IN_MB); // multiply by # bytes in MB
+                // Ensure the value is within bounds
+                if mb < TTable::MIN_SIZE {
+                    bail!("Minimum value for Hash is {}mb", TTable::MIN_SIZE);
+                }
+                if mb > TTable::MAX_SIZE {
+                    bail!("Maximum value for Hash is {}mb", TTable::MAX_SIZE);
+                }
+
+                *self.ttable() = TTable::new(mb); // multiply by # bytes in MB
             }
 
+            // Set the number of search threads
             "Threads" => bail!("{} currently supports only 1 thread", self.name()),
 
             _ => {
@@ -555,7 +568,7 @@ impl Engine {
         let value = match opt.name {
             "Clear Hash" => String::default(),
 
-            "Hash" => format!("{}", self.ttable().size() / BYTES_IN_MB),
+            "Hash" => format!("{}", self.ttable().size()),
 
             "Threads" => String::from("1"),
 
