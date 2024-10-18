@@ -495,7 +495,7 @@ impl Engine {
     }
 
     /// Convenience function to return an iterator over all UCI options this engine supports.
-    fn options(&self) -> impl Iterator<Item = UciOption<&str>> {
+    fn options(&self) -> impl Iterator<Item = UciOption> {
         [
             UciOption::button("Clear Hash"),
             UciOption::spin(
@@ -535,7 +535,7 @@ impl Engine {
                     bail!("Maximum value for Hash is {}mb", TTable::MAX_SIZE);
                 }
 
-                *self.ttable() = TTable::new(mb); // multiply by # bytes in MB
+                *self.ttable() = TTable::new(mb);
             }
 
             // Set the number of search threads
@@ -564,15 +564,14 @@ impl Engine {
 
     /// Returns the current value of the option `name`, if it exists on this engine.
     fn get_option(&self, name: &str) -> Option<String> {
-        let opt = self.options().find(|opt| opt.name == name)?;
-        let value = match opt.name {
+        let value = match name {
             "Clear Hash" => String::default(),
 
             "Hash" => format!("{}", self.ttable().size()),
 
             "Threads" => String::from("1"),
 
-            _ => unreachable!(),
+            _ => return None,
         };
 
         Some(value)
