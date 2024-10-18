@@ -60,7 +60,6 @@ impl AspirationWindow {
         }
     }
 
-    /*
     /// Creates a new [`AspirationWindow`] centered around `score`.
     fn new(score: Score) -> Self {
         let delta = Self::delta();
@@ -82,7 +81,6 @@ impl AspirationWindow {
             beta_fails: 0,
         }
     }
-     */
 
     /// Widens the window's `alpha` bound, expanding it downwards.
     ///
@@ -379,9 +377,6 @@ impl<'a> Search<'a> {
             ..Default::default()
         };
 
-        // Start at depth 1 because a search at depth 0 makes no sense
-        let mut window = AspirationWindow::infinite();
-
         /****************************************************************************************************
          * Iterative Deepening loop
          ****************************************************************************************************/
@@ -391,20 +386,36 @@ impl<'a> Search<'a> {
             && self.is_searching.load(Ordering::Relaxed)
             && result.depth <= self.config.max_depth
         {
-            let mut score;
-            'aspiration_window: loop {
+            // If we've reached a sufficient depth, set the aspiration window around the previous iteration's score
+            let mut window = if result.depth > tune::min_aspiration_window_depth!() {
+                AspirationWindow::new(result.score)
+            } else {
+                // Otherwise, default to an infinite window
+                AspirationWindow::infinite()
+            };
+
+            // Get a score from the a/b search while using aspiration windows
+            let score = 'aspiration_window: loop {
                 // Start a new search at the current depth
-                score =
+                let score =
                     self.negamax::<DEBUG, true>(game, result.depth, 0, window.alpha, window.beta);
 
                 // If the score fell outside of the aspiration window, widen it
-                if window.fails_low(score) {
-                    window.widen_down(score);
-                } else if window.fails_high(score) {
-                    window.widen_up(score);
+                // if window.fails_low(score) {
+                //     window.widen_down(score);
+                // } else if window.fails_high(score) {
+                //     window.widen_up(score);
+                // } else {
+                //     // Otherwise, the window is OK and we can use the score
+                //     break 'aspiration_window;
+                // }
+
+                // If the score fell outside the window, reset the windows to be infinite
+                if score <= window.alpha || score >= window.beta {
+                    window = AspirationWindow::infinite();
                 } else {
-                    // Otherwise, the window is OK and we can use the score
-                    break 'aspiration_window;
+                    // Otherwise, the score is within the window, so we can leave this loop
+                    break 'aspiration_window score;
                 }
 
                 // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
@@ -425,7 +436,7 @@ impl<'a> Search<'a> {
                     }
                     break 'iterative_deepening;
                 }
-            }
+            };
 
             /****************************************************************************************************
              * Update current best score

@@ -43,3 +43,11 @@ macro_rules! initial_aspiration_window_size {
     };
 }
 pub(crate) use initial_aspiration_window_size;
+
+/// Minimum depth to incorporate Aspiration Windows into the Iterative Deepening search.
+macro_rules! min_aspiration_window_depth {
+    () => {
+        1
+    };
+}
+pub(crate) use min_aspiration_window_depth;
