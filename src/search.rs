@@ -29,10 +29,7 @@ struct AspirationWindow {
 
     /// Upper bound of the window
     beta: Score,
-    /*
-    /// Value the window is centered around
-    center: Score,
-     */
+
     /// Number of times that a score has been returned above beta.
     beta_fails: i32,
 
@@ -42,32 +39,30 @@ struct AspirationWindow {
 
 impl AspirationWindow {
     /// Returns a delta value to change window's size.
-    #[inline(always)]
-    fn delta() -> Score {
-        Score(tune::initial_aspiration_window_size!())
-    }
-
-    /// Create a new, infinite window.
     ///
-    /// Useful as an initial window, before any bounds/scores are known
+    /// The value will differ depending on `depth`, with higher depths producing narrower windows.
     #[inline(always)]
-    fn infinite() -> Self {
-        Self {
-            alpha: -Score::INF,
-            beta: Score::INF,
-            alpha_fails: 0,
-            beta_fails: 0,
-        }
+    fn delta(depth: u8) -> Score {
+        let initial_delta = tune::initial_aspiration_window_delta!();
+
+        let min_delta = tune::min_aspiration_window_delta!();
+
+        // Gradually decrease the window size from `8*init` to `min`
+        let delta = ((initial_delta << 3) / depth as i32).max(min_delta);
+
+        Score(delta)
     }
 
     /// Creates a new [`AspirationWindow`] centered around `score`.
-    fn new(score: Score) -> Self {
-        let delta = Self::delta();
-
+    #[inline(always)]
+    fn new(score: Score, depth: u8) -> Self {
         // If the score is mate, we expect search results to fluctuate, so set the windows to infinite.
-        let (alpha, beta) = if score.is_mate() {
+        // Also, we only want to use aspiration windows after certain depths, so check that, too.
+        let (alpha, beta) = if depth < tune::min_aspiration_window_depth!() || score.is_mate() {
             (-Score::INF, Score::INF)
         } else {
+            // Otherwise we build a window around the provided score.
+            let delta = Self::delta(depth);
             (
                 (score - delta).max(-Score::INF),
                 (score + delta).min(Score::INF),
@@ -86,9 +81,9 @@ impl AspirationWindow {
     ///
     /// This also resets the `beta` bound to `(alpha + beta) / 2`
     #[inline(always)]
-    fn widen_down(&mut self, score: Score) {
+    fn widen_down(&mut self, score: Score, depth: u8) {
         // Compute a gradually-increasing delta
-        let delta = Self::delta() * (1 << self.alpha_fails + 1);
+        let delta = Self::delta(depth) * (1 << (self.alpha_fails + 1));
 
         // By convention, we widen both bounds on a fail low.
         self.beta = ((self.alpha + self.beta) / 2).min(Score::INF);
@@ -100,9 +95,9 @@ impl AspirationWindow {
 
     /// Widens the window's `beta` bound, expanding it upwards.
     #[inline(always)]
-    fn widen_up(&mut self, score: Score) {
+    fn widen_up(&mut self, score: Score, depth: u8) {
         // Compute a gradually-increasing delta
-        let delta = Self::delta() * (1 << self.beta_fails + 1);
+        let delta = Self::delta(depth) * (1 << (self.beta_fails + 1));
 
         // Widen the beta bound
         self.beta = (score + delta).min(Score::INF);
@@ -386,13 +381,8 @@ impl<'a> Search<'a> {
             && self.is_searching.load(Ordering::Relaxed)
             && result.depth <= self.config.max_depth
         {
-            // If we've reached a sufficient depth, set the aspiration window around the previous iteration's score
-            let mut window = if result.depth > tune::min_aspiration_window_depth!() {
-                AspirationWindow::new(result.score)
-            } else {
-                // Otherwise, default to an infinite window
-                AspirationWindow::infinite()
-            };
+            // Create a new aspiration window for this search
+            let mut window = AspirationWindow::new(result.score, result.depth);
 
             // Get a score from the a/b search while using aspiration windows
             let score = 'aspiration_window: loop {
@@ -402,9 +392,9 @@ impl<'a> Search<'a> {
 
                 // If the score fell outside of the aspiration window, widen it gradually
                 if window.fails_low(score) {
-                    window.widen_down(score);
+                    window.widen_down(score, result.depth);
                 } else if window.fails_high(score) {
-                    window.widen_up(score);
+                    window.widen_up(score, result.depth);
                 } else {
                     // Otherwise, the window is OK and we can use the score
                     break 'aspiration_window score;
