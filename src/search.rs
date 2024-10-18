@@ -454,7 +454,7 @@ impl<'a> Search<'a> {
     fn quiescence<const DEBUG: bool>(
         &mut self,
         game: &Game,
-        ply: i32,
+        _ply: i32,
         mut alpha: Score,
         beta: Score,
     ) -> Score {
@@ -491,8 +491,8 @@ impl<'a> Search<'a> {
         captures.sort_by_cached_key(|mv| score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
-        let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
-        let original_alpha = alpha;
+        // let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
+        // let original_alpha = alpha;
 
         /****************************************************************************************************
          * Primary move loop
@@ -510,7 +510,7 @@ impl<'a> Search<'a> {
             } else {
                 self.history.push(*new.position());
 
-                score = -self.quiescence::<DEBUG>(&new, ply + 1, -beta, -alpha);
+                score = -self.quiescence::<DEBUG>(&new, _ply + 1, -beta, -alpha);
 
                 self.history.pop();
             }
@@ -526,7 +526,7 @@ impl<'a> Search<'a> {
                     alpha = score;
 
                     // PV found
-                    bestmove = mv;
+                    // bestmove = mv;
                 }
 
                 // Fail soft beta-cutoff.
@@ -542,7 +542,7 @@ impl<'a> Search<'a> {
         }
 
         // Save this node to the TTable
-        self.save_to_tt::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, 0, ply);
+        // self.save_to_tt::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, 0, ply);
 
         best // fail-soft
     }
