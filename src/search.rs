@@ -21,6 +21,111 @@ use crate::{tune, value_of, Evaluator, Score, TTable, TTableEntry};
 /// Maximum depth that can be searched
 pub const MAX_DEPTH: u8 = u8::MAX / 2;
 
+/// Represents a window around a search result to act as our a/b bounds.
+#[derive(Debug)]
+struct AspirationWindow {
+    /// Lower bound of the window
+    alpha: Score,
+
+    /// Upper bound of the window
+    beta: Score,
+    /*
+    /// Value the window is centered around
+    center: Score,
+     */
+    /// Number of times that a score has been returned above beta.
+    beta_fails: i32,
+
+    /// Number of times that a score has been returned below alpha.
+    alpha_fails: i32,
+}
+
+impl AspirationWindow {
+    /// Returns a delta value to change window's size.
+    #[inline(always)]
+    fn delta() -> Score {
+        Score(tune::initial_aspiration_window_size!())
+    }
+
+    /// Create a new, infinite window.
+    ///
+    /// Useful as an initial window, before any bounds/scores are known
+    #[inline(always)]
+    fn infinite() -> Self {
+        Self {
+            alpha: -Score::INF,
+            beta: Score::INF,
+            alpha_fails: 0,
+            beta_fails: 0,
+        }
+    }
+
+    /*
+    /// Creates a new [`AspirationWindow`] centered around `score`.
+    fn new(score: Score) -> Self {
+        let delta = Self::delta();
+
+        // If the score is mate, we expect search results to fluctuate, so set the windows to infinite.
+        let (alpha, beta) = if score.is_mate() {
+            (-Score::INF, Score::INF)
+        } else {
+            (
+                (score - delta).max(-Score::INF),
+                (score + delta).min(Score::INF),
+            )
+        };
+
+        Self {
+            alpha,
+            beta,
+            alpha_fails: 0,
+            beta_fails: 0,
+        }
+    }
+     */
+
+    /// Widens the window's `alpha` bound, expanding it downwards.
+    ///
+    /// This also resets the `beta` bound to `(alpha + beta) / 2`
+    #[inline(always)]
+    fn widen_down(&mut self, score: Score) {
+        // Compute a gradually-increasing delta
+        let delta = Self::delta() * (1 << self.alpha_fails + 1);
+
+        // By convention, we widen both bounds on a fail low.
+        self.beta = ((self.alpha + self.beta) / 2).min(Score::INF);
+        self.alpha = (score - delta).max(-Score::INF);
+
+        // Increase number of failures
+        self.alpha_fails += 1;
+    }
+
+    /// Widens the window's `beta` bound, expanding it upwards.
+    #[inline(always)]
+    fn widen_up(&mut self, score: Score) {
+        // Compute a gradually-increasing delta
+        let delta = Self::delta() * (1 << self.beta_fails + 1);
+
+        // Widen the beta bound
+        self.beta = (score + delta).min(Score::INF);
+
+        // Increase number of failures
+        self.beta_fails += 1;
+    }
+
+    /// Returns `true` if `score` fails low, meaning it is below `alpha` and the window must be expanded downwards.
+    #[inline(always)]
+    fn fails_low(&self, score: Score) -> bool {
+        self.alpha != -Score::INF && score <= self.alpha
+    }
+
+    /// Returns `true` if `score` fails high, meaning it is above `beta` and the window must be expanded upwards.
+    #[inline(always)]
+    fn fails_high(&self, score: Score) -> bool {
+        self.beta != Score::INF && score >= self.beta
+    }
+}
+
 /// The result of a search, containing the best move found, score, and total nodes searched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SearchResult {
@@ -275,38 +380,51 @@ impl<'a> Search<'a> {
         };
 
         // Start at depth 1 because a search at depth 0 makes no sense
-        let alpha = -Score::INF;
-        let beta = Score::INF;
+        let mut window = AspirationWindow::infinite();
 
         /****************************************************************************************************
          * Iterative Deepening loop
          ****************************************************************************************************/
 
         // The actual Iterative Deepening loop
-        while self.config.starttime.elapsed() < self.config.soft_timeout
+        'iterative_deepening: while self.config.starttime.elapsed() < self.config.soft_timeout
             && self.is_searching.load(Ordering::Relaxed)
             && result.depth <= self.config.max_depth
         {
-            // Start a new search at the current depth
-            let score = self.negamax::<DEBUG, true>(game, result.depth, 0, alpha, beta);
+            let mut score;
+            'aspiration_window: loop {
+                // Start a new search at the current depth
+                score =
+                    self.negamax::<DEBUG, true>(game, result.depth, 0, window.alpha, window.beta);
 
-            // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
-            // Instead, we should break out of the ID loop, using the result from the previous iteration
-            if self.search_cancelled() {
-                if DEBUG {
-                    if let Some(bestmove) = self.get_tt_bestmove::<false>(game.key()) {
-                        self.send_string(format!(
+                // If the score fell outside of the aspiration window, widen it
+                if window.fails_low(score) {
+                    window.widen_down(score);
+                } else if window.fails_high(score) {
+                    window.widen_up(score);
+                } else {
+                    // Otherwise, the window is OK and we can use the score
+                    break 'aspiration_window;
+                }
+
+                // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
+                // Instead, we should break out of the ID loop, using the result from the previous iteration
+                if self.search_cancelled() {
+                    if DEBUG {
+                        if let Some(bestmove) = self.get_tt_bestmove::<false>(game.key()) {
+                            self.send_string(format!(
                                 "Search cancelled during depth {} while evaluating {bestmove} with score {score}",
                                 result.depth,
                                 ));
-                    } else {
-                        self.send_string(format!(
+                        } else {
+                            self.send_string(format!(
                             "Search cancelled during depth {} with score {score} and no bestmove",
                             result.depth,
                         ));
+                        }
                     }
+                    break 'iterative_deepening;
                 }
-                break;
             }
 
             /****************************************************************************************************

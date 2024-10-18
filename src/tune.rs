@@ -35,3 +35,11 @@ macro_rules! time_inc_divisor {
     };
 }
 pub(crate) use time_inc_divisor;
+
+/// Initial Aspiration Window size
+macro_rules! initial_aspiration_window_size {
+    () => {
+        25
+    };
+}
+pub(crate) use initial_aspiration_window_size;
