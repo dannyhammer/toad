@@ -400,21 +400,13 @@ impl<'a> Search<'a> {
                 let score =
                     self.negamax::<DEBUG, true>(game, result.depth, 0, window.alpha, window.beta);
 
-                // If the score fell outside of the aspiration window, widen it
-                // if window.fails_low(score) {
-                //     window.widen_down(score);
-                // } else if window.fails_high(score) {
-                //     window.widen_up(score);
-                // } else {
-                //     // Otherwise, the window is OK and we can use the score
-                //     break 'aspiration_window;
-                // }
-
-                // If the score fell outside the window, reset the windows to be infinite
-                if score <= window.alpha || score >= window.beta {
-                    window = AspirationWindow::infinite();
+                // If the score fell outside of the aspiration window, widen it gradually
+                if window.fails_low(score) {
+                    window.widen_down(score);
+                } else if window.fails_high(score) {
+                    window.widen_up(score);
                 } else {
-                    // Otherwise, the score is within the window, so we can leave this loop
+                    // Otherwise, the window is OK and we can use the score
                     break 'aspiration_window score;
                 }
 
