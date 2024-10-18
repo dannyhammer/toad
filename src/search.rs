@@ -88,7 +88,7 @@ impl AspirationWindow {
     #[inline(always)]
     fn widen_down(&mut self, score: Score) {
         // Compute a gradually-increasing delta
-        let delta = Self::delta() * (1 << self.alpha_fails + 1);
+        let delta = Self::delta() * (1 << (self.alpha_fails + 1));
 
         // By convention, we widen both bounds on a fail low.
         self.beta = ((self.alpha + self.beta) / 2).min(Score::INF);
@@ -102,7 +102,7 @@ impl AspirationWindow {
     #[inline(always)]
     fn widen_up(&mut self, score: Score) {
         // Compute a gradually-increasing delta
-        let delta = Self::delta() * (1 << self.beta_fails + 1);
+        let delta = Self::delta() * (1 << (self.beta_fails + 1));
 
         // Widen the beta bound
         self.beta = (score + delta).min(Score::INF);
