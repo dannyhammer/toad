@@ -43,10 +43,12 @@ impl AspirationWindow {
     /// The value will differ depending on `depth`, with higher depths producing narrower windows.
     #[inline(always)]
     fn delta(depth: u8) -> Score {
-        let initial_size = tune::initial_aspiration_window_delta!();
+        let initial_delta = tune::initial_aspiration_window_delta!();
 
-        // Gradually decrease the window size from `8*init` to `init`
-        let delta = ((initial_size << 3) / depth as i32).max(initial_size);
+        let min_delta = tune::min_aspiration_window_delta!();
+
+        // Gradually decrease the window size from `8*init` to `min`
+        let delta = ((initial_delta << 3) / depth as i32).max(min_delta);
 
         Score(delta)
     }

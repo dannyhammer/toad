@@ -39,10 +39,18 @@ pub(crate) use time_inc_divisor;
 /// Initial Aspiration Window size
 macro_rules! initial_aspiration_window_delta {
     () => {
-        10
+        25
     };
 }
 pub(crate) use initial_aspiration_window_delta;
+
+/// Initial Aspiration Window size
+macro_rules! min_aspiration_window_delta {
+    () => {
+        10
+    };
+}
+pub(crate) use min_aspiration_window_delta;
 
 /// Minimum depth to incorporate Aspiration Windows into the Iterative Deepening search.
 macro_rules! min_aspiration_window_depth {
