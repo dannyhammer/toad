@@ -82,6 +82,8 @@ Toad uses several state-of-the-art techniques in [chess programming](https://www
     -   [Quiescence Search](https://www.chessprogramming.org/Quiescence_Search) in a fail soft framework.
     -   [Draw detection](https://www.chessprogramming.org/Draw) through insufficient material, 2-fold repetition, and the 50-move rule.
     -   [Transposition Table](https://www.chessprogramming.org/Transposition_Table)
+    -   [Principal Variation Search](https://www.chessprogramming.org/Principal_Variation_Search)
+    -   [Aspiration Windows](https://www.chessprogramming.org/Aspiration_Windows) with [gradual widening](https://www.chessprogramming.org/Aspiration_Windows#Gradual_Widening)
     -   Move Ordering:
         -   [MVV-LVA](https://www.chessprogramming.org/MVV-LVA)
         -   [TT moves](https://www.chessprogramming.org/Hash_Move)
