@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.0](https://github.com/dannyhammer/toad/compare/v0.7.0...v0.8.0) (2024-10-22)
+
+
+### Features
+
+* added aspiration windows with gradual widening ([fb12abd](https://github.com/dannyhammer/toad/commit/fb12abd4592e947128276bb1d442b7c73524173f))
+* added Aspiration Windows with gradual widening ([#50](https://github.com/dannyhammer/toad/issues/50)) ([42528d5](https://github.com/dannyhammer/toad/commit/42528d55213a5fe0524f7915209fbee67791f13a))
+* aspiration windows widen gradually instead of resetting to infinite ([b19dace](https://github.com/dannyhammer/toad/commit/b19dace006c00e810479ad637eec50a02e9a8adb))
+* QSearch now stores moves in TT ([4224004](https://github.com/dannyhammer/toad/commit/4224004e434c6ee72fcc9f5025768069f8984504))
+* store nodes in TT from within qsearch with an always-replace scheme ([cf5e218](https://github.com/dannyhammer/toad/commit/cf5e218b8dd4a2754024f1e3e20d443d1c329c9c))
+* tweaked Aspiration Windows to change size based on depth ([#51](https://github.com/dannyhammer/toad/issues/51)) ([1aba61c](https://github.com/dannyhammer/toad/commit/1aba61c334dae446505ee052505f0ac4c311fbc2))
+
+
+### Bug Fixes
+
+* fixed incorrect operator precedence in AW ([b13b0a6](https://github.com/dannyhammer/toad/commit/b13b0a6056d9dfd2931a64e52aa6aa833a7b28d5))
+
 ## [0.7.0](https://github.com/dannyhammer/toad/compare/v0.6.0...v0.7.0) (2024-10-15)
 
 
