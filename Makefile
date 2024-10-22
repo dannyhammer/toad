@@ -3,18 +3,16 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 
-
-# Extract name and version from Cargo.toml
-NAME := $(shell sed -n 's/^name = "\(.*\)"/\1/p' Cargo.toml)
-VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
-
-# If on Windows, add the .exe extension to the executable
+# If on Windows, add the .exe extension to the executable and use PowerShell instead of `sed`
 ifeq ($(OS),Windows_NT)
 	EXT := .exe
+	NAME := $(shell powershell -Command "(Get-Content Cargo.toml | Select-String '^name =').Line -replace '.*= ', '' -replace '\"', ''")
+	VERSION := $(shell powershell -Command "(Get-Content Cargo.toml | Select-String '^version =').Line -replace '.*= ', '' -replace '\"', ''")
 else
 	EXT := 
+	NAME := $(shell sed -n 's/^name = "\(.*\)"/\1/p' Cargo.toml)
+	VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
 endif
-
 
 # OpenBench specifies that the binary name should be changeable with the EXE parameter
 ifndef EXE
