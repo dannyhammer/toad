@@ -31,3 +31,4 @@ jobs:
                   RUSTTARGET: ${{ matrix.target }}
                   ARCHIVE_TYPES: ${{ matrix.archive }}
                   EXTRA_FILES: "README.md CHANGELOG.md"
+                  TOOLCHAIN_VERSION: stable
