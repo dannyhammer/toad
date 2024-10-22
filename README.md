@@ -1,11 +1,13 @@
-# Toad - A UCI chess engine, written in Rust.
+# Toad - A UCI-compatible toy chess engine
 
 Toad is a work-in-progress [chess engine](https://en.wikipedia.org/wiki/Chess_engine), and serves as my personal excuse to write fun code in Rust.
 It is built upon my [`chessie`](https://crates.io/crates/chessie) crate, which is the "core" library that handles move generation and all other rules of chess.
 
+Up for a game? Play against Toad on [Lichess](https://lichess.org/@/toad-bot)!
+
 ## Overview
 
-By default, Toad will print its version and authors and await input via `stdin`.
+By default, running Toad will cause it to print its version and authors and await input via `stdin`.
 For convenience, you can run any of Toad's commands on startup and Toad will exit immediately after that command's execution.
 To run multiple commands on startup, pass them in with the `-c "<command>"` flag.
 You can pass in the `--no-exit` flag to continue execution after the command(s) have finished executing.
