@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.0](https://github.com/dannyhammer/toad/compare/v0.9.2...v1.0.0) (2024-10-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* 1.0 release
+
+### Features
+
+* 1.0 release ([c1564e2](https://github.com/dannyhammer/toad/commit/c1564e2af8150f886fb0285170b38ba8d838b917))
+* if debug enabled, engine prints command received ([c1564e2](https://github.com/dannyhammer/toad/commit/c1564e2af8150f886fb0285170b38ba8d838b917))
+
 ## [0.9.2](https://github.com/dannyhammer/toad/compare/v0.9.1...v0.9.2) (2024-10-22)
 
 
