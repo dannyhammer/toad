@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/dannyhammer/toad/compare/v1.0.0...v1.0.1) (2024-10-22)
+
+
+### Bug Fixes
+
+* fixed bug causing `make` to fail when `sed` not present on Windows ([#61](https://github.com/dannyhammer/toad/issues/61)) ([ea8104c](https://github.com/dannyhammer/toad/commit/ea8104ce240acd65fa2205ec29008edb51741618))
+
 ## [1.0.0](https://github.com/dannyhammer/toad/compare/v0.9.2...v1.0.0) (2024-10-22)
 
 
