@@ -24,7 +24,7 @@ fn main() {
     let mut toad = Engine::new();
 
     // Parse CLI args, send startup command(s), etc.
-    init(&toad);
+    handle_cli_args(&toad);
 
     // Display metadata
     println!("{} by {}", toad.name(), toad.authors());
@@ -36,7 +36,7 @@ fn main() {
 }
 
 /// Initialize the engine, including parsing CLI args and sending startup command(s).
-fn init(toad: &Engine) {
+fn handle_cli_args(toad: &Engine) {
     // Attempt to parse command-line arguments, if applicable
     match Cli::try_parse() {
         // If successful, send any provided commands to the engine

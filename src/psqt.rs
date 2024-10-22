@@ -214,7 +214,7 @@ impl Psqt {
 }
 
 impl fmt::Display for Psqt {
-    /// Printing a [`Psq`] will display it in the same way it is written in the code (White's perspective).
+    /// Printing a [`Psqt`] will display it in the same way it is written in the code (White's perspective).
     ///
     /// If the alternate formatter is used (`#`), it will print as if from Black's perspective.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

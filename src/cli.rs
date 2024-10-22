@@ -69,7 +69,7 @@ pub enum EngineCommand {
     Moves {
         square: Option<Square>,
 
-        // If set, a Bitboard of all possible moves will also be displayed
+        /// If set, a Bitboard of all possible moves will also be displayed
         #[arg(short, long, default_value = "false")]
         pretty: bool,
     },

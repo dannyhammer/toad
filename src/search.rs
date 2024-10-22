@@ -761,7 +761,6 @@ fn score_move(game: &Game, mv: &Move, tt_move: Option<Move>) -> Score {
 ///
 /// The following table is produced:
 /// ```text
-///
 ///                     VICTIM
 /// A       P     N     B     R     Q     K     
 /// T    +---------------------------------+

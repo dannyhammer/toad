@@ -115,6 +115,9 @@ impl Engine {
 
         // Loop on user input
         while let Ok(cmd) = self.receiver.recv() {
+            if self.debug {
+                println!("info string Received command {cmd:?}");
+            }
             match cmd {
                 EngineCommand::Bench { depth, pretty } => self.bench(depth, pretty)?,
 
