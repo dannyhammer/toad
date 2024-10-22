@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/dannyhammer/toad/compare/v0.9.0...v0.9.1) (2024-10-22)
+
+
+### Bug Fixes
+
+* removed toolchain version ([82f3fd4](https://github.com/dannyhammer/toad/commit/82f3fd4154047b31d9711839fdb634c471cb827d))
+
 ## [0.9.0](https://github.com/dannyhammer/toad/compare/v0.8.0...v0.9.0) (2024-10-22)
 
 
