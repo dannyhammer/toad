@@ -772,11 +772,12 @@ impl<'a> Search<'a> {
     fn apply_history_bonus(&mut self, game: &Game, mv: &Move, bonus: Score) {
         // Safety: This is a move. There *must* be a piece at `from`.
         let piece = unsafe { game.piece_at(mv.from()).unwrap_unchecked() };
-        let max_history = Score(tune::max_history_bonus!());
-        let clamped_bonus = bonus.clamp(-max_history, max_history);
+        // let max_history = Score(tune::max_history_bonus!());
+        // let clamped_bonus = bonus.clamp(-max_history, max_history);
         let to = mv.to();
-        let history = self.history[piece][to];
-        self.history[piece][to] += clamped_bonus - history * clamped_bonus.abs() / max_history;
+        // let history = self.history[piece][to];
+        // self.history[piece][to] += clamped_bonus - history * clamped_bonus.abs() / max_history;
+        self.history[piece][to] += bonus;
     }
 }
 
