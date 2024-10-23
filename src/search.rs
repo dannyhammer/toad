@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chessie::{Game, Move, MoveList, PieceKind, Position, ZobristKey};
+use chessie::{Game, Move, MoveList, Piece, PieceKind, Position, Square, ZobristKey};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{tune, value_of, Evaluator, Score, TTable, TTableEntry};
@@ -247,10 +247,12 @@ pub struct Search<'a> {
     config: SearchConfig,
 
     /// Previous positions encountered during search.
-    history: Vec<Position>,
+    prev_positions: Vec<Position>,
 
     /// Transposition table used to cache information during search.
     ttable: &'a mut TTable,
+
+    history: [[Score; Square::COUNT]; Piece::COUNT],
 }
 
 impl<'a> Search<'a> {
@@ -266,8 +268,9 @@ impl<'a> Search<'a> {
             nodes: 0,
             is_searching,
             config,
-            history,
+            prev_positions: history,
             ttable,
+            history: [[Score(0); Square::COUNT]; Piece::COUNT],
         }
     }
 
@@ -482,7 +485,7 @@ impl<'a> Search<'a> {
 
         // Sort moves so that we look at "promising" ones first
         let tt_move = self.get_tt_bestmove::<DEBUG>(game.key());
-        moves.sort_by_cached_key(|mv| score_move(game, mv, tt_move));
+        moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         // Start with a *really bad* initial score
         let mut best = -Score::INF;
@@ -503,7 +506,7 @@ impl<'a> Search<'a> {
                 score = Score::DRAW;
             } else {
                 // Append the move onto the history
-                self.history.push(*new.position());
+                self.prev_positions.push(*new.position());
 
                 /****************************************************************************************************
                  * Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
@@ -523,7 +526,7 @@ impl<'a> Search<'a> {
                 };
 
                 // Pop the move from the history
-                self.history.pop();
+                self.prev_positions.pop();
             };
 
             /****************************************************************************************************
@@ -542,6 +545,12 @@ impl<'a> Search<'a> {
 
                 // Fail soft beta-cutoff.
                 if score >= beta {
+                    if !mv.is_capture() {
+                        // TODO: Custom function that just fetches the piece at `from` without needing to unwrap.
+                        let piece = game.piece_at(mv.from()).unwrap();
+                        let bonus = (depth * depth) as i32;
+                        self.history[piece][mv.to()] += bonus;
+                    }
                     break;
                 }
             }
@@ -599,7 +608,7 @@ impl<'a> Search<'a> {
         self.nodes += 1;
 
         let tt_move = self.get_tt_bestmove::<DEBUG>(game.key());
-        captures.sort_by_cached_key(|mv| score_move(game, mv, tt_move));
+        captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
         // let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
@@ -619,11 +628,11 @@ impl<'a> Search<'a> {
             if self.is_draw(&new) {
                 score = Score::DRAW;
             } else {
-                self.history.push(*new.position());
+                self.prev_positions.push(*new.position());
 
                 score = -self.quiescence::<DEBUG>(&new, _ply + 1, -beta, -alpha);
 
-                self.history.pop();
+                self.prev_positions.pop();
             }
 
             /****************************************************************************************************
@@ -673,7 +682,7 @@ impl<'a> Search<'a> {
     #[inline(always)]
     fn is_repetition(&self, game: &Game) -> bool {
         // We can skip the previous position, because there's no way it can be a repetition
-        for prev in self.history.iter().rev().skip(1) {
+        for prev in self.prev_positions.iter().rev().skip(1) {
             if prev.key() == game.key() {
                 return true;
             } else
@@ -733,26 +742,30 @@ impl<'a> Search<'a> {
 
         mv
     }
-}
 
-/// Applies a score to the provided move, intended to be used when ordering moves during search.
-#[inline(always)]
-fn score_move(game: &Game, mv: &Move, tt_move: Option<Move>) -> Score {
-    // TT move should be looked at first!
-    if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
-        return -Score::INF;
+    /// Applies a score to the provided move, intended to be used when ordering moves during search.
+    #[inline(always)]
+    fn score_move(&self, game: &Game, mv: &Move, tt_move: Option<Move>) -> Score {
+        // TT move should be looked at first!
+        if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
+            return -Score::INF;
+        }
+
+        // Safe unwrap because we can't move unless there's a piece at `from`
+        let piece = game.piece_at(mv.from()).unwrap();
+        let kind = piece.kind();
+        let mut score = Score(0);
+
+        // Apply history bonus
+        score += self.history[piece][mv.to()];
+
+        // Capturing a high-value piece with a low-value piece is a good idea
+        if let Some(victim) = game.kind_at(mv.to()) {
+            score += MVV_LVA[kind][victim];
+        }
+
+        -score // We're sorting, so a lower number is better
     }
-
-    // Safe unwrap because we can't move unless there's a piece at `from`
-    let kind = game.kind_at(mv.from()).unwrap();
-    let mut score = Score(0);
-
-    // Capturing a high-value piece with a low-value piece is a good idea
-    if let Some(victim) = game.kind_at(mv.to()) {
-        score += MVV_LVA[kind][victim];
-    }
-
-    -score // We're sorting, so a lower number is better
 }
 
 /// This table represents values for [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) move ordering.
