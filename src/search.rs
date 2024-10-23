@@ -546,10 +546,8 @@ impl<'a> Search<'a> {
                 // Fail soft beta-cutoff.
                 if score >= beta {
                     if !mv.is_capture() {
-                        // TODO: Custom function that just fetches the piece at `from` without needing to unwrap.
-                        let piece = game.piece_at(mv.from()).unwrap();
-                        let bonus = (depth * depth) as i32;
-                        self.history[piece][mv.to()] += bonus;
+                        let bonus = Score((depth * depth) as i32);
+                        self.apply_history_bonus(game, &mv, bonus);
                     }
                     break;
                 }
@@ -765,6 +763,20 @@ impl<'a> Search<'a> {
         }
 
         -score // We're sorting, so a lower number is better
+    }
+
+    /// Applies a bonus based on the history heuristic for the move.
+    ///
+    /// Uses the "history gravity" formula from https://www.chessprogramming.org/History_Heuristic#History_Bonuses
+    #[inline(always)]
+    fn apply_history_bonus(&mut self, game: &Game, mv: &Move, bonus: Score) {
+        // Safety: This is a move. There *must* be a piece at `from`.
+        let piece = unsafe { game.piece_at(mv.from()).unwrap_unchecked() };
+        let max_history = Score(tune::max_history_bonus!());
+        let clamped_bonus = bonus.clamp(-max_history, max_history);
+        let to = mv.to();
+        let history = self.history[piece][to];
+        self.history[piece][to] += clamped_bonus - history * clamped_bonus.abs() / max_history;
     }
 }
 
