@@ -546,8 +546,9 @@ impl<'a> Search<'a> {
                 // Fail soft beta-cutoff.
                 if score >= beta {
                     if !mv.is_capture() {
-                        let bonus = Score((depth * depth) as i32);
-                        self.apply_history_bonus(game, &mv, bonus);
+                        let piece = game.piece_at(mv.from()).unwrap();
+                        let bonus = (depth * depth) as i32;
+                        self.history[piece][mv.to()] += bonus;
                     }
                     break;
                 }
@@ -765,6 +766,7 @@ impl<'a> Search<'a> {
         -score // We're sorting, so a lower number is better
     }
 
+    /*
     /// Applies a bonus based on the history heuristic for the move.
     ///
     /// Uses the "history gravity" formula from https://www.chessprogramming.org/History_Heuristic#History_Bonuses
@@ -779,6 +781,7 @@ impl<'a> Search<'a> {
         // self.history[piece][to] += clamped_bonus - history * clamped_bonus.abs() / max_history;
         self.history[piece][to] += bonus;
     }
+     */
 }
 
 /// This table represents values for [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) move ordering.
