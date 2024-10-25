@@ -8,7 +8,7 @@ use std::fmt;
 
 use uci_parser::UciScore;
 
-use crate::MAX_DEPTH;
+use crate::{tune, MAX_DEPTH};
 
 /// A numerical representation of the evaluation of a position / move, in units of ["centipawns"](https://www.chessprogramming.org/Score).
 ///
@@ -31,6 +31,9 @@ impl Score {
     ///
     /// This is only obtainable if mate is possible in [`MAX_DEPTH`] moves.
     pub const LOWEST_MATE: Self = Self(Self::MATE.0 - MAX_DEPTH as i32);
+
+    // Maximum bonus to apply to moves via history heuristic.
+    pub const MAX_HISTORY: Self = Self(tune::max_history_bonus!());
 
     /// Returns `true` if the score is a mate score.
     #[inline(always)]

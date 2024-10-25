@@ -261,14 +261,14 @@ impl<'a> Search<'a> {
     pub fn new(
         is_searching: Arc<AtomicBool>,
         config: SearchConfig,
-        history: Vec<Position>,
+        prev_positions: Vec<Position>,
         ttable: &'a mut TTable,
     ) -> Self {
         Self {
             nodes: 0,
             is_searching,
             config,
-            prev_positions: history,
+            prev_positions,
             ttable,
             history: [[Score(0); Square::COUNT]; Piece::COUNT],
         }
@@ -545,11 +545,7 @@ impl<'a> Search<'a> {
 
                 // Fail soft beta-cutoff.
                 if score >= beta {
-                    // If this move is quiet, apply a history bonus
-                    if !mv.is_capture() {
-                        let bonus = Score((depth * depth) as i32);
-                        self.apply_history_bonus(game, &mv, bonus);
-                    }
+                    self.apply_history_bonus(game, &mv, depth);
                     // TODO: Apply penalty to previously-searched quiets: https://www.chessprogramming.org/History_Heuristic#History_Maluses
                     break;
                 }
@@ -771,14 +767,22 @@ impl<'a> Search<'a> {
     ///
     /// Uses the "history gravity" formula from https://www.chessprogramming.org/History_Heuristic#History_Bonuses
     #[inline(always)]
-    fn apply_history_bonus(&mut self, game: &Game, mv: &Move, bonus: Score) {
+    fn apply_history_bonus(&mut self, game: &Game, mv: &Move, depth: u8) {
+        // Only apply history bonus for quiet moves
+        if mv.is_capture() {
+            return;
+        }
+
+        // Simple bonus based on depth
+        let bonus = Score((depth * depth) as i32);
+
         // Safety: This is a move. There *must* be a piece at `from`.
         let piece = unsafe { game.piece_at(mv.from()).unwrap_unchecked() };
-        let max_history = Score(tune::max_history_bonus!());
-        let clamped_bonus = bonus.clamp(-max_history, max_history);
+        let clamped_bonus = bonus.clamp(-Score::MAX_HISTORY, Score::MAX_HISTORY);
         let to = mv.to();
         let history = self.history[piece][to];
-        self.history[piece][to] += clamped_bonus - history * clamped_bonus.abs() / max_history;
+        self.history[piece][to] +=
+            clamped_bonus - history * clamped_bonus.abs() / Score::MAX_HISTORY;
     }
 }
 
