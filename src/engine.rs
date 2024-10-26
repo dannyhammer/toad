@@ -23,6 +23,21 @@ use crate::{
     EngineCommand, Evaluator, Psqt, Search, SearchConfig, SearchResult, TTable, BENCHMARK_FENS,
 };
 
+#[derive(Debug, Default, PartialEq, Eq, Hash)]
+enum GameVariant {
+    #[default]
+    Standard,
+
+    Chess960,
+}
+
+impl GameVariant {
+    #[inline(always)]
+    fn is_chess960(&self) -> bool {
+        matches!(self, Self::Chess960)
+    }
+}
+
 /// Default depth at which to run the benchmark searches.
 const BENCH_DEPTH: u8 = 7;
 
@@ -57,6 +72,9 @@ pub struct Engine {
 
     /// Whether to display extra information during execution.
     debug: bool,
+
+    /// Chess variant being played
+    variant: GameVariant,
 }
 
 impl Engine {
@@ -76,6 +94,7 @@ impl Engine {
             ttable: Arc::default(),
             debug: false,
             // debug: true,
+            variant: Default::default(),
         }
     }
 
@@ -109,7 +128,7 @@ impl Engine {
         let sender = self.sender.clone();
         thread::spawn(|| {
             if let Err(err) = input_handler(sender) {
-                eprintln!("Input handler thread stopping after fatal error: {err}");
+                eprintln!("Input handler thread stopping after fatal error: {err:#}");
             }
         });
 
@@ -142,7 +161,7 @@ impl Engine {
                 EngineCommand::MakeMove { mv_string } => {
                     match Move::from_uci(&self.game, &mv_string) {
                         Ok(mv) => self.make_move(mv),
-                        Err(e) => eprintln!("{e}"),
+                        Err(e) => eprintln!("{e:#}"),
                     }
                 }
 
@@ -175,7 +194,7 @@ impl Engine {
                 EngineCommand::Uci { cmd } => {
                     // Keep running, even on error
                     if let Err(e) = self.handle_uci_command(cmd) {
-                        eprintln!("Error: {e}");
+                        eprintln!("Error: {e:#}");
                     }
                 }
             };
@@ -281,7 +300,11 @@ impl Engine {
 
     /// Executes the `display` command, printing the current position.
     fn display(&self) {
-        println!("{}", self.game);
+        if self.variant.is_chess960() {
+            println!("{:#}", self.game);
+        } else {
+            println!("{}", self.game);
+        }
     }
 
     /// Executes the `eval` command, printing an evaluation of the current position.
@@ -508,6 +531,7 @@ impl Engine {
                 TTable::MAX_SIZE as i32,
             ),
             UciOption::spin("Threads", 1, 1, 1),
+            UciOption::check("UCI_Chess960", false),
         ]
         .into_iter()
     }
@@ -523,7 +547,7 @@ impl Engine {
             // Re-size the hash table
             "Hash" => {
                 let Some(value) = value.as_ref() else {
-                    bail!("usage: setoption name hash value <value>");
+                    bail!("usage: setoption name {name} value <value>");
                 };
 
                 let mb = value
@@ -543,6 +567,22 @@ impl Engine {
 
             // Set the number of search threads
             "Threads" => bail!("{} currently supports only 1 thread", self.name()),
+
+            "UCI_Chess960" => {
+                let Some(value) = value.as_ref() else {
+                    bail!("usage: setoption name {name} value <true / false>");
+                };
+
+                let enabled = value
+                    .parse::<bool>()
+                    .context(format!("expected bool. got {value:?}"))?;
+
+                if enabled {
+                    self.variant = GameVariant::Chess960;
+                } else {
+                    self.variant = Default::default();
+                }
+            }
 
             _ => {
                 if let Some(value) = value.as_ref() {
@@ -573,6 +613,8 @@ impl Engine {
             "Hash" => format!("{}", self.ttable().size()),
 
             "Threads" => String::from("1"),
+
+            "UCI_Chess960" => format!("{}", self.variant.is_chess960()),
 
             _ => return None,
         };
@@ -651,7 +693,7 @@ fn input_handler(sender: Sender<EngineCommand>) -> Result<()> {
             }
 
             // If it was a UCI command, print a usage message.
-            Err(uci_err) => eprintln!("{uci_err}"),
+            Err(uci_err) => eprintln!("{uci_err:#}"),
         }
 
         /*
