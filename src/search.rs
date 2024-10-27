@@ -744,12 +744,15 @@ fn score_move(game: &Game, mv: &Move, tt_move: Option<Move>) -> Score {
     }
 
     // Safe unwrap because we can't move unless there's a piece at `from`
-    let kind = game.kind_at(mv.from()).unwrap();
+    let piece = game.piece_at(mv.from()).unwrap();
     let mut score = Score(0);
 
     // Capturing a high-value piece with a low-value piece is a good idea
-    if let Some(victim) = game.kind_at(mv.to()) {
-        score += MVV_LVA[kind][victim];
+    // if let Some(victim) = game.kind_at(mv.to()) {
+    if let Some(victim) = game.piece_at(mv.to()) {
+        if victim.color() != piece.color() {
+            score += MVV_LVA[piece.kind()][victim];
+        }
     }
 
     -score // We're sorting, so a lower number is better

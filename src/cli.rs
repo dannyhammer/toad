@@ -63,15 +63,17 @@ pub enum EngineCommand {
     /// No enforcement of legality, so you can move a White piece twice in a row, if you want.
     MakeMove { mv_string: String },
 
-    /// Shows all legal moves in the current position.
-    ///
-    /// If `square` is provided, it will display all available moves from that square.
+    /// Shows all legal moves in the current position, or for a specific piece.
     Moves {
         square: Option<Square>,
 
-        /// If set, a Bitboard of all possible moves will also be displayed
+        /// If set, a Bitboard of all possible moves will also be displayed.
         #[arg(short, long, default_value = "false")]
         pretty: bool,
+
+        /// If set, moves will be printed using their debug formatter, which displays what kind of move it is (quiet, en passant, etc.).
+        #[arg(short, long, default_value = "false")]
+        debug: bool,
     },
 
     /// Display the current value of the specified option.

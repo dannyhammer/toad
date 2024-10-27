@@ -165,7 +165,11 @@ impl Engine {
                     }
                 }
 
-                EngineCommand::Moves { square, pretty } => self.moves(square, pretty),
+                EngineCommand::Moves {
+                    square,
+                    pretty,
+                    debug,
+                } => self.moves(square, pretty, debug),
 
                 EngineCommand::Option { name } => {
                     if let Some(value) = self.get_option(&name) {
@@ -345,7 +349,7 @@ impl Engine {
     }
 
     /// Executes the `moves` command, displaying all available moves on the board, or for the given square.
-    fn moves(&self, square: Option<Square>, pretty: bool) {
+    fn moves(&self, square: Option<Square>, pretty: bool, debug: bool) {
         // Get the legal moves
         let moves = if let Some(square) = square {
             self.game.get_legal_moves_from(square.into())
@@ -358,9 +362,15 @@ impl Engine {
             println!("(none)")
         } else {
             // Join by comma-space
+            // TODO: I don't love how this code is laid out, but it's UI code, so it doesn't *need* to be fast.
             let string = moves
                 .iter()
-                .map(|mv| mv.to_string())
+                .map(|mv| match (debug, self.variant.is_chess960()) {
+                    (true, true) => format!("{mv:#?}"),
+                    (true, false) => format!("{mv:?}"),
+                    (false, true) => format!("{mv:#}"),
+                    (false, false) => format!("{mv}"),
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
 
