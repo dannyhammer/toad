@@ -399,32 +399,32 @@ impl<'a> Search<'a> {
                     // Otherwise, the window is OK and we can use the score
                     break 'aspiration_window score;
                 }
-
-                // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
-                // Instead, we should break out of the ID loop, using the result from the previous iteration
-                if self.search_cancelled() {
-                    if DEBUG {
-                        if let Some(bestmove) = self.get_tt_bestmove::<false>(game.key()) {
-                            self.send_string(format!(
-                                "Search cancelled during depth {} while evaluating {bestmove} with score {score}",
-                                result.depth,
-                                ));
-                        } else {
-                            self.send_string(format!(
-                            "Search cancelled during depth {} with score {score} and no bestmove",
-                            result.depth,
-                        ));
-                        }
-                    }
-                    break 'iterative_deepening;
-                }
             };
 
             /****************************************************************************************************
              * Update current best score
              ****************************************************************************************************/
 
-            // Otherwise, we need to update the "current" result with the results from the new search
+            // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
+            // Instead, we should break out of the ID loop, using the result from the previous iteration
+            if self.search_cancelled() {
+                if DEBUG {
+                    if let Some(bestmove) = self.get_tt_bestmove::<false>(game.key()) {
+                        self.send_string(format!(
+                                "Search cancelled during depth {} while evaluating {bestmove} with score {score}",
+                                result.depth,
+                                ));
+                    } else {
+                        self.send_string(format!(
+                            "Search cancelled during depth {} with score {score} and no bestmove",
+                            result.depth,
+                        ));
+                    }
+                }
+                break 'iterative_deepening;
+            }
+
+            // Otherwise, we need to update the "best" result with the results from the new search
             result.score = score;
 
             // Get the bestmove from the TTable
