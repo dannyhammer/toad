@@ -38,6 +38,7 @@ In addition to the above UCI commands, Toad also supports the following custom c
 
 ```
 Commands:
+  await       Await the current search, blocking until it completes
   bench       Run a benchmark with the provided parameters
   display     Print a visual representation of the current board state
   eval        Print an evaluation of the current position

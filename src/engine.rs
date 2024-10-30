@@ -138,6 +138,10 @@ impl Engine {
                 println!("info string Received command {cmd:?}");
             }
             match cmd {
+                EngineCommand::Await => {
+                    self.stop_search();
+                }
+
                 EngineCommand::Bench { depth, pretty } => self.bench(depth, pretty)?,
 
                 EngineCommand::Display => self.display(),
