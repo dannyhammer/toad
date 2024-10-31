@@ -66,7 +66,7 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 [[package]]
 name = "chessie"
 version = "2.0.0"
-source = "git+https://github.com/dannyhammer/chessie.git#5e3a818d0a36b4be4afe193eeb37bbb1711d6263"
+source = "git+https://github.com/dannyhammer/chessie.git#fd5bc778d70ca1e7ea09dd45ee84871c2b3cfc97"
 dependencies = [
  "anyhow",
  "arrayvec",
@@ -76,7 +76,7 @@ dependencies = [
 [[package]]
 name = "chessie_types"
 version = "2.0.0"
-source = "git+https://github.com/dannyhammer/chessie.git#5e3a818d0a36b4be4afe193eeb37bbb1711d6263"
+source = "git+https://github.com/dannyhammer/chessie.git#fd5bc778d70ca1e7ea09dd45ee84871c2b3cfc97"
 dependencies = [
  "anyhow",
 ]
