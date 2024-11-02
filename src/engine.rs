@@ -16,11 +16,12 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use chessie::{print_perft, Bitboard, Game, Move, Piece, Position, Square};
+use chessie::{perft, splitperft, Bitboard, Game, Move, Piece, Position, Square};
 use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
-    EngineCommand, Evaluator, Psqt, Search, SearchConfig, SearchResult, TTable, BENCHMARK_FENS,
+    Chess960, EngineCommand, Evaluator, GameVariant, Psqt, Search, SearchConfig, SearchResult,
+    Standard, TTable, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -57,6 +58,9 @@ pub struct Engine {
 
     /// Whether to display extra information during execution.
     debug: bool,
+
+    /// Chess variant being played
+    variant: GameVariant,
 }
 
 impl Engine {
@@ -75,7 +79,7 @@ impl Engine {
             search_thread: None,
             ttable: Arc::default(),
             debug: false,
-            // debug: true,
+            variant: Default::default(),
         }
     }
 
@@ -109,7 +113,7 @@ impl Engine {
         let sender = self.sender.clone();
         thread::spawn(|| {
             if let Err(err) = input_handler(sender) {
-                eprintln!("Input handler thread stopping after fatal error: {err}");
+                eprintln!("Input handler thread stopping after fatal error: {err:#}");
             }
         });
 
@@ -119,6 +123,10 @@ impl Engine {
                 println!("info string Received command {cmd:?}");
             }
             match cmd {
+                EngineCommand::Await => {
+                    self.stop_search();
+                }
+
                 EngineCommand::Bench { depth, pretty } => self.bench(depth, pretty)?,
 
                 EngineCommand::Display => self.display(),
@@ -142,11 +150,16 @@ impl Engine {
                 EngineCommand::MakeMove { mv_string } => {
                     match Move::from_uci(&self.game, &mv_string) {
                         Ok(mv) => self.make_move(mv),
-                        Err(e) => eprintln!("{e}"),
+                        Err(e) => eprintln!("{e:#}"),
                     }
                 }
 
-                EngineCommand::Moves { square, pretty } => self.moves(square, pretty),
+                EngineCommand::Moves {
+                    square,
+                    pretty,
+                    debug,
+                    sort,
+                } => self.moves(square, pretty, debug, sort),
 
                 EngineCommand::Option { name } => {
                     if let Some(value) = self.get_option(&name) {
@@ -156,9 +169,7 @@ impl Engine {
                     }
                 }
 
-                EngineCommand::Perft { depth } => {
-                    print_perft::<false, false>(&self.game, depth);
-                }
+                EngineCommand::Perft { depth } => println!("{}", perft(&self.game, depth)),
 
                 EngineCommand::Psqt {
                     piece,
@@ -167,7 +178,7 @@ impl Engine {
                 } => self.psqt(piece, square, weight),
 
                 EngineCommand::Splitperft { depth } => {
-                    print_perft::<false, true>(&self.game, depth);
+                    println!("{}", splitperft(&self.game, depth))
                 }
 
                 EngineCommand::HashInfo => self.hash_info(),
@@ -175,7 +186,7 @@ impl Engine {
                 EngineCommand::Uci { cmd } => {
                     // Keep running, even on error
                     if let Err(e) = self.handle_uci_command(cmd) {
-                        eprintln!("Error: {e}");
+                        eprintln!("Error: {e:#}");
                     }
                 }
             };
@@ -204,7 +215,7 @@ impl Engine {
 
             Go(options) => {
                 if let Some(depth) = options.perft {
-                    print_perft::<false, true>(&self.game, depth as usize);
+                    println!("{}", splitperft(&self.game, depth as usize));
                     return Ok(());
                 }
 
@@ -281,7 +292,11 @@ impl Engine {
 
     /// Executes the `display` command, printing the current position.
     fn display(&self) {
-        println!("{}", self.game);
+        if self.variant.is_chess960() {
+            println!("{:#}", self.game);
+        } else {
+            println!("{}", self.game);
+        }
     }
 
     /// Executes the `eval` command, printing an evaluation of the current position.
@@ -322,7 +337,7 @@ impl Engine {
     }
 
     /// Executes the `moves` command, displaying all available moves on the board, or for the given square.
-    fn moves(&self, square: Option<Square>, pretty: bool) {
+    fn moves(&self, square: Option<Square>, pretty: bool, debug: bool, sort: bool) {
         // Get the legal moves
         let moves = if let Some(square) = square {
             self.game.get_legal_moves_from(square.into())
@@ -335,11 +350,25 @@ impl Engine {
             println!("(none)")
         } else {
             // Join by comma-space
-            let string = moves
-                .iter()
-                .map(|mv| mv.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
+            // TODO: I don't love how this code is laid out, but it's UI code, so it doesn't *need* to be fast.
+            let string = {
+                let mut s = moves
+                    .iter()
+                    .map(|mv| match (debug, self.variant.is_chess960()) {
+                        (true, true) => format!("{mv:#?}"),
+                        (true, false) => format!("{mv:?}"),
+                        (false, true) => format!("{mv:#}"),
+                        (false, false) => format!("{mv}"),
+                    })
+                    .collect::<Vec<_>>();
+
+                // Sort alphabetically, if necessary
+                if sort {
+                    s.sort();
+                }
+
+                s.join(", ")
+            };
 
             // If pretty-printing, also display a Bitboard of all possible destinations
             if pretty {
@@ -452,13 +481,24 @@ impl Engine {
         history.reserve(self.history.capacity());
         history.push(*game.position());
         let ttable = Arc::clone(&self.ttable);
+        let variant = self.variant;
 
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
             // Lock the TTable at the start of the search so that only the search thread may modify it
             let mut ttable = ttable.lock().unwrap();
 
-            Search::new(is_searching, config, history, &mut ttable).start::<DEBUG>(&game)
+            match variant {
+                GameVariant::Standard => {
+                    Search::<Standard>::new(is_searching, config, history, &mut ttable)
+                        .start::<DEBUG>(&game)
+                }
+
+                GameVariant::Chess960 => {
+                    Search::<Chess960>::new(is_searching, config, history, &mut ttable)
+                        .start::<DEBUG>(&game)
+                }
+            }
         });
 
         Some(handle)
@@ -508,6 +548,7 @@ impl Engine {
                 TTable::MAX_SIZE as i32,
             ),
             UciOption::spin("Threads", 1, 1, 1),
+            UciOption::check("UCI_Chess960", false),
         ]
         .into_iter()
     }
@@ -523,7 +564,7 @@ impl Engine {
             // Re-size the hash table
             "Hash" => {
                 let Some(value) = value.as_ref() else {
-                    bail!("usage: setoption name hash value <value>");
+                    bail!("usage: setoption name {name} value <value>");
                 };
 
                 let mb = value
@@ -543,6 +584,22 @@ impl Engine {
 
             // Set the number of search threads
             "Threads" => bail!("{} currently supports only 1 thread", self.name()),
+
+            "UCI_Chess960" => {
+                let Some(value) = value.as_ref() else {
+                    bail!("usage: setoption name {name} value <true / false>");
+                };
+
+                let enabled = value
+                    .parse::<bool>()
+                    .context(format!("expected bool. got {value:?}"))?;
+
+                if enabled {
+                    self.variant = GameVariant::Chess960;
+                } else {
+                    self.variant = Default::default();
+                }
+            }
 
             _ => {
                 if let Some(value) = value.as_ref() {
@@ -573,6 +630,8 @@ impl Engine {
             "Hash" => format!("{}", self.ttable().size()),
 
             "Threads" => String::from("1"),
+
+            "UCI_Chess960" => format!("{}", self.variant.is_chess960()),
 
             _ => return None,
         };
@@ -651,7 +710,7 @@ fn input_handler(sender: Sender<EngineCommand>) -> Result<()> {
             }
 
             // If it was a UCI command, print a usage message.
-            Err(uci_err) => eprintln!("{uci_err}"),
+            Err(uci_err) => eprintln!("{uci_err:#}"),
         }
 
         /*
