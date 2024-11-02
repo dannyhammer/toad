@@ -252,27 +252,18 @@ impl HistoryTable {
     ///
     /// Uses the "history gravity" formula from https://www.chessprogramming.org/History_Heuristic#History_Bonuses
     #[inline(always)]
-    fn apply_bonus(&mut self, game: &Game, mv: &Move, depth: u8) {
+    fn update(&mut self, game: &Game, mv: &Move, bonus: Score) {
         // Only apply history bonus for quiet moves
         if mv.is_capture() {
             return;
         }
 
-        // Simple bonus based on depth
-        let bonus = Score((depth * depth) as i32);
-
         // Safety: This is a move. There *must* be a piece at `from`.
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
         let current_score = self.0[piece][to];
-
-        // If this move has already been scored, don't score it again.
-        // This prevents moves that cause a beta cutoff more than once from being given unreasonably-high scores.
-        if current_score >= bonus {
-            return;
-        }
-
         let clamped_bonus = bonus.clamp(-Score::MAX_HISTORY, Score::MAX_HISTORY);
+
         self.0[piece][to] +=
             clamped_bonus - current_score * clamped_bonus.abs() / Score::MAX_HISTORY;
     }
@@ -563,9 +554,9 @@ impl<'a, V: Variant> Search<'a, V> {
          * Primary move loop
          ****************************************************************************************************/
 
-        for (i, mv) in moves.into_iter().enumerate() {
+        for (i, mv) in moves.iter().enumerate() {
             // Copy-make the new position
-            let new = game.with_move_made(mv);
+            let new = game.with_move_made(*mv);
             let mut score;
 
             // Determine the score of making this move
@@ -607,13 +598,19 @@ impl<'a, V: Variant> Search<'a, V> {
                 if score > alpha {
                     alpha = score;
                     // PV found
-                    bestmove = mv;
+                    bestmove = *mv;
                 }
 
                 // Fail soft beta-cutoff.
                 if score >= beta {
-                    self.history.apply_bonus(game, &mv, depth);
-                    // TODO: Apply penalty to previously-searched quiets: https://www.chessprogramming.org/History_Heuristic#History_Maluses
+                    // Simple bonus based on depth
+                    let bonus = Score((depth * depth) as i32);
+                    self.history.update(game, &mv, bonus);
+
+                    // Apply a penalty to all quiets searched so far
+                    for mv in moves[..i].iter().filter(|mv| !mv.is_capture()) {
+                        self.history.update(game, mv, -bonus);
+                    }
                     break;
                 }
             }
