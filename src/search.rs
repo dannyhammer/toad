@@ -7,7 +7,7 @@
 use std::{
     fmt,
     marker::PhantomData,
-    ops::{Deref, DerefMut},
+    ops::Deref,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -264,9 +264,17 @@ impl HistoryTable {
         // Safety: This is a move. There *must* be a piece at `from`.
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
+        let current_score = self.0[piece][to];
+
+        // If this move has already been scored, don't score it again.
+        // This prevents moves that cause a beta cutoff more than once from being given unreasonably-high scores.
+        if current_score >= bonus {
+            return;
+        }
+
         let clamped_bonus = bonus.clamp(-Score::MAX_HISTORY, Score::MAX_HISTORY);
-        let history = self[piece][to];
-        self[piece][to] += clamped_bonus - history * clamped_bonus.abs() / Score::MAX_HISTORY;
+        self.0[piece][to] +=
+            clamped_bonus - current_score * clamped_bonus.abs() / Score::MAX_HISTORY;
     }
 }
 
@@ -282,13 +290,6 @@ impl Deref for HistoryTable {
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.0
-    }
-}
-
-impl DerefMut for HistoryTable {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
     }
 }
 
