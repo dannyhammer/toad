@@ -80,6 +80,12 @@ pub enum EngineCommand {
         /// If set, moves will be printed using their debug formatter, which displays what kind of move it is (quiet, en passant, etc.).
         #[arg(short, long, default_value = "false")]
         debug: bool,
+
+        /// If set, moves will be sorted in alphabetical order.
+        ///
+        /// By default, moves are generated in no particular order.
+        #[arg(short, long, default_value = "false")]
+        sort: bool,
     },
 
     /// Display the current value of the specified option.

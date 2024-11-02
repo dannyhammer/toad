@@ -20,23 +20,9 @@ use chessie::{print_perft, Bitboard, Game, Move, Piece, Position, Square};
 use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
-    EngineCommand, Evaluator, Psqt, Search, SearchConfig, SearchResult, TTable, BENCHMARK_FENS,
+    Chess960, EngineCommand, Evaluator, GameVariant, Psqt, Search, SearchConfig, SearchResult,
+    Standard, TTable, BENCHMARK_FENS,
 };
-
-#[derive(Debug, Default, PartialEq, Eq, Hash)]
-enum GameVariant {
-    #[default]
-    Standard,
-
-    Chess960,
-}
-
-impl GameVariant {
-    #[inline(always)]
-    fn is_chess960(&self) -> bool {
-        matches!(self, Self::Chess960)
-    }
-}
 
 /// Default depth at which to run the benchmark searches.
 const BENCH_DEPTH: u8 = 7;
@@ -93,7 +79,6 @@ impl Engine {
             search_thread: None,
             ttable: Arc::default(),
             debug: false,
-            // debug: true,
             variant: Default::default(),
         }
     }
@@ -173,7 +158,8 @@ impl Engine {
                     square,
                     pretty,
                     debug,
-                } => self.moves(square, pretty, debug),
+                    sort,
+                } => self.moves(square, pretty, debug, sort),
 
                 EngineCommand::Option { name } => {
                     if let Some(value) = self.get_option(&name) {
@@ -353,7 +339,7 @@ impl Engine {
     }
 
     /// Executes the `moves` command, displaying all available moves on the board, or for the given square.
-    fn moves(&self, square: Option<Square>, pretty: bool, debug: bool) {
+    fn moves(&self, square: Option<Square>, pretty: bool, debug: bool, sort: bool) {
         // Get the legal moves
         let moves = if let Some(square) = square {
             self.game.get_legal_moves_from(square.into())
@@ -367,16 +353,24 @@ impl Engine {
         } else {
             // Join by comma-space
             // TODO: I don't love how this code is laid out, but it's UI code, so it doesn't *need* to be fast.
-            let string = moves
-                .iter()
-                .map(|mv| match (debug, self.variant.is_chess960()) {
-                    (true, true) => format!("{mv:#?}"),
-                    (true, false) => format!("{mv:?}"),
-                    (false, true) => format!("{mv:#}"),
-                    (false, false) => format!("{mv}"),
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
+            let string = {
+                let mut s = moves
+                    .iter()
+                    .map(|mv| match (debug, self.variant.is_chess960()) {
+                        (true, true) => format!("{mv:#?}"),
+                        (true, false) => format!("{mv:?}"),
+                        (false, true) => format!("{mv:#}"),
+                        (false, false) => format!("{mv}"),
+                    })
+                    .collect::<Vec<_>>();
+
+                // Sort alphabetically, if necessary
+                if sort {
+                    s.sort();
+                }
+
+                s.join(", ")
+            };
 
             // If pretty-printing, also display a Bitboard of all possible destinations
             if pretty {
@@ -489,13 +483,24 @@ impl Engine {
         history.reserve(self.history.capacity());
         history.push(*game.position());
         let ttable = Arc::clone(&self.ttable);
+        let variant = self.variant;
 
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
             // Lock the TTable at the start of the search so that only the search thread may modify it
             let mut ttable = ttable.lock().unwrap();
 
-            Search::new(is_searching, config, history, &mut ttable).start::<DEBUG>(&game)
+            match variant {
+                GameVariant::Standard => {
+                    Search::<Standard>::new(is_searching, config, history, &mut ttable)
+                        .start::<DEBUG>(&game)
+                }
+
+                GameVariant::Chess960 => {
+                    Search::<Chess960>::new(is_searching, config, history, &mut ttable)
+                        .start::<DEBUG>(&game)
+                }
+            }
         });
 
         Some(handle)
