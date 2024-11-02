@@ -19,6 +19,12 @@ use uci_parser::UciCommand;
     override_usage("<ENGINE COMMAND> | <UCI COMMAND>")
 )]
 pub enum EngineCommand {
+    /// Await the current search, blocking until it completes.
+    ///
+    /// This is primarily used when executing searches on startup,
+    /// to await their results before doing something else.
+    Await,
+
     /// Run a benchmark with the provided parameters.
     Bench {
         /// If set, the benchmarking results will be printed in a well-formatted table.
@@ -63,15 +69,23 @@ pub enum EngineCommand {
     /// No enforcement of legality, so you can move a White piece twice in a row, if you want.
     MakeMove { mv_string: String },
 
-    /// Shows all legal moves in the current position.
-    ///
-    /// If `square` is provided, it will display all available moves from that square.
+    /// Shows all legal moves in the current position, or for a specific piece.
     Moves {
         square: Option<Square>,
 
-        /// If set, a Bitboard of all possible moves will also be displayed
+        /// If set, a Bitboard of all possible moves will also be displayed.
         #[arg(short, long, default_value = "false")]
         pretty: bool,
+
+        /// If set, moves will be printed using their debug formatter, which displays what kind of move it is (quiet, en passant, etc.).
+        #[arg(short, long, default_value = "false")]
+        debug: bool,
+
+        /// If set, moves will be sorted in alphabetical order.
+        ///
+        /// By default, moves are generated in no particular order.
+        #[arg(short, long, default_value = "false")]
+        sort: bool,
     },
 
     /// Display the current value of the specified option.
