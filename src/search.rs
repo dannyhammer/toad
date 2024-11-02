@@ -7,6 +7,7 @@
 use std::{
     fmt,
     marker::PhantomData,
+    ops::{Deref, DerefMut},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -234,6 +235,63 @@ impl Default for SearchConfig {
     }
 }
 
+/// Stores bonuses and penalties for moving a piece to a square.
+///
+/// Used to keep track of good/bad moves found during search.
+#[derive(Debug)]
+pub struct HistoryTable([[Score; Square::COUNT]; Piece::COUNT]);
+
+impl HistoryTable {
+    /// Clear the history table, removing all scores.
+    #[inline(always)]
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Applies a bonus based on the history heuristic for the move.
+    ///
+    /// Uses the "history gravity" formula from https://www.chessprogramming.org/History_Heuristic#History_Bonuses
+    #[inline(always)]
+    fn apply_bonus(&mut self, game: &Game, mv: &Move, depth: u8) {
+        // Only apply history bonus for quiet moves
+        if mv.is_capture() {
+            return;
+        }
+
+        // Simple bonus based on depth
+        let bonus = Score((depth * depth) as i32);
+
+        // Safety: This is a move. There *must* be a piece at `from`.
+        let piece = game.piece_at(mv.from()).unwrap();
+        let to = mv.to();
+        let clamped_bonus = bonus.clamp(-Score::MAX_HISTORY, Score::MAX_HISTORY);
+        let history = self[piece][to];
+        self[piece][to] += clamped_bonus - history * clamped_bonus.abs() / Score::MAX_HISTORY;
+    }
+}
+
+impl Default for HistoryTable {
+    #[inline(always)]
+    fn default() -> Self {
+        Self([[Score(0); Square::COUNT]; Piece::COUNT])
+    }
+}
+
+impl Deref for HistoryTable {
+    type Target = [[Score; Square::COUNT]; Piece::COUNT];
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for HistoryTable {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 /// Executes a search on the provided game at a specified depth.
 pub struct Search<'a, V> {
     /// Number of nodes searched.
@@ -254,7 +312,7 @@ pub struct Search<'a, V> {
     ttable: &'a mut TTable,
 
     /// Storage for moves that cause a beta-cutoff during search.
-    history: [[Score; Square::COUNT]; Piece::COUNT],
+    history: &'a mut HistoryTable,
 
     /// Marker for what variant of Chess is being played
     variant: PhantomData<&'a V>,
@@ -268,6 +326,7 @@ impl<'a, V: Variant> Search<'a, V> {
         config: SearchConfig,
         prev_positions: Vec<Position>,
         ttable: &'a mut TTable,
+        history: &'a mut HistoryTable,
     ) -> Self {
         Self {
             nodes: 0,
@@ -275,7 +334,7 @@ impl<'a, V: Variant> Search<'a, V> {
             config,
             prev_positions,
             ttable,
-            history: [[Score(0); Square::COUNT]; Piece::COUNT],
+            history,
             variant: PhantomData,
         }
     }
@@ -552,7 +611,7 @@ impl<'a, V: Variant> Search<'a, V> {
 
                 // Fail soft beta-cutoff.
                 if score >= beta {
-                    self.apply_history_bonus(game, &mv, depth);
+                    self.history.apply_bonus(game, &mv, depth);
                     // TODO: Apply penalty to previously-searched quiets: https://www.chessprogramming.org/History_Heuristic#History_Maluses
                     break;
                 }
@@ -768,28 +827,6 @@ impl<'a, V: Variant> Search<'a, V> {
 
         -score // We're sorting, so a lower number is better
     }
-
-    /// Applies a bonus based on the history heuristic for the move.
-    ///
-    /// Uses the "history gravity" formula from https://www.chessprogramming.org/History_Heuristic#History_Bonuses
-    #[inline(always)]
-    fn apply_history_bonus(&mut self, game: &Game, mv: &Move, depth: u8) {
-        // Only apply history bonus for quiet moves
-        if mv.is_capture() {
-            return;
-        }
-
-        // Simple bonus based on depth
-        let bonus = Score((depth * depth) as i32);
-
-        // Safety: This is a move. There *must* be a piece at `from`.
-        let piece = unsafe { game.piece_at(mv.from()).unwrap_unchecked() };
-        let clamped_bonus = bonus.clamp(-Score::MAX_HISTORY, Score::MAX_HISTORY);
-        let to = mv.to();
-        let history = self.history[piece][to];
-        self.history[piece][to] +=
-            clamped_bonus - history * clamped_bonus.abs() / Score::MAX_HISTORY;
-    }
 }
 
 /// This table represents values for [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) move ordering.
@@ -892,7 +929,14 @@ mod tests {
         let game = fen.parse().unwrap();
 
         let mut ttable = Default::default();
-        let search = Search::<Standard>::new(is_searching, config, Default::default(), &mut ttable);
+        let mut history = Default::default();
+        let search = Search::<Standard>::new(
+            is_searching,
+            config,
+            Default::default(),
+            &mut ttable,
+            &mut history,
+        );
 
         search.start::<false>(&game)
     }

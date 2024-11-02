@@ -20,8 +20,8 @@ use chessie::{perft, splitperft, Bitboard, Game, Move, Piece, Position, Square};
 use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
-    Chess960, EngineCommand, Evaluator, GameVariant, Psqt, Search, SearchConfig, SearchResult,
-    Standard, TTable, BENCHMARK_FENS,
+    Chess960, EngineCommand, Evaluator, GameVariant, HistoryTable, Psqt, Search, SearchConfig,
+    SearchResult, Standard, TTable, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -39,7 +39,7 @@ pub struct Engine {
     /// All previous positions of `self.game`, including the current position.
     ///
     /// Updated when the engine makes a move or receives `position ... moves [move list]`.
-    history: Vec<Position>,
+    prev_positions: Vec<Position>,
 
     /// One half of a channel, responsible for sending commands to the engine to execute.
     sender: Sender<EngineCommand>,
@@ -55,6 +55,9 @@ pub struct Engine {
 
     /// Transposition table used to cache information found during search.
     ttable: Arc<Mutex<TTable>>,
+
+    /// History table for keeping track of good/bad moves during search.
+    history: Arc<Mutex<HistoryTable>>,
 
     /// Whether to display extra information during execution.
     debug: bool,
@@ -72,12 +75,13 @@ impl Engine {
 
         Self {
             game: Game::default(),
-            history: Vec::with_capacity(512),
+            prev_positions: Vec::with_capacity(512),
             sender,
             receiver,
             is_searching: Arc::default(),
             search_thread: None,
             ttable: Arc::default(),
+            history: Arc::default(),
             debug: false,
             variant: Default::default(),
         }
@@ -263,6 +267,9 @@ impl Engine {
             // Await the search, appending the node count once concluded.
             let res = self.stop_search().unwrap();
             nodes += res.nodes;
+
+            // Bench is on different positions, so hash tables are not likely to contain useful info.
+            self.clear_hash_tables();
         }
 
         // Compute results
@@ -327,12 +334,13 @@ impl Engine {
     #[inline(always)]
     fn clear_hash_tables(&mut self) {
         self.ttable().clear();
+        self.history().clear();
     }
 
     /// Makes the supplied move on the current position.
     #[inline(always)]
     fn make_move(&mut self, mv: Move) {
-        self.history.push(*self.game.position());
+        self.prev_positions.push(*self.game.position());
         self.game.make_move(mv);
     }
 
@@ -388,7 +396,7 @@ impl Engine {
     fn new_game(&mut self) {
         self.set_is_searching(false);
         self.game = Game::default();
-        self.history.clear();
+        self.prev_positions.clear();
         self.clear_hash_tables();
     }
 
@@ -407,7 +415,7 @@ impl Engine {
         }
 
         // Since this is a new position, it has a new history
-        self.history.clear();
+        self.prev_positions.clear();
 
         // Apply the provided moves
         for mv_str in moves {
@@ -476,28 +484,38 @@ impl Engine {
         // Clone the parameters that will be sent into the thread
         let game = self.game;
         let is_searching = Arc::clone(&self.is_searching);
-        let mut history = self.history.clone();
+        let mut prev_positions = self.prev_positions.clone();
         // Cloning a vec doesn't clone its capacity
-        history.reserve(self.history.capacity());
-        history.push(*game.position());
+        prev_positions.reserve(self.prev_positions.capacity());
+        prev_positions.push(*game.position());
         let ttable = Arc::clone(&self.ttable);
         let variant = self.variant;
+        let history = Arc::clone(&self.history);
 
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
             // Lock the TTable at the start of the search so that only the search thread may modify it
             let mut ttable = ttable.lock().unwrap();
+            let mut history = history.lock().unwrap();
 
             match variant {
-                GameVariant::Standard => {
-                    Search::<Standard>::new(is_searching, config, history, &mut ttable)
-                        .start::<DEBUG>(&game)
-                }
+                GameVariant::Standard => Search::<Standard>::new(
+                    is_searching,
+                    config,
+                    prev_positions,
+                    &mut ttable,
+                    &mut history,
+                )
+                .start::<DEBUG>(&game),
 
-                GameVariant::Chess960 => {
-                    Search::<Chess960>::new(is_searching, config, history, &mut ttable)
-                        .start::<DEBUG>(&game)
-                }
+                GameVariant::Chess960 => Search::<Chess960>::new(
+                    is_searching,
+                    config,
+                    prev_positions,
+                    &mut ttable,
+                    &mut history,
+                )
+                .start::<DEBUG>(&game),
             }
         });
 
@@ -652,6 +670,14 @@ impl Engine {
         self.ttable
             .lock()
             .expect("A thread holding the TTable panicked")
+    }
+
+    /// Helper function to fetch the History table, panicking if impossible.
+    #[inline(always)]
+    fn history(&self) -> std::sync::MutexGuard<'_, HistoryTable> {
+        self.history
+            .lock()
+            .expect("A thread holding the History table panicked")
     }
 }
 
