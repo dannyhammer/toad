@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chessie::{Color, Game, Move, MoveList, Piece, PieceKind, Position, Square, ZobristKey};
+use chessie::{Color, Game, Move, MoveList, Piece, PieceKind, Position, ZobristKey};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
@@ -255,9 +255,6 @@ pub struct Search<'a, V> {
     /// Transposition table used to cache information during search.
     ttable: &'a mut TTable,
 
-    /// Storage for moves that cause a beta-cutoff during search.
-    history: [[Score; Square::COUNT]; Piece::COUNT],
-
     /// Marker for what variant of Chess is being played
     variant: PhantomData<&'a V>,
 }
@@ -277,7 +274,6 @@ impl<'a, V: Variant> Search<'a, V> {
             config,
             prev_positions: history,
             ttable,
-            history: [[Score(0); Square::COUNT]; Piece::COUNT],
             variant: PhantomData,
         }
     }
@@ -560,10 +556,6 @@ impl<'a, V: Variant> Search<'a, V> {
 
                 // Fail soft beta-cutoff.
                 if score >= beta {
-                    if !mv.is_capture() {
-                        let bonus = Score((depth * depth) as i32);
-                        self.apply_history_bonus(game, &mv, bonus);
-                    }
                     break;
                 }
             }
@@ -768,30 +760,12 @@ impl<'a, V: Variant> Search<'a, V> {
         let piece = game.piece_at(mv.from()).unwrap();
         let mut score = Score(0);
 
-        // Apply history bonus
-        score += self.history[piece][mv.to()];
-
         // Capturing a high-value piece with a low-value piece is a good idea
         if let Some(victim) = game.piece_at(mv.to()) {
             score += MVV_LVA[piece][victim];
         }
 
         -score // We're sorting, so a lower number is better
-    }
-
-    /// Applies a bonus based on the history heuristic for the move.
-    ///
-    /// Uses the "history gravity" formula from https://www.chessprogramming.org/History_Heuristic#History_Bonuses
-    #[inline(always)]
-    fn apply_history_bonus(&mut self, game: &Game, mv: &Move, bonus: Score) {
-        // Safety: This is a move. There *must* be a piece at `from`.
-        let piece = unsafe { game.piece_at(mv.from()).unwrap_unchecked() };
-        // let max_history = Score(tune::max_history_bonus!());
-        // let clamped_bonus = bonus.clamp(-max_history, max_history);
-        let to = mv.to();
-        // let history = self.history[piece][to];
-        // self.history[piece][to] += clamped_bonus - history * clamped_bonus.abs() / max_history;
-        self.history[piece][to] += bonus;
     }
 }
 
