@@ -605,7 +605,7 @@ impl<'a, V: Variant> Search<'a, V> {
                 if score >= beta {
                     // Simple bonus based on depth
                     let bonus = Score((depth * depth) as i32);
-                    self.history.update(game, &mv, bonus);
+                    self.history.update(game, mv, bonus);
 
                     // Apply a penalty to all quiets searched so far
                     for mv in moves[..i].iter().filter(|mv| !mv.is_capture()) {
