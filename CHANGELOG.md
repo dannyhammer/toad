@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/dannyhammer/toad/compare/v1.0.0...v1.1.0) (2024-11-02)
+
+
+### Features
+
+* added support for Chess960 and Double Chess960 ([#63](https://github.com/dannyhammer/toad/issues/63)) ([1f868c2](https://github.com/dannyhammer/toad/commit/1f868c28f8df18d9681466c32f516ab73159a36d))
+
+
+### Bug Fixes
+
+* fixed bug causing `make` to fail when `sed` not present on Windows ([#61](https://github.com/dannyhammer/toad/issues/61)) ([ea8104c](https://github.com/dannyhammer/toad/commit/ea8104ce240acd65fa2205ec29008edb51741618))
+
 ## [1.0.0](https://github.com/dannyhammer/toad/compare/v0.9.2...v1.0.0) (2024-10-22)
 
 
