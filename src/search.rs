@@ -6,6 +6,7 @@
 
 use std::{
     fmt,
+    marker::PhantomData,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -13,10 +14,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chessie::{Game, Move, MoveList, PieceKind, Position, ZobristKey};
+use chessie::{Color, Game, Move, MoveList, Piece, PieceKind, Position, ZobristKey};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
-use crate::{tune, value_of, Evaluator, Score, TTable, TTableEntry};
+use crate::{tune, value_of, Evaluator, Score, TTable, TTableEntry, Variant};
 
 /// Maximum depth that can be searched
 pub const MAX_DEPTH: u8 = u8::MAX / 2;
@@ -234,7 +235,7 @@ impl Default for SearchConfig {
 }
 
 /// Executes a search on the provided game at a specified depth.
-pub struct Search<'a> {
+pub struct Search<'a, V> {
     /// Number of nodes searched.
     nodes: u64,
 
@@ -251,9 +252,12 @@ pub struct Search<'a> {
 
     /// Transposition table used to cache information during search.
     ttable: &'a mut TTable,
+
+    /// Marker for what variant of Chess is being played
+    variant: PhantomData<&'a V>,
 }
 
-impl<'a> Search<'a> {
+impl<'a, V: Variant> Search<'a, V> {
     /// Construct a new [`Search`] instance to execute.
     #[inline(always)]
     pub fn new(
@@ -268,12 +272,13 @@ impl<'a> Search<'a> {
             config,
             history,
             ttable,
+            variant: PhantomData,
         }
     }
 
     /// Start the search on the supplied [`Game`], returning a [`SearchResult`].
     ///
-    /// This is the entrypoint of the search, and prints UCI info before calling [`Self::iterative_deepening`],
+    /// This is the entrypoint of the search, and prints UCI info before starting iterative deepening.
     /// and concluding by sending the `bestmove` message and exiting.
     #[inline(always)]
     pub fn start<const DEBUG: bool>(mut self, game: &Game) -> SearchResult {
@@ -312,7 +317,7 @@ impl<'a> Search<'a> {
 
         // Search has ended; send bestmove
         self.send_response(UciResponse::BestMove {
-            bestmove: res.bestmove,
+            bestmove: res.bestmove.map(V::fmt_move),
             ponder: None,
         });
 
@@ -347,7 +352,7 @@ impl<'a> Search<'a> {
                 .score(result.score)
                 .nps((self.nodes as f32 / elapsed.as_secs_f32()).trunc())
                 .time(elapsed.as_millis())
-                .pv(result.bestmove),
+                .pv(result.bestmove.map(V::fmt_move)),
         );
     }
 
@@ -406,8 +411,9 @@ impl<'a> Search<'a> {
                     if DEBUG {
                         if let Some(bestmove) = self.get_tt_bestmove::<false>(game.key()) {
                             self.send_string(format!(
-                                "Search cancelled during depth {} while evaluating {bestmove} with score {score}",
+                                "Search cancelled during depth {} while evaluating {} with score {score}",
                                 result.depth,
+                                V::fmt_move(bestmove),
                                 ));
                         } else {
                             self.send_string(format!(
@@ -424,7 +430,7 @@ impl<'a> Search<'a> {
              * Update current best score
              ****************************************************************************************************/
 
-            // Otherwise, we need to update the "current" result with the results from the new search
+            // Otherwise, we need to update the "best" result with the results from the new search
             result.score = score;
 
             // Get the bestmove from the TTable
@@ -482,7 +488,7 @@ impl<'a> Search<'a> {
 
         // Sort moves so that we look at "promising" ones first
         let tt_move = self.get_tt_bestmove::<DEBUG>(game.key());
-        moves.sort_by_cached_key(|mv| score_move(game, mv, tt_move));
+        moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         // Start with a *really bad* initial score
         let mut best = -Score::INF;
@@ -599,7 +605,7 @@ impl<'a> Search<'a> {
         self.nodes += 1;
 
         let tt_move = self.get_tt_bestmove::<DEBUG>(game.key());
-        captures.sort_by_cached_key(|mv| score_move(game, mv, tt_move));
+        captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
         // let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
@@ -733,26 +739,26 @@ impl<'a> Search<'a> {
 
         mv
     }
-}
 
-/// Applies a score to the provided move, intended to be used when ordering moves during search.
-#[inline(always)]
-fn score_move(game: &Game, mv: &Move, tt_move: Option<Move>) -> Score {
-    // TT move should be looked at first!
-    if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
-        return -Score::INF;
+    /// Applies a score to the provided move, intended to be used when ordering moves during search.
+    #[inline(always)]
+    fn score_move(&self, game: &Game, mv: &Move, tt_move: Option<Move>) -> Score {
+        // TT move should be looked at first!
+        if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
+            return -Score::INF;
+        }
+
+        // Safe unwrap because we can't move unless there's a piece at `from`
+        let piece = game.piece_at(mv.from()).unwrap();
+        let mut score = Score(0);
+
+        // Capturing a high-value piece with a low-value piece is a good idea
+        if let Some(victim) = game.piece_at(mv.to()) {
+            score += MVV_LVA[piece][victim];
+        }
+
+        -score // We're sorting, so a lower number is better
     }
-
-    // Safe unwrap because we can't move unless there's a piece at `from`
-    let kind = game.kind_at(mv.from()).unwrap();
-    let mut score = Score(0);
-
-    // Capturing a high-value piece with a low-value piece is a good idea
-    if let Some(victim) = game.kind_at(mv.to()) {
-        score += MVV_LVA[kind][victim];
-    }
-
-    -score // We're sorting, so a lower number is better
 }
 
 /// This table represents values for [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) move ordering.
@@ -771,18 +777,31 @@ fn score_move(game: &Game, mv: &Move, tt_move: Option<Move>) -> Score {
 /// E   Q| 100   2300  2400  4100  8100  0     
 /// R   K| 1000  3200  3300  5000  9000  0     
 /// ```
-const MVV_LVA: [[i32; PieceKind::COUNT]; PieceKind::COUNT] = {
-    let mut matrix = [[0; PieceKind::COUNT]; PieceKind::COUNT];
-    let count = PieceKind::COUNT;
+///
+/// Note that the actual table is different, as it has size `12x12` instead of `6x6`
+/// to account for the fact that castling is denoted as `KxR`.
+/// The values are still the same, though, just without allowing captures of friendly pieces.
+///
+/// See [`print_mvv_lva_table`] to display this table.
+const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
+    let mut matrix = [[0; Piece::COUNT]; Piece::COUNT];
+    let count = Piece::COUNT;
 
     let mut attacker = 0;
     while attacker < count {
         let mut victim = 0;
+        let atk_color = Color::from_bool(attacker < PieceKind::COUNT);
 
-        // The -1 here is to remove scores for capturing the King
-        while victim < count - 1 {
-            let atk = PieceKind::from_bits_unchecked(attacker as u8);
-            let vtm = PieceKind::from_bits_unchecked(victim as u8);
+        while victim < count {
+            let atk = PieceKind::from_bits_unchecked(attacker as u8 % 6);
+            let vtm = PieceKind::from_bits_unchecked(victim as u8 % 6);
+
+            let vtm_color = Color::from_bool(victim < PieceKind::COUNT);
+
+            // Remove scores for capturing the King and friendly pieces (KxR for castling)
+            let can_capture = (atk_color.index() != vtm_color.index()) // Different colors
+                && victim != count - 1 // Can't capture White King
+                && victim != PieceKind::COUNT - 1; // Can't capture Black King
 
             // Rustic's way of doing things; Arbitrary increasing numbers for capturing pairs
             // bench: 27609398 nodes 5716479 nps
@@ -802,7 +821,7 @@ const MVV_LVA: [[i32; PieceKind::COUNT]; PieceKind::COUNT] = {
             //     10 * value_of(vtm) - value_of(atk)
             // };
 
-            matrix[attacker][victim] = score;
+            matrix[attacker][victim] = score * can_capture as i32;
             victim += 1;
         }
         attacker += 1;
@@ -813,22 +832,18 @@ const MVV_LVA: [[i32; PieceKind::COUNT]; PieceKind::COUNT] = {
 /// Utility function to print the MVV-LVA table
 #[allow(dead_code)]
 pub fn print_mvv_lva_table() {
-    print!("\nX   ");
-    for victim in PieceKind::iter() {
-        let v = victim.char().to_ascii_uppercase();
-
-        print!("{v:<6}");
+    print!("\nX  ");
+    for victim in Piece::iter() {
+        print!("{victim}     ");
     }
     print!("\n +");
-    for _ in PieceKind::iter() {
+    for _ in Piece::iter() {
         print!("------");
     }
     println!("-+");
-    for attacker in PieceKind::iter() {
-        let a = attacker.char().to_ascii_uppercase();
-
-        print!("{a}| ");
-        for victim in PieceKind::iter() {
+    for attacker in Piece::iter() {
+        print!("{attacker}| ");
+        for victim in Piece::iter() {
             let score = MVV_LVA[attacker][victim];
             print!("{score:<4}  ")
         }
@@ -839,13 +854,14 @@ pub fn print_mvv_lva_table() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::*;
 
     fn run_search(fen: &str, config: SearchConfig) -> SearchResult {
         let is_searching = Arc::new(AtomicBool::new(true));
         let game = fen.parse().unwrap();
 
         let mut ttable = Default::default();
-        let search = Search::new(is_searching, config, Default::default(), &mut ttable);
+        let search = Search::<Standard>::new(is_searching, config, Default::default(), &mut ttable);
 
         search.start::<false>(&game)
     }

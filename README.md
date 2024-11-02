@@ -38,6 +38,7 @@ In addition to the above UCI commands, Toad also supports the following custom c
 
 ```
 Commands:
+  await       Await the current search, blocking until it completes
   bench       Run a benchmark with the provided parameters
   display     Print a visual representation of the current board state
   eval        Print an evaluation of the current position
@@ -46,7 +47,7 @@ Commands:
   flip        Flips the side-to-move. Equivalent to playing a nullmove
   hashinfo    Display information about the current hash table(s) in the engine
   makemove    Apply the provided move to the game, if possible
-  moves       Shows all legal moves in the current position
+  moves       Shows all legal moves in the current position, or for a specific piece
   option      Display the current value of the specified option
   perft       Performs a perft on the current position at the supplied depth, printing total node count
   psqt        Outputs the Piece-Square table value for the provided piece at the provided square, scaled with the endgame weight
@@ -58,10 +59,12 @@ For specifics on how a command works, run `toad <COMMAND> --help`
 
 ### UCI Options
 
-|     Name     | Values      | Default | Description                               |
-| :----------: | ----------- | ------- | ----------------------------------------- |
-| `Clear Hash` |             |         | Clear the hash table(s)                   |
-|    `Hash`    | `[1, 1024]` | `16`    | Set the size (in MB) of the hash table(s) |
+| Name           | Values          | Default | Description                                                                       |
+| -------------- | --------------- | ------- | --------------------------------------------------------------------------------- |
+| `Clear Hash`   |                 |         | Clear the hash table(s)                                                           |
+| `Hash`         | `1..=1024`      | `16`    | Set the size (in MB) of the hash table(s)                                         |
+| `Threads`      | `1..=1`         | `1`     | Only implemented for use with [OpenBench](https://github.com/AndyGrant/OpenBench) |
+| `UCI_Chess960` | `true`, `false` | `false` | Enable support for [Chess960](https://en.wikipedia.org/wiki/Fischer_random_chess) |
 
 ## Running
 
