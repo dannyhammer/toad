@@ -16,7 +16,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use chessie::{print_perft, Bitboard, Game, Move, Piece, Position, Square};
+use chessie::{perft, splitperft, Bitboard, Game, Move, Piece, Position, Square};
 use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
@@ -169,9 +169,7 @@ impl Engine {
                     }
                 }
 
-                EngineCommand::Perft { depth } => {
-                    print_perft::<false, false>(&self.game, depth);
-                }
+                EngineCommand::Perft { depth } => println!("{}", perft(&self.game, depth)),
 
                 EngineCommand::Psqt {
                     piece,
@@ -180,7 +178,7 @@ impl Engine {
                 } => self.psqt(piece, square, weight),
 
                 EngineCommand::Splitperft { depth } => {
-                    print_perft::<false, true>(&self.game, depth);
+                    println!("{}", splitperft(&self.game, depth))
                 }
 
                 EngineCommand::HashInfo => self.hash_info(),
@@ -217,7 +215,7 @@ impl Engine {
 
             Go(options) => {
                 if let Some(depth) = options.perft {
-                    print_perft::<false, true>(&self.game, depth as usize);
+                    println!("{}", splitperft(&self.game, depth as usize));
                     return Ok(());
                 }
 
