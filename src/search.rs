@@ -18,7 +18,9 @@ use std::{
 use chessie::{Color, Game, Move, MoveList, Piece, PieceKind, Position, Square, ZobristKey};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
-use crate::{tune, value_of, Evaluator, Score, TTable, TTableEntry, Variant};
+use crate::{
+    tune, value_of, Evaluator, LogLevel, LoggingLevel, Score, TTable, TTableEntry, Variant,
+};
 
 /// Maximum depth that can be searched
 pub const MAX_DEPTH: u8 = u8::MAX / 2;
@@ -336,8 +338,8 @@ impl<'a, V: Variant> Search<'a, V> {
     /// This is the entrypoint of the search, and prints UCI info before starting iterative deepening.
     /// and concluding by sending the `bestmove` message and exiting.
     #[inline(always)]
-    pub fn start<const DEBUG: bool>(mut self, game: &Game) -> SearchResult {
-        if DEBUG {
+    pub fn start<const LOG: u8>(mut self, game: &Game) -> SearchResult {
+        if LOG.allows(LogLevel::Debug) {
             self.send_string(format!("Starting search on {:?}", game.to_fen()));
 
             let soft = self.config.soft_timeout.as_millis();
@@ -359,9 +361,9 @@ impl<'a, V: Variant> Search<'a, V> {
             }
         }
 
-        let res = self.iterative_deepening::<DEBUG>(game);
+        let res = self.iterative_deepening::<LOG>(game);
 
-        if DEBUG {
+        if LOG.allows(LogLevel::Debug) {
             let hits = self.ttable.hits;
             let accesses = self.ttable.accesses;
             let hit_rate = hits as f32 / accesses as f32 * 100.0;
@@ -371,10 +373,12 @@ impl<'a, V: Variant> Search<'a, V> {
         }
 
         // Search has ended; send bestmove
-        self.send_response(UciResponse::BestMove {
-            bestmove: res.bestmove.map(V::fmt_move),
-            ponder: None,
-        });
+        if LOG.allows(LogLevel::Info) {
+            self.send_response(UciResponse::BestMove {
+                bestmove: res.bestmove.map(V::fmt_move),
+                ponder: None,
+            });
+        }
 
         // Search has concluded, alert other thread(s) that we are no longer searching
         self.is_searching.store(false, Ordering::Relaxed);
@@ -425,7 +429,7 @@ impl<'a, V: Variant> Search<'a, V> {
     /// However, with features such as move ordering, a/b pruning, and aspiration windows, ID enhances performance.
     ///
     /// After each iteration, we check if we've exceeded our `soft_timeout` and, if we haven't, we run a search at a greater depth.
-    fn iterative_deepening<const DEBUG: bool>(&mut self, game: &Game) -> SearchResult {
+    fn iterative_deepening<const LOG: u8>(&mut self, game: &Game) -> SearchResult {
         // Initialize `bestmove` to the first move available
         let mut result = SearchResult {
             bestmove: game.into_iter().next(),
@@ -448,7 +452,7 @@ impl<'a, V: Variant> Search<'a, V> {
             let score = 'aspiration_window: loop {
                 // Start a new search at the current depth
                 let score =
-                    self.negamax::<DEBUG, true>(game, result.depth, 0, window.alpha, window.beta);
+                    self.negamax::<LOG, true>(game, result.depth, 0, window.alpha, window.beta);
 
                 // If the score fell outside of the aspiration window, widen it gradually
                 if window.fails_low(score) {
@@ -463,8 +467,10 @@ impl<'a, V: Variant> Search<'a, V> {
                 // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
                 // Instead, we should break out of the ID loop, using the result from the previous iteration
                 if self.search_cancelled() {
-                    if DEBUG {
-                        if let Some(bestmove) = self.get_tt_bestmove::<false>(game.key()) {
+                    if LOG.allows(LogLevel::Debug) {
+                        if let Some(bestmove) =
+                            self.get_tt_bestmove::<{ LogLevel::None as u8 }>(game.key())
+                        {
                             self.send_string(format!(
                                 "Search cancelled during depth {} while evaluating {} with score {score}",
                                 result.depth,
@@ -490,10 +496,12 @@ impl<'a, V: Variant> Search<'a, V> {
 
             // Get the bestmove from the TTable
             // This is guaranteed to be a cache hit, so don't log it as such
-            result.bestmove = self.get_tt_bestmove::<false>(game.key());
+            result.bestmove = self.get_tt_bestmove::<{ LogLevel::None as u8 }>(game.key());
 
             // Send search info to the GUI
-            self.send_end_of_search_info(&result);
+            if LOG.allows(LogLevel::Info) {
+                self.send_end_of_search_info(&result);
+            }
 
             // Increase the depth for the next iteration
             result.depth += 1;
@@ -510,7 +518,7 @@ impl<'a, V: Variant> Search<'a, V> {
     /// Primary location of search logic.
     ///
     /// Uses the [negamax](https://www.chessprogramming.org/Negamax) algorithm in a [fail soft](https://www.chessprogramming.org/Alpha-Beta#Negamax_Framework) framework.
-    fn negamax<const DEBUG: bool, const PV: bool>(
+    fn negamax<const LOG: u8, const PV: bool>(
         &mut self,
         game: &Game,
         depth: u8,
@@ -524,7 +532,7 @@ impl<'a, V: Variant> Search<'a, V> {
 
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
-            return self.quiescence::<DEBUG>(game, ply, alpha, beta);
+            return self.quiescence::<LOG>(game, ply, alpha, beta);
         }
 
         // If there are no legal moves, it's either mate or a draw.
@@ -542,7 +550,7 @@ impl<'a, V: Variant> Search<'a, V> {
         }
 
         // Sort moves so that we look at "promising" ones first
-        let tt_move = self.get_tt_bestmove::<DEBUG>(game.key());
+        let tt_move = self.get_tt_bestmove::<LOG>(game.key());
         moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         // Start with a *really bad* initial score
@@ -571,15 +579,15 @@ impl<'a, V: Variant> Search<'a, V> {
                  ****************************************************************************************************/
                 if i == 0 {
                     // Recurse on the principle variation
-                    score = -self.negamax::<DEBUG, PV>(&new, depth - 1, ply + 1, -beta, -alpha);
+                    score = -self.negamax::<LOG, PV>(&new, depth - 1, ply + 1, -beta, -alpha);
                 } else {
                     // Search with a null window
                     score =
-                        -self.negamax::<DEBUG, false>(&new, depth - 1, ply + 1, -alpha - 1, -alpha);
+                        -self.negamax::<LOG, false>(&new, depth - 1, ply + 1, -alpha - 1, -alpha);
 
                     // If it failed, perform a full re-search with the full a/b bounds
                     if alpha < score && score < beta {
-                        score = -self.negamax::<DEBUG, PV>(&new, depth - 1, ply + 1, -beta, -alpha);
+                        score = -self.negamax::<LOG, PV>(&new, depth - 1, ply + 1, -beta, -alpha);
                     }
                 };
 
@@ -622,7 +630,7 @@ impl<'a, V: Variant> Search<'a, V> {
         }
 
         // Save this node to the TTable
-        self.save_to_tt::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, depth, ply);
+        self.save_to_tt::<LOG>(game.key(), bestmove, best, original_alpha, beta, depth, ply);
 
         best
     }
@@ -631,7 +639,7 @@ impl<'a, V: Variant> Search<'a, V> {
     ///
     /// A search that looks at only possible captures and capture-chains.
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
-    fn quiescence<const DEBUG: bool>(
+    fn quiescence<const LOG: u8>(
         &mut self,
         game: &Game,
         _ply: i32,
@@ -667,7 +675,7 @@ impl<'a, V: Variant> Search<'a, V> {
         // If we made it here, then we're examining this node
         self.nodes += 1;
 
-        let tt_move = self.get_tt_bestmove::<DEBUG>(game.key());
+        let tt_move = self.get_tt_bestmove::<LOG>(game.key());
         captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
@@ -690,7 +698,7 @@ impl<'a, V: Variant> Search<'a, V> {
             } else {
                 self.prev_positions.push(*new.position());
 
-                score = -self.quiescence::<DEBUG>(&new, _ply + 1, -beta, -alpha);
+                score = -self.quiescence::<LOG>(&new, _ply + 1, -beta, -alpha);
 
                 self.prev_positions.pop();
             }
@@ -722,7 +730,7 @@ impl<'a, V: Variant> Search<'a, V> {
         }
 
         // Save this node to the TTable
-        // self.save_to_tt::<DEBUG>(game.key(), bestmove, best, original_alpha, beta, 0, ply);
+        // self.save_to_tt::<LOG>(game.key(), bestmove, best, original_alpha, beta, 0, ply);
 
         best // fail-soft
     }
@@ -765,7 +773,7 @@ impl<'a, V: Variant> Search<'a, V> {
 
     /// Saves the provided data to an entry in the TTable.
     #[allow(clippy::too_many_arguments)]
-    fn save_to_tt<const DEBUG: bool>(
+    fn save_to_tt<const LOG: u8>(
         &mut self,
         key: ZobristKey,
         bestmove: Move,
@@ -778,7 +786,7 @@ impl<'a, V: Variant> Search<'a, V> {
         let entry = TTableEntry::new(key, bestmove, score, alpha, beta, depth, ply);
         let old = self.ttable.store(entry);
 
-        if DEBUG {
+        if LOG.allows(LogLevel::Debug) {
             // If a previous entry existed and had a *different* key, this was a collision
             if old.is_some_and(|old| old.key != key) {
                 self.ttable.collisions += 1;
@@ -787,10 +795,10 @@ impl<'a, V: Variant> Search<'a, V> {
     }
 
     /// Gets the bestmove for the provided position from the TTable, if it exists.
-    fn get_tt_bestmove<const DEBUG: bool>(&mut self, key: ZobristKey) -> Option<Move> {
+    fn get_tt_bestmove<const LOG: u8>(&mut self, key: ZobristKey) -> Option<Move> {
         let mv = self.ttable.get(&key).map(|entry| entry.bestmove);
 
-        if DEBUG {
+        if LOG.allows(LogLevel::Debug) {
             // Regardless whether this was a hit, it was still an access
             self.ttable.accesses += 1;
 
@@ -814,9 +822,6 @@ impl<'a, V: Variant> Search<'a, V> {
         // Safe unwrap because we can't move unless there's a piece at `from`
         let piece = game.piece_at(mv.from()).unwrap();
         let mut score = Score(0);
-
-        // Apply history bonus
-        score += self.history[piece][mv.to()];
 
         // Capturing a high-value piece with a low-value piece is a good idea
         if let Some(victim) = game.piece_at(mv.to()) {
@@ -936,7 +941,7 @@ mod tests {
             &mut history,
         );
 
-        search.start::<false>(&game)
+        search.start::<{ LogLevel::None as u8 }>(&game)
     }
 
     fn ensure_is_mate_in(fen: &str, config: SearchConfig, moves: i32) -> SearchResult {
