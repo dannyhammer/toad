@@ -20,8 +20,8 @@ use chessie::{perft, splitperft, Bitboard, Game, Move, Piece, Position, Square};
 use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
-    Chess960, EngineCommand, Evaluator, GameVariant, Psqt, Search, SearchConfig, SearchResult,
-    Standard, TTable, BENCHMARK_FENS,
+    Chess960, EngineCommand, Evaluator, GameVariant, LogLevel, Psqt, Search, SearchConfig,
+    SearchResult, Standard, TTable, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -220,9 +220,13 @@ impl Engine {
                 }
 
                 self.search_thread = if self.debug {
-                    self.start_search::<true>(SearchConfig::new(options, &self.game))
+                    self.start_search::<{ LogLevel::Debug as u8 }>(SearchConfig::new(
+                        options, &self.game,
+                    ))
                 } else {
-                    self.start_search::<false>(SearchConfig::new(options, &self.game))
+                    self.start_search::<{ LogLevel::Info as u8 }>(SearchConfig::new(
+                        options, &self.game,
+                    ))
                 };
             }
 
@@ -258,7 +262,7 @@ impl Engine {
 
             // Set up the game and start the search
             self.position(Some(fen), [])?;
-            self.search_thread = self.start_search::<false>(config);
+            self.search_thread = self.start_search::<{ LogLevel::None as u8 }>(config);
 
             // Await the search, appending the node count once concluded.
             let res = self.stop_search().unwrap();
@@ -462,7 +466,7 @@ impl Engine {
     }
 
     /// Starts a search on the current position, given the parameters in `config`.
-    fn start_search<const DEBUG: bool>(
+    fn start_search<const LOG_LVL: u8>(
         &mut self,
         config: SearchConfig,
     ) -> Option<JoinHandle<SearchResult>> {
@@ -491,12 +495,12 @@ impl Engine {
             match variant {
                 GameVariant::Standard => {
                     Search::<Standard>::new(is_searching, config, history, &mut ttable)
-                        .start::<DEBUG>(&game)
+                        .start::<LOG_LVL>(&game)
                 }
 
                 GameVariant::Chess960 => {
                     Search::<Chess960>::new(is_searching, config, history, &mut ttable)
-                        .start::<DEBUG>(&game)
+                        .start::<LOG_LVL>(&game)
                 }
             }
         });

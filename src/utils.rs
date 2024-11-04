@@ -6,6 +6,36 @@
 
 use chessie::Move;
 
+/// Added functionality to `u8` to make the logging API cleaner.
+///
+/// See [`LogLevel`] for more.
+pub trait LoggingLevel
+where
+    Self: Sized + PartialOrd<u8>,
+{
+    /// Returns `true` if `level` is at or above the provided [`LogLevel`].
+    #[inline(always)]
+    fn allows(self, level: LogLevel) -> bool {
+        self >= level as u8
+    }
+}
+
+impl LoggingLevel for u8 {}
+
+/// Level of communication to output during search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum LogLevel {
+    /// Do not print anything to stdout.
+    None,
+
+    /// Only print basic communication, such as `bestmove`.
+    Info,
+
+    /// Print additional messages through `info string`.
+    Debug,
+}
+
 /// Variant of chess being played by the Engine.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum GameVariant {
