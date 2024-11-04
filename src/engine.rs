@@ -21,7 +21,7 @@ use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
     Chess960, EngineCommand, Evaluator, GameVariant, HistoryTable, LogLevel, Psqt, Search,
-    SearchConfig, SearchResult, Standard, TTable, BENCHMARK_FENS,
+    SearchConfig, SearchResult, Standard, TTable, Variant, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -223,14 +223,21 @@ impl Engine {
                     return Ok(());
                 }
 
-                self.search_thread = if self.debug {
-                    self.start_search::<{ LogLevel::Debug as u8 }>(SearchConfig::new(
-                        options, &self.game,
-                    ))
-                } else {
-                    self.start_search::<{ LogLevel::Info as u8 }>(SearchConfig::new(
-                        options, &self.game,
-                    ))
+                let config = SearchConfig::new(options, &self.game);
+                self.search_thread = match (self.variant, self.debug) {
+                    (GameVariant::Standard, true) => {
+                        self.start_search::<{ LogLevel::Debug as u8 }, Standard>(config)
+                    }
+                    (GameVariant::Standard, false) => {
+                        self.start_search::<{ LogLevel::Info as u8 }, Standard>(config)
+                    }
+
+                    (GameVariant::Chess960, true) => {
+                        self.start_search::<{ LogLevel::Debug as u8 }, Chess960>(config)
+                    }
+                    (GameVariant::Chess960, false) => {
+                        self.start_search::<{ LogLevel::Info as u8 }, Chess960>(config)
+                    }
                 };
             }
 
@@ -266,7 +273,7 @@ impl Engine {
 
             // Set up the game and start the search
             self.position(Some(fen), [])?;
-            self.search_thread = self.start_search::<{ LogLevel::None as u8 }>(config);
+            self.search_thread = self.start_search::<{ LogLevel::None as u8 }, Standard>(config);
 
             // Await the search, appending the node count once concluded.
             let res = self.stop_search().unwrap();
@@ -474,7 +481,7 @@ impl Engine {
     }
 
     /// Starts a search on the current position, given the parameters in `config`.
-    fn start_search<const LOG_LVL: u8>(
+    fn start_search<const LOG: u8, V: Variant>(
         &mut self,
         config: SearchConfig,
     ) -> Option<JoinHandle<SearchResult>> {
@@ -489,38 +496,27 @@ impl Engine {
         let game = self.game;
         let is_searching = Arc::clone(&self.is_searching);
         let mut prev_positions = self.prev_positions.clone();
-        // Cloning a vec doesn't clone its capacity
+        // Cloning a vec doesn't clone its capacity, so we need to do that manually
         prev_positions.reserve(self.prev_positions.capacity());
         prev_positions.push(*game.position());
         let ttable = Arc::clone(&self.ttable);
-        let variant = self.variant;
         let history = Arc::clone(&self.history);
 
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
-            // Lock the TTable at the start of the search so that only the search thread may modify it
+            // Lock the hash tables at the start of the search so that only the search thread may modify them
             let mut ttable = ttable.lock().unwrap();
             let mut history = history.lock().unwrap();
 
-            match variant {
-                GameVariant::Standard => Search::<Standard>::new(
-                    is_searching,
-                    config,
-                    prev_positions,
-                    &mut ttable,
-                    &mut history,
-                )
-                .start::<LOG_LVL>(&game),
-
-                GameVariant::Chess960 => Search::<Chess960>::new(
-                    is_searching,
-                    config,
-                    prev_positions,
-                    &mut ttable,
-                    &mut history,
-                )
-                .start::<LOG_LVL>(&game),
-            }
+            // Start the search, returning the result when completed.
+            Search::<LOG, V>::new(
+                is_searching,
+                config,
+                prev_positions,
+                &mut ttable,
+                &mut history,
+            )
+            .start(&game)
         });
 
         Some(handle)
