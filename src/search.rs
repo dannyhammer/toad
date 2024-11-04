@@ -255,11 +255,6 @@ impl HistoryTable {
     /// Uses the "history gravity" formula from https://www.chessprogramming.org/History_Heuristic#History_Bonuses
     #[inline(always)]
     fn update(&mut self, game: &Game, mv: &Move, bonus: Score) {
-        // Only apply history bonus for quiet moves
-        if mv.is_capture() {
-            return;
-        }
-
         // Safety: This is a move. There *must* be a piece at `from`.
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
@@ -608,9 +603,12 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
                 // Fail soft beta-cutoff.
                 if score >= beta {
-                    // Simple bonus based on depth
-                    let bonus = Score((depth * depth) as i32);
-                    self.history.update(game, mv, bonus);
+                    // Only update quiet moves
+                    if !mv.is_capture() {
+                        // Simple bonus based on depth
+                        let bonus = Score((depth * depth) as i32);
+                        self.history.update(game, mv, bonus);
+                    }
 
                     // Apply a penalty to all quiets searched so far
                     // for mv in moves[..i].iter().filter(|mv| !mv.is_capture()) {
@@ -815,8 +813,8 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         let to = mv.to();
         let mut score = Score(0);
 
-        // Apply history bonys
-        // score += self.history[piece][to];
+        // Apply history bonus
+        score += self.history[piece][to];
 
         // Capturing a high-value piece with a low-value piece is a good idea
         if let Some(victim) = game.piece_at(to) {
