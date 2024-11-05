@@ -258,13 +258,11 @@ impl HistoryTable {
         // Safety: This is a move. There *must* be a piece at `from`.
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
-        // let current_score = self.0[piece][to];
-        // let clamped_bonus = bonus.clamp(-Score::MAX_HISTORY, Score::MAX_HISTORY);
+        let current_score = self.0[piece][to];
+        let clamped_bonus = bonus.clamp(-Score::MAX_HISTORY, Score::MAX_HISTORY);
 
-        // self.0[piece][to] +=
-        //     clamped_bonus - current_score * clamped_bonus.abs() / Score::MAX_HISTORY;
-
-        self.0[piece][to] += bonus;
+        self.0[piece][to] +=
+            clamped_bonus - current_score * clamped_bonus.abs() / Score::MAX_HISTORY;
     }
 }
 
@@ -489,7 +487,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             result.score = score;
 
             // Get the bestmove from the TTable
-            result.bestmove = self.get_tt_bestmove(game.key());
+            result.bestmove = self.ttable.get(&game.key()).map(|entry| entry.bestmove);
 
             // Send search info to the GUI
             if LOG.allows(LogLevel::Info) {
