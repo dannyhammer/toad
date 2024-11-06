@@ -254,15 +254,19 @@ impl HistoryTable {
     ///
     /// Uses the "history gravity" formula from https://www.chessprogramming.org/History_Heuristic#History_Bonuses
     #[inline(always)]
-    fn update(&mut self, game: &Game, mv: &Move, bonus: Score) {
+    fn update(&mut self, game: &Game, mv: &Move, depth: u8) {
+        // let bonus = Score((depth * depth) as i32);
+        let bonus = Score((2 * depth) as i32);
         // Safety: This is a move. There *must* be a piece at `from`.
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
-        let current_score = self.0[piece][to];
-        let clamped_bonus = bonus.clamp(-Score::MAX_HISTORY, Score::MAX_HISTORY);
+        // let current_score = self.0[piece][to];
+        // let clamped_bonus = bonus.clamp(-Score::MAX_HISTORY, Score::MAX_HISTORY);
 
-        self.0[piece][to] +=
-            clamped_bonus - current_score * clamped_bonus.abs() / Score::MAX_HISTORY;
+        // self.0[piece][to] +=
+        //     clamped_bonus - current_score * clamped_bonus.abs() / Score::MAX_HISTORY;
+
+        self.0[piece][to] += bonus;
     }
 }
 
@@ -604,8 +608,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                     // Only update quiet moves
                     if !mv.is_capture() {
                         // Simple bonus based on depth
-                        let bonus = Score((depth * depth) as i32);
-                        self.history.update(game, mv, bonus);
+                        self.history.update(game, mv, depth);
                     }
 
                     // Apply a penalty to all quiets searched so far
