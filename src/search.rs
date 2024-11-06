@@ -259,12 +259,8 @@ impl HistoryTable {
         // Safety: This is a move. There *must* be a piece at `from`.
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
-        let current_score = self.0[piece][to];
+        // let current_score = self.0[piece][to];
 
-        // If this move already has a history bonus, don't add to it
-        if current_score >= bonus {
-            return;
-        }
         // let clamped_bonus = bonus.clamp(-Score::MAX_HISTORY, Score::MAX_HISTORY);
 
         // self.0[piece][to] +=
@@ -818,8 +814,10 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         let to = mv.to();
         let mut score = Score(0);
 
-        // Apply history bonus
-        score += self.history[piece][to];
+        // Apply history bonus to quiets
+        if !mv.is_capture() {
+            score += self.history[piece][to];
+        }
 
         // Capturing a high-value piece with a low-value piece is a good idea
         if let Some(victim) = game.piece_at(to) {
@@ -849,7 +847,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 ///
 /// Note that the actual table is different, as it has size `12x12` instead of `6x6`
 /// to account for the fact that castling is denoted as `KxR`.
-/// The values are still the same, though, just without allowing captures of friendly pieces.
+/// The values are also all left-shifted by 16 bits, to ensure that captures are ranked above quiets in all cases.
 ///
 /// See [`print_mvv_lva_table`] to display this table.
 const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
@@ -890,7 +888,8 @@ const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
             //     10 * value_of(vtm) - value_of(atk)
             // };
 
-            matrix[attacker][victim] = score * can_capture as i32;
+            // Shift the value by a large amount so that captures are always ranked very highly
+            matrix[attacker][victim] = (score * can_capture as i32) << 16;
             victim += 1;
         }
         attacker += 1;
