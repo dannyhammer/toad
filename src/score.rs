@@ -191,6 +191,18 @@ impl std::ops::Neg for Score {
     }
 }
 
+impl PartialEq<i32> for Score {
+    fn eq(&self, other: &i32) -> bool {
+        self.0.eq(other)
+    }
+}
+
+impl PartialOrd<i32> for Score {
+    fn partial_cmp(&self, other: &i32) -> Option<std::cmp::Ordering> {
+        self.0.partial_cmp(other)
+    }
+}
+
 impl fmt::Display for Score {
     #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
