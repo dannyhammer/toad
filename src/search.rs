@@ -521,10 +521,6 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         mut alpha: Score,
         beta: Score,
     ) -> Score {
-        // Regardless of how long we stay here, we've searched this node, so increment the counter.
-        // TODO: Move this below the recursive call, so that PVS re-searches don't cause it to increment (and do the same for qsearch)
-        self.nodes += 1;
-
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
             return self.quiescence(game, ply, alpha, beta);
@@ -584,6 +580,8 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                         score = -self.negamax::<PV>(&new, depth - 1, ply + 1, -beta, -alpha);
                     }
                 };
+
+                self.nodes += 1; // We've now searched this node
 
                 // Pop the move from the history
                 self.prev_positions.pop();
@@ -660,10 +658,6 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             return stand_pat;
         }
 
-        // Everything before this point is the same as if we called `eval()` in Negamax
-        // If we made it here, then we're examining this node
-        self.nodes += 1;
-
         let tt_move = self.get_tt_bestmove(game.key());
         captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
@@ -688,6 +682,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                 self.prev_positions.push(*new.position());
 
                 score = -self.quiescence(&new, _ply + 1, -beta, -alpha);
+                self.nodes += 1; // We've now searched this node
 
                 self.prev_positions.pop();
             }
@@ -928,15 +923,14 @@ mod tests {
 
         let mut ttable = Default::default();
         let mut history = Default::default();
-        let search = Search::<{ LogLevel::None as u8 }, Standard>::new(
+        Search::<{ LogLevel::None as u8 }, Standard>::new(
             is_searching,
             config,
             Default::default(),
             &mut ttable,
             &mut history,
-        );
-
-        search.start(&game)
+        )
+        .start(&game)
     }
 
     fn ensure_is_mate_in(fen: &str, config: SearchConfig, moves: i32) -> SearchResult {
