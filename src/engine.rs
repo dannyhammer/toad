@@ -21,7 +21,7 @@ use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
     Chess960, EngineCommand, Evaluator, GameVariant, LogLevel, Psqt, Search, SearchConfig,
-    SearchResult, Standard, TTable, BENCHMARK_FENS,
+    SearchResult, Standard, TTable, Variant, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -39,7 +39,7 @@ pub struct Engine {
     /// All previous positions of `self.game`, including the current position.
     ///
     /// Updated when the engine makes a move or receives `position ... moves [move list]`.
-    history: Vec<Position>,
+    prev_positions: Vec<Position>,
 
     /// One half of a channel, responsible for sending commands to the engine to execute.
     sender: Sender<EngineCommand>,
@@ -72,7 +72,7 @@ impl Engine {
 
         Self {
             game: Game::default(),
-            history: Vec::with_capacity(512),
+            prev_positions: Vec::with_capacity(512),
             sender,
             receiver,
             is_searching: Arc::default(),
@@ -219,14 +219,21 @@ impl Engine {
                     return Ok(());
                 }
 
-                self.search_thread = if self.debug {
-                    self.start_search::<{ LogLevel::Debug as u8 }>(SearchConfig::new(
-                        options, &self.game,
-                    ))
-                } else {
-                    self.start_search::<{ LogLevel::Info as u8 }>(SearchConfig::new(
-                        options, &self.game,
-                    ))
+                let config = SearchConfig::new(options, &self.game);
+                self.search_thread = match (self.variant, self.debug) {
+                    (GameVariant::Standard, true) => {
+                        self.start_search::<{ LogLevel::Debug as u8 }, Standard>(config)
+                    }
+                    (GameVariant::Standard, false) => {
+                        self.start_search::<{ LogLevel::Info as u8 }, Standard>(config)
+                    }
+
+                    (GameVariant::Chess960, true) => {
+                        self.start_search::<{ LogLevel::Debug as u8 }, Chess960>(config)
+                    }
+                    (GameVariant::Chess960, false) => {
+                        self.start_search::<{ LogLevel::Info as u8 }, Chess960>(config)
+                    }
                 };
             }
 
@@ -262,11 +269,14 @@ impl Engine {
 
             // Set up the game and start the search
             self.position(Some(fen), [])?;
-            self.search_thread = self.start_search::<{ LogLevel::None as u8 }>(config);
+            self.search_thread = self.start_search::<{ LogLevel::None as u8 }, Standard>(config);
 
             // Await the search, appending the node count once concluded.
             let res = self.stop_search().unwrap();
             nodes += res.nodes;
+
+            // Bench is on different positions, so hash tables are not likely to contain useful info.
+            self.clear_hash_tables();
         }
 
         // Compute results
@@ -336,7 +346,7 @@ impl Engine {
     /// Makes the supplied move on the current position.
     #[inline(always)]
     fn make_move(&mut self, mv: Move) {
-        self.history.push(*self.game.position());
+        self.prev_positions.push(*self.game.position());
         self.game.make_move(mv);
     }
 
@@ -392,7 +402,7 @@ impl Engine {
     fn new_game(&mut self) {
         self.set_is_searching(false);
         self.game = Game::default();
-        self.history.clear();
+        self.prev_positions.clear();
         self.clear_hash_tables();
     }
 
@@ -411,7 +421,7 @@ impl Engine {
         }
 
         // Since this is a new position, it has a new history
-        self.history.clear();
+        self.prev_positions.clear();
 
         // Apply the provided moves
         for mv_str in moves {
@@ -466,7 +476,7 @@ impl Engine {
     }
 
     /// Starts a search on the current position, given the parameters in `config`.
-    fn start_search<const LOG_LVL: u8>(
+    fn start_search<const LOG: u8, V: Variant>(
         &mut self,
         config: SearchConfig,
     ) -> Option<JoinHandle<SearchResult>> {
@@ -480,29 +490,19 @@ impl Engine {
         // Clone the parameters that will be sent into the thread
         let game = self.game;
         let is_searching = Arc::clone(&self.is_searching);
-        let mut history = self.history.clone();
-        // Cloning a vec doesn't clone its capacity
-        history.reserve(self.history.capacity());
-        history.push(*game.position());
+        let mut prev_positions = self.prev_positions.clone();
+        // Cloning a vec doesn't clone its capacity, so we need to do that manually
+        prev_positions.reserve(self.prev_positions.capacity());
+        prev_positions.push(*game.position());
         let ttable = Arc::clone(&self.ttable);
-        let variant = self.variant;
 
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
-            // Lock the TTable at the start of the search so that only the search thread may modify it
+            // Lock the hash tables at the start of the search so that only the search thread may modify them
             let mut ttable = ttable.lock().unwrap();
 
-            match variant {
-                GameVariant::Standard => {
-                    Search::<Standard>::new(is_searching, config, history, &mut ttable)
-                        .start::<LOG_LVL>(&game)
-                }
-
-                GameVariant::Chess960 => {
-                    Search::<Chess960>::new(is_searching, config, history, &mut ttable)
-                        .start::<LOG_LVL>(&game)
-                }
-            }
+            // Start the search, returning the result when completed.
+            Search::<LOG, V>::new(is_searching, config, prev_positions, &mut ttable).start(&game)
         });
 
         Some(handle)
