@@ -60,10 +60,20 @@ macro_rules! min_aspiration_window_depth {
 }
 pub(crate) use min_aspiration_window_depth;
 
-/// Maximum bonus to apply to a move via History Heuristic
+/// Maximum bonus to apply to a move via History Heuristic.
 macro_rules! max_history_bonus {
     () => {
         16_384
     };
 }
 pub(crate) use max_history_bonus;
+
+/// Base value of a move when ordering moves.
+/// The negative value is to ensure that "good" moves, such as hash move, captures, etc. are ordered before things like history moves.
+macro_rules! base_move_score {
+    () => {
+        -32_768
+        // 0
+    };
+}
+pub(crate) use base_move_score;
