@@ -254,9 +254,7 @@ impl HistoryTable {
     ///
     /// Uses the "history gravity" formula from https://www.chessprogramming.org/History_Heuristic#History_Bonuses
     #[inline(always)]
-    fn update(&mut self, game: &Game, mv: &Move, depth: u8) {
-        // Simple bonus based on depth
-        let bonus = Score((depth * depth) as i32);
+    fn update(&mut self, game: &Game, mv: &Move, bonus: Score) {
         // Safety: This is a move. There *must* be a piece at `from`.
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
@@ -602,15 +600,18 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
                 // Fail soft beta-cutoff.
                 if score >= beta {
+                    // Simple bonus based on depth
+                    let bonus = Score(300 * depth as i32 - 250);
+
                     // Only update quiet moves
                     if mv.is_quiet() {
-                        self.history.update(game, mv, depth);
+                        self.history.update(game, mv, bonus);
                     }
 
                     // Apply a penalty to all quiets searched so far
-                    // for mv in moves[..i].iter().filter(|mv| !mv.is_capture()) {
-                    //     self.history.update(game, mv, -bonus);
-                    // }
+                    for mv in moves[..i].iter().filter(|mv| mv.is_quiet()) {
+                        self.history.update(game, mv, -bonus);
+                    }
                     break;
                 }
             }
