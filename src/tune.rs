@@ -69,7 +69,9 @@ macro_rules! max_history_bonus {
 pub(crate) use max_history_bonus;
 
 /// Base value of a move when ordering moves.
-/// The negative value is to ensure that "good" moves, such as hash move, captures, etc. are ordered before things like history moves.
+///
+/// Negative offset is to prevent history moves from interfering with moves of higher priority,
+/// such as captures and hash moves.
 macro_rules! base_move_score {
     () => {
         -32_768
@@ -77,3 +79,19 @@ macro_rules! base_move_score {
     };
 }
 pub(crate) use base_move_score;
+
+/// Value to multiply depth by when computing history scores.
+macro_rules! history_multiplier {
+    () => {
+        300
+    };
+}
+pub(crate) use history_multiplier;
+
+/// Value to subtract from a history score at a given depth.
+macro_rules! history_offset {
+    () => {
+        250
+    };
+}
+pub(crate) use history_offset;

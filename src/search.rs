@@ -601,7 +601,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                 // Fail soft beta-cutoff.
                 if score >= beta {
                     // Simple bonus based on depth
-                    let bonus = Score(300 * depth as i32 - 250);
+                    let bonus = Score::HISTORY_MULTIPLIER * depth as i32 - Score::HISTORY_OFFSET;
 
                     // Only update quiet moves
                     if mv.is_quiet() {

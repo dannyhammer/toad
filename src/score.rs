@@ -36,10 +36,13 @@ impl Score {
     pub const MAX_HISTORY: Self = Self(tune::max_history_bonus!());
 
     /// The base value of a move, used when ordering moves during search.
-    ///
-    /// Negative offset is to prevent history moves from interfering with moves of higher priority,
-    /// such as captures and hash moves.
     pub const BASE_MOVE_SCORE: Self = Self(tune::base_move_score!());
+
+    /// Value to multiply depth by when computing history scores.
+    pub const HISTORY_MULTIPLIER: Self = Self(tune::history_multiplier!());
+
+    /// Value to subtract from a history score at a given depth.
+    pub const HISTORY_OFFSET: Self = Self(tune::history_offset!());
 
     /// Returns `true` if the score is a mate score.
     #[inline(always)]
