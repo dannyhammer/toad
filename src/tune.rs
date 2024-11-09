@@ -74,8 +74,7 @@ pub(crate) use max_history_bonus;
 /// such as captures and hash moves.
 macro_rules! base_move_score {
     () => {
-        -32_768
-        // 0
+        0
     };
 }
 pub(crate) use base_move_score;
