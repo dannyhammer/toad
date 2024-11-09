@@ -7,6 +7,7 @@
 use std::{
     fmt,
     marker::PhantomData,
+    ops::Deref,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -14,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chessie::{Color, Game, Move, MoveList, Piece, PieceKind, Position, ZobristKey};
+use chessie::{Color, Game, Move, MoveList, Piece, PieceKind, Position, Square, ZobristKey};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
@@ -236,6 +237,51 @@ impl Default for SearchConfig {
     }
 }
 
+/// Stores bonuses and penalties for moving a piece to a square.
+///
+/// Used to keep track of good/bad moves found during search.
+#[derive(Debug)]
+pub struct HistoryTable([[Score; Square::COUNT]; Piece::COUNT]);
+
+impl HistoryTable {
+    /// Clear the history table, removing all scores.
+    #[inline(always)]
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Applies a bonus based on the history heuristic for the move.
+    ///
+    /// Uses the "history gravity" formula from https://www.chessprogramming.org/History_Heuristic#History_Bonuses
+    #[inline(always)]
+    fn update(&mut self, game: &Game, mv: &Move, bonus: Score) {
+        // Safety: This is a move. There *must* be a piece at `from`.
+        let piece = game.piece_at(mv.from()).unwrap();
+        let to = mv.to();
+        let current_score = self.0[piece][to];
+        let clamped_bonus = bonus.clamp(-Score::MAX_HISTORY, Score::MAX_HISTORY);
+
+        // History gravity formula
+        self.0[piece][to] +=
+            clamped_bonus - current_score * clamped_bonus.abs() / Score::MAX_HISTORY;
+    }
+}
+
+impl Default for HistoryTable {
+    #[inline(always)]
+    fn default() -> Self {
+        Self([[Score::BASE_MOVE_SCORE; Square::COUNT]; Piece::COUNT])
+    }
+}
+
+impl Deref for HistoryTable {
+    type Target = [[Score; Square::COUNT]; Piece::COUNT];
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// Executes a search on the provided game at a specified depth.
 pub struct Search<'a, const LOG: u8, V> {
     /// Number of nodes searched.
@@ -255,6 +301,9 @@ pub struct Search<'a, const LOG: u8, V> {
     /// Transposition table used to cache information during search.
     ttable: &'a mut TTable,
 
+    /// Storage for moves that cause a beta-cutoff during search.
+    history: &'a mut HistoryTable,
+
     /// Marker for what variant of Chess is being played
     variant: PhantomData<&'a V>,
 }
@@ -265,15 +314,17 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     pub fn new(
         is_searching: Arc<AtomicBool>,
         config: SearchConfig,
-        history: Vec<Position>,
+        prev_positions: Vec<Position>,
         ttable: &'a mut TTable,
+        history: &'a mut HistoryTable,
     ) -> Self {
         Self {
             nodes: 0,
             is_searching,
             config,
-            prev_positions: history,
+            prev_positions,
             ttable,
+            history,
             variant: PhantomData,
         }
     }
@@ -499,9 +550,9 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
          * Primary move loop
          ****************************************************************************************************/
 
-        for (i, mv) in moves.into_iter().enumerate() {
+        for (i, mv) in moves.iter().enumerate() {
             // Copy-make the new position
-            let new = game.with_move_made(mv);
+            let new = game.with_move_made(*mv);
             let mut score;
 
             // Determine the score of making this move
@@ -544,11 +595,23 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                 if score > alpha {
                     alpha = score;
                     // PV found
-                    bestmove = mv;
+                    bestmove = *mv;
                 }
 
                 // Fail soft beta-cutoff.
                 if score >= beta {
+                    // Simple bonus based on depth
+                    let bonus = Score::HISTORY_MULTIPLIER * depth as i32 - Score::HISTORY_OFFSET;
+
+                    // Only update quiet moves
+                    if mv.is_quiet() {
+                        self.history.update(game, mv, bonus);
+                    }
+
+                    // Apply a penalty to all quiets searched so far
+                    for mv in moves[..i].iter().filter(|mv| mv.is_quiet()) {
+                        self.history.update(game, mv, -bonus);
+                    }
                     break;
                 }
             }
@@ -735,17 +798,22 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     /// Applies a score to the provided move, intended to be used when ordering moves during search.
     #[inline(always)]
     fn score_move(&self, game: &Game, mv: &Move, tt_move: Option<Move>) -> Score {
-        // TT move should be looked at first!
+        // TT move should be looked at first, so assign it the best possible score and immediately exit.
         if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
-            return -Score::INF;
+            return Score(i32::MIN);
         }
 
         // Safe unwrap because we can't move unless there's a piece at `from`
         let piece = game.piece_at(mv.from()).unwrap();
-        let mut score = Score(0);
+        let to = mv.to();
+        let mut score = Score::BASE_MOVE_SCORE;
 
+        // Apply history bonus to quiets
+        if mv.is_quiet() {
+            score += self.history[piece][to];
+        } else
         // Capturing a high-value piece with a low-value piece is a good idea
-        if let Some(victim) = game.piece_at(mv.to()) {
+        if let Some(victim) = game.piece_at(to) {
             score += MVV_LVA[piece][victim];
         }
 
@@ -772,7 +840,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 ///
 /// Note that the actual table is different, as it has size `12x12` instead of `6x6`
 /// to account for the fact that castling is denoted as `KxR`.
-/// The values are still the same, though, just without allowing captures of friendly pieces.
+/// The values are also all left-shifted by 16 bits, to ensure that captures are ranked above quiets in all cases.
 ///
 /// See [`print_mvv_lva_table`] to display this table.
 const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
@@ -813,7 +881,8 @@ const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
             //     10 * value_of(vtm) - value_of(atk)
             // };
 
-            matrix[attacker][victim] = score * can_capture as i32;
+            // Shift the value by a large amount so that captures are always ranked very highly
+            matrix[attacker][victim] = (score * can_capture as i32) << 16;
             victim += 1;
         }
         attacker += 1;
@@ -853,11 +922,13 @@ mod tests {
         let game = fen.parse().unwrap();
 
         let mut ttable = Default::default();
+        let mut history = Default::default();
         Search::<{ LogLevel::None as u8 }, Standard>::new(
             is_searching,
             config,
             Default::default(),
             &mut ttable,
+            &mut history,
         )
         .start(&game)
     }

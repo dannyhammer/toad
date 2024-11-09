@@ -8,7 +8,7 @@ use std::fmt;
 
 use uci_parser::UciScore;
 
-use crate::MAX_DEPTH;
+use crate::{tune, MAX_DEPTH};
 
 /// A numerical representation of the evaluation of a position / move, in units of ["centipawns"](https://www.chessprogramming.org/Score).
 ///
@@ -31,6 +31,18 @@ impl Score {
     ///
     /// This is only obtainable if mate is possible in [`MAX_DEPTH`] moves.
     pub const LOWEST_MATE: Self = Self(Self::MATE.0 - MAX_DEPTH as i32);
+
+    /// Maximum bonus to apply to moves via history heuristic.
+    pub const MAX_HISTORY: Self = Self(tune::max_history_bonus!());
+
+    /// The base value of a move, used when ordering moves during search.
+    pub const BASE_MOVE_SCORE: Self = Self(tune::base_move_score!());
+
+    /// Value to multiply depth by when computing history scores.
+    pub const HISTORY_MULTIPLIER: Self = Self(tune::history_multiplier!());
+
+    /// Value to subtract from a history score at a given depth.
+    pub const HISTORY_OFFSET: Self = Self(tune::history_offset!());
 
     /// Returns `true` if the score is a mate score.
     #[inline(always)]
@@ -226,6 +238,29 @@ impl fmt::Debug for Score {
         }
     }
 }
+
+/*
+// TODO: https://discord.com/channels/719576389245993010/719576389690589244/1304177247124455535
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
+struct MoveScore(u32);
+
+impl MoveScore {
+    pub fn hash(score: i32) -> Self {
+        debug_assert!(score.unsigned_abs() < (1 << 29));
+        Self((score + (1 << 29) + (1 << 31)) as u32)
+    }
+
+    pub fn capture(score: i32) -> Self {
+        debug_assert!(score.unsigned_abs() < (1 << 29));
+        Self((score + (1 << 29) + (1 << 30)) as u32)
+    }
+
+    pub fn history(score: i32) -> Self {
+        debug_assert!(score.unsigned_abs() < (1 << 29));
+        Self((score + (1 << 29)) as u32)
+    }
+}
+ */
 
 #[cfg(test)]
 mod tests {
