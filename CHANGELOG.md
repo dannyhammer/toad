@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/dannyhammer/toad/compare/v1.1.0...v1.2.0) (2024-11-10)
+
+
+### Features
+
+* implement History Heuristic ([#67](https://github.com/dannyhammer/toad/issues/67)) ([730a787](https://github.com/dannyhammer/toad/commit/730a787415f18bc91b7a8e3f34319e2dfa50f67e))
+
+
+### Bug Fixes
+
+* set `Score::BASE_MOVE_SCORE` to `0` (from `-32768`) ([#71](https://github.com/dannyhammer/toad/issues/71)) ([0bd13f2](https://github.com/dannyhammer/toad/commit/0bd13f2a2b71798a7eaa3ed8c0ff53b5df276096))
+
 ## [1.1.0](https://github.com/dannyhammer/toad/compare/v1.0.0...v1.1.0) (2024-11-02)
 
 
