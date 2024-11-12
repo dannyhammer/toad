@@ -15,11 +15,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chessie::{Color, Game, Move, MoveList, Piece, PieceKind, Position, Square, ZobristKey};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, value_of, Evaluator, LogLevel, LoggingLevel, Score, TTable, TTableEntry, Variant,
+    tune, value_of, Color, Evaluator, Game, LogLevel, LoggingLevel, Move, MoveList, Piece,
+    PieceKind, Position, Score, Square, TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Maximum depth that can be searched
@@ -428,7 +428,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     fn iterative_deepening(&mut self, game: &Game) -> SearchResult {
         // Initialize `bestmove` to the first move available
         let mut result = SearchResult {
-            bestmove: game.into_iter().next(),
+            bestmove: game.get_legal_moves().first().copied(),
             ..Default::default()
         };
 
@@ -997,7 +997,7 @@ mod tests {
     #[test]
     fn test_quick_search_finds_move() {
         // If *any* legal move is available, it should be found, regardless of how much time was given.
-        let fen = chessie::FEN_STARTPOS;
+        let fen = FEN_STARTPOS;
         let config = SearchConfig {
             soft_timeout: Duration::from_millis(0),
             hard_timeout: Duration::from_millis(0),

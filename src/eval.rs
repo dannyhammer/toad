@@ -6,9 +6,7 @@
 
 use std::{cmp::Ordering, fmt};
 
-use chessie::{Board, Color, File, Game, PieceKind, Rank, Square};
-
-use crate::{Psqt, Score};
+use crate::{Board, Color, File, Game, PieceKind, Psqt, Rank, Score, Square};
 
 /// Initial material value of all pieces in a standard setup.
 const INITIAL_MATERIAL_VALUE: i32 = value_of(PieceKind::Pawn) * 16

@@ -6,9 +6,7 @@
 
 use std::fmt;
 
-use chessie::{Color, File, Piece, PieceKind, Rank, Square};
-
-use crate::{value_of, Score};
+use crate::{value_of, Color, File, Piece, PieceKind, Rank, Score, Square};
 
 /// Piece-Square tables copied from [PeSTO](https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function#Source_Code)
 #[rustfmt::skip]

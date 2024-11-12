@@ -16,12 +16,12 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use chessie::{perft, splitperft, Bitboard, Game, Move, Piece, Position, Square};
 use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
-    Chess960, EngineCommand, Evaluator, GameVariant, HistoryTable, LogLevel, Psqt, Search,
-    SearchConfig, SearchResult, Standard, TTable, Variant, BENCHMARK_FENS,
+    perft, splitperft, Bitboard, Chess960, EngineCommand, Evaluator, Game, GameVariant,
+    HistoryTable, LogLevel, Move, Piece, Position, Psqt, Search, SearchConfig, SearchResult,
+    Square, Standard, TTable, Variant, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
