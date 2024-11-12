@@ -518,12 +518,12 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         mut alpha: Score,
         beta: Score,
     ) -> Score {
-        // If we've reached a terminal node, evaluate the current position
+        // If we've reached a terminal node, avoid the horizon effect by searching all irreversible moves
         if depth == 0 {
             return self.quiescence(game, ply, alpha, beta);
         }
 
-        // let mut moves = game.get_legal_moves();
+        // Pseudo-legal movegen is faster than legal movegen, since we aren't checking the legality of *all* moves (thanks to a/b pruning).
         let mut moves = game.get_pseudo_legal_moves();
         let mut num_legal = 0;
 
@@ -532,16 +532,11 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         // Start with a *really bad* initial score
-        let mut best = -Score::INF;
         let Some(mut bestmove) = moves.first().copied() else {
-            return if game.is_in_check() {
-                // Offset by ply to prefer earlier mates
-                -Score::MATE + ply
-            } else {
-                // Drawing is better than losing
-                Score::DRAW
-            };
+            // If no moves available, it's either a draw or mate.
+            return self.draw_score(game, ply);
         };
+        let mut best = -Score::INF;
         let original_alpha = alpha;
 
         /****************************************************************************************************
@@ -629,13 +624,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
         // If there are no legal moves, it's either mate or a draw.
         if num_legal == 0 {
-            return if game.is_in_check() {
-                // Offset by ply to prefer earlier mates
-                -Score::MATE + ply
-            } else {
-                // Drawing is better than losing
-                Score::DRAW
-            };
+            return self.draw_score(game, ply);
         }
 
         // Save this node to the TTable
@@ -663,7 +652,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         // TODO: Is there a more concise way of doing this?
         // The `game.into_iter().only_captures()` doesn't cover en passant...
         let mut captures = game
-            .get_legal_moves()
+            .get_pseudo_legal_moves()
             .into_iter()
             .filter(Move::is_capture)
             .collect::<MoveList>();
@@ -678,14 +667,20 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
-        // let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
+        // let Some(mut bestmove) = captures.first().copied() else {
+        //     return stand_pat;
+        // };
         // let original_alpha = alpha;
 
         /****************************************************************************************************
          * Primary move loop
          ****************************************************************************************************/
-
         for mv in captures {
+            // If the move isn't legal, skip it
+            if !game.is_legal(mv) {
+                continue;
+            }
+
             // Copy-make the new position
             let new = game.with_move_made(mv);
             let score;
@@ -733,6 +728,18 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         // self.save_to_tt(game.key(), bestmove, best, original_alpha, beta, 0, ply);
 
         best // fail-soft
+    }
+
+    /// Compute the score to return in the case of a drawn game.
+    #[inline(always)]
+    fn draw_score(&self, game: &Game, ply: i32) -> Score {
+        if game.is_in_check() {
+            // Offset by ply to prefer earlier mates
+            -Score::MATE + ply
+        } else {
+            // Drawing is better than losing
+            Score::DRAW
+        }
     }
 
     /// Checks if we've exceeded any conditions that would warrant the search to end.
