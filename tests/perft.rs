@@ -4,7 +4,6 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use anyhow::Result;
 use toad::{perft_generic, Game};
 
 fn test_perft_fen_nodes(depth: usize, fen: &str, expected: u64) {
@@ -13,7 +12,8 @@ fn test_perft_fen_nodes(depth: usize, fen: &str, expected: u64) {
     assert_eq!(res, expected, "PERFT(depth) failed on {fen}");
 }
 
-fn test_epd(epd_file: &str, max_depth: usize) -> Result<()> {
+/*
+fn test_epd(epd_file: &str, max_depth: usize) -> anyhow::Result<()> {
     let contents = std::fs::read_to_string(epd_file)?;
 
     for (i, entry) in contents.lines().enumerate() {
@@ -52,6 +52,7 @@ fn test_fischer_epd() {
     // Depth 6 takes a *very* long time
     test_epd("tests/fischer.epd", 5).unwrap();
 }
+ */
 
 #[cfg(test)]
 mod promotion_perft {

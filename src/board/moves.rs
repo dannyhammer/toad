@@ -10,6 +10,14 @@ use anyhow::{anyhow, Result};
 
 use super::{File, Piece, PieceKind, Position, Rank, Square};
 
+/// Maximum possible number of moves in a given chess position.
+///
+/// Found [here](<https://www.chessprogramming.org/Chess_Position#cite_note-4>)
+pub const MAX_NUM_MOVES: usize = 218;
+
+/// An alias for an [`arrayvec::ArrayVec`] containing at most [`MAX_NUM_MOVES`] moves.
+pub type MoveList = arrayvec::ArrayVec<Move, MAX_NUM_MOVES>;
+
 /// Represents the different kinds of moves that can be made during a chess game.
 ///
 /// Internally, these are represented by bit flags, which allows a compact representation of the [`Move`] struct.
@@ -160,18 +168,6 @@ impl MoveKind {
 
         kind
     }
-
-    /// Fetches the [`PieceKind`] to promote to, if `self` is a promotion.
-    #[inline(always)]
-    pub fn get_promotion(&self) -> Option<PieceKind> {
-        match self {
-            Self::PromoteQueen | Self::CaptureAndPromoteQueen => Some(PieceKind::Queen),
-            Self::PromoteKnight | Self::CaptureAndPromoteKnight => Some(PieceKind::Knight),
-            Self::PromoteRook | Self::CaptureAndPromoteRook => Some(PieceKind::Rook),
-            Self::PromoteBishop | Self::CaptureAndPromoteBishop => Some(PieceKind::Bishop),
-            _ => None,
-        }
-    }
 }
 
 impl fmt::Display for MoveKind {
@@ -257,19 +253,6 @@ impl Move {
         Self(kind as u16 | (to.inner() as u16) << Self::DST_BITS | from.inner() as u16)
     }
 
-    /// Creates a new [`Move`] from the given [`Square`]s that does not promote a piece.
-    ///
-    /// # Example
-    /// ```
-    /// # use toad::{Move, Square};
-    /// let e2e3 = Move::new_quiet(Square::E2, Square::E3);
-    /// assert_eq!(e2e3.to_string(), "e2e3");
-    /// ```
-    #[inline(always)]
-    pub const fn new_quiet(from: Square, to: Square) -> Self {
-        Self::new(from, to, MoveKind::Quiet)
-    }
-
     /// Creates an "illegal" [`Move`], representing moving a piece to and from the same [`Square`].
     ///
     /// Playing this move on a [`Position`] is *not* the same as playing a [null move](https://www.chessprogramming.org/Null_Move).
@@ -326,22 +309,6 @@ impl Move {
         // Safety: Since a `Move` can ONLY be constructed through the public API,
         // any instance of a `Move` is guaranteed to have a valid bit pattern for its `MoveKind`.
         unsafe { std::mem::transmute(self.0 & Self::FLG_MASK) }
-    }
-
-    /// Fetches the parts of this [`Move`] in a tuple of `(from, to, kind)`.
-    ///
-    /// # Example
-    /// ```
-    /// # use toad::{Move, MoveKind, PieceKind, Square};
-    /// let e7e8q = Move::new(Square::E7, Square::E8, MoveKind::promotion(PieceKind::Queen));
-    /// let (from, to, kind) = e7e8q.parts();
-    /// assert_eq!(from, Square::E7);
-    /// assert_eq!(to, Square::E8);
-    /// assert_eq!(kind, MoveKind::promotion(PieceKind::Queen));
-    /// ```
-    #[inline(always)]
-    pub fn parts(&self) -> (Square, Square, MoveKind) {
-        (self.from(), self.to(), self.kind())
     }
 
     /// Returns `true` if this [`Move`] is a capture of any kind (capture, promotion-capture, en passant capture).
@@ -401,10 +368,21 @@ impl Move {
         (self.0 & Self::FLG_MASK) ^ Self::FLAG_CASTLE_LONG == 0
     }
 
-    /// Returns `true` if this [`Move`] is a short (kingside) or long (queenside) castle.
+    // #[inline(always)]
+    // pub const fn is_castle(&self) -> bool {
+    //     self.is_short_castle() || self.is_long_castle()
+    // }
+
+    /// If this [`Move`] is a castling move, returns the [`File`]s of the destinations for the King and Rook, respectively.
     #[inline(always)]
-    pub const fn is_castle(&self) -> bool {
-        self.is_short_castle() || self.is_long_castle()
+    pub const fn castling_files(&self) -> Option<(File, File)> {
+        if (self.0 & Self::FLG_MASK) ^ Self::FLAG_CASTLE_SHORT == 0 {
+            Some((File::G, File::F))
+        } else if (self.0 & Self::FLG_MASK) ^ Self::FLAG_CASTLE_LONG == 0 {
+            Some((File::C, File::D))
+        } else {
+            None
+        }
     }
 
     /// Returns `true` if this [`Move`] is a long (queenside) castle.
@@ -420,6 +398,7 @@ impl Move {
         (self.0 & Self::FLG_MASK) ^ Self::FLAG_PAWN_DOUBLE == 0
     }
 
+    /*
     /// Returns `true` if this [`Move`] is a promotion of any kind.
     ///
     /// # Example
@@ -437,6 +416,7 @@ impl Move {
         // Internally, FLAG_PROMO_KNIGHT has flag bits `1000`, so we can use it as a mask for promotions.
         self.0 & Self::FLAG_PROMO_KNIGHT != 0
     }
+     */
 
     /// Returns `true` if this [`Move`] is a capture of any kind.
     ///
@@ -456,32 +436,6 @@ impl Move {
             Self::FLAG_PROMO_ROOK | Self::FLAG_CAPTURE_PROMO_ROOK => Some(PieceKind::Rook),
             Self::FLAG_PROMO_BISHOP | Self::FLAG_CAPTURE_PROMO_BISHOP => Some(PieceKind::Bishop),
             _ => None,
-        }
-    }
-
-    /// Returns `true` if this move is formatted properly according to [Universal Chess Interface](https://en.wikipedia.org//wiki/Universal_Chess_Interface) notation.
-    ///
-    /// # Example
-    /// ```
-    /// # use toad::Move;
-    /// assert_eq!(Move::is_uci("b7c8b"), true);
-    /// assert_eq!(Move::is_uci("a1a1"), true);
-    /// assert_eq!(Move::is_uci("xj9"), false);
-    /// ```
-    pub fn is_uci(input: &str) -> bool {
-        let Some(from) = input.get(0..2) else {
-            return false;
-        };
-        let Some(to) = input.get(2..4) else {
-            return false;
-        };
-
-        let is_ok = Square::from_uci(from).is_ok() && Square::from_uci(to).is_ok();
-
-        if let Some(promote) = input.get(4..5) {
-            is_ok && PieceKind::from_str(promote).is_ok()
-        } else {
-            is_ok
         }
     }
 
@@ -817,6 +771,7 @@ mod test {
         );
     }
 
+    /*
     #[test]
     fn test_move_is_castle() {
         let (from, to) = (Square::A1, Square::H8);
@@ -829,6 +784,7 @@ mod test {
         assert!(!Move::new(from, to, MoveKind::promotion(PieceKind::Queen)).is_castle());
         assert!(!Move::new(from, to, MoveKind::promotion_capture(PieceKind::Queen)).is_castle());
     }
+     */
 
     #[test]
     fn test_move_is_pawn_double_push() {
@@ -846,6 +802,7 @@ mod test {
         );
     }
 
+    /*
     #[test]
     fn test_move_is_promotion() {
         let (from, to) = (Square::A1, Square::H8);
@@ -858,6 +815,7 @@ mod test {
         assert!(Move::new(from, to, MoveKind::promotion(PieceKind::Queen)).is_promotion());
         assert!(Move::new(from, to, MoveKind::promotion_capture(PieceKind::Queen)).is_promotion());
     }
+     */
 
     /// Helper function to assert that the `uci` move is parsed as `expected` on the position created from `fen`.
     fn test_move_parse(fen: &str, uci: &str, expected: Move) {

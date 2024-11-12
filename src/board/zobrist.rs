@@ -6,9 +6,7 @@
 
 use std::fmt;
 
-use super::{
-    Board, CastlingRights, Color, Piece, Position, Rank, Square, XoShiRo, NUM_CASTLING_RIGHTS,
-};
+use super::{Board, CastlingRights, Color, Piece, Position, Rank, Square, XoShiRo};
 
 /// Stores Zobrist hash keys, for hashing [`Position`]s.
 ///
@@ -234,7 +232,7 @@ struct ZobristHashTable {
     ep_keys: [u64; Square::COUNT],
 
     /// One key for every possible combination of castling rights.
-    castling_keys: [u64; NUM_CASTLING_RIGHTS],
+    castling_keys: [u64; CastlingRights::COUNT],
 
     /// One key for the side-to-move (only if side-to-move is Black- White's key is 0).
     color_key: [u64; Color::COUNT],
@@ -248,7 +246,7 @@ impl ZobristHashTable {
         let mut piece_keys = [[0; Piece::COUNT]; Square::COUNT];
         let mut color_key = [0; Color::COUNT];
         let mut ep_keys = [0; Square::COUNT];
-        let mut castling_keys = [0; NUM_CASTLING_RIGHTS];
+        let mut castling_keys = [0; CastlingRights::COUNT];
 
         let mut prng = XoShiRo::new();
 
@@ -278,7 +276,7 @@ impl ZobristHashTable {
 
         // Initialize keys for castling rights
         i = 0;
-        while i < NUM_CASTLING_RIGHTS {
+        while i < CastlingRights::COUNT {
             let key;
             (key, prng) = prng.get_next_const();
             castling_keys[i] = key;

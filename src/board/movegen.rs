@@ -4,13 +4,10 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use super::{Bitboard, Board, Color, Move, Piece, PieceKind, Rank, Square, MAX_NUM_MOVES};
+use super::{Bitboard, Color, Rank, Square};
 
 // Include the pre-generated magics
 include!("magics.rs");
-
-/// An alias for an [`arrayvec::ArrayVec`] containing at most [`MAX_NUM_MOVES`] moves.
-pub type MoveList = arrayvec::ArrayVec<Move, MAX_NUM_MOVES>;
 
 /// A table indexed by two squares that returns a Bitboard of a ray of squares between (exclusive) the indices.
 const RAY_BETWEEN: [[Bitboard; Square::COUNT]; Square::COUNT] = {
@@ -169,37 +166,6 @@ const KNIGHT_DELTAS: [(i8, i8); 8] = [
     (-2, -1),
 ];
 
-/// Computes a [`Bitboard`] of all squares attacked by `color`.
-///
-/// This is a raw attack map, meaning the squares on this map are unsafe for the friendly King to occupy.
-#[inline(always)]
-pub fn compute_attacks_by(board: &Board, color: Color) -> Bitboard {
-    let blockers = board.occupied();
-
-    let mut attacks = pawn_attack_map(board, color);
-    for square in board.knights(color) {
-        attacks |= knight_attacks(square);
-    }
-    for square in board.diagonal_sliders(color) {
-        attacks |= bishop_attacks(square, blockers);
-    }
-    for square in board.orthogonal_sliders(color) {
-        attacks |= rook_attacks(square, blockers);
-    }
-    for square in board.king(color) {
-        attacks |= king_attacks(square);
-    }
-
-    attacks
-}
-
-/// Computes a [`Bitboard`] of all squares attacked by `color` Pawns, excluding En Passant for convenience.
-#[inline(always)]
-pub fn pawn_attack_map(board: &Board, color: Color) -> Bitboard {
-    let pushes = board.pawns(color).forward_by(color, 1);
-    pushes.east() | pushes.west()
-}
-
 /*
 /// Computes a [`Bitboard`] of all squares that `color` Pawns can push to.
 ///
@@ -219,6 +185,7 @@ pub fn pawn_push_map(board: &Board, color: Color) -> Bitboard {
 }
  */
 
+/*
 /// Fetch the default, pseudo-legal attacks for `piece` at `square`, given `blockers`.
 ///
 /// Note: For Pawns, this retrieves only the Pawn's _attacks_, not their pushes.
@@ -239,6 +206,7 @@ pub const fn attacks_for(piece: Piece, square: Square, blockers: Bitboard) -> Bi
         PieceKind::King => king_attacks(square),
     }
 }
+  */
 
 /// Fetches a [`Bitboard`] with all of the bits along the ray between `from` and `to` (exclusive) set to `1`.
 ///
@@ -311,9 +279,6 @@ pub const fn knight_attacks(square: Square) -> Bitboard {
 pub const fn king_attacks(square: Square) -> Bitboard {
     KING_ATTACKS[square.index()]
 }
-
-// const PAWN_ATTACKS: [&'static [Bitboard; 64]; 2] = [&WHITE_PAWN_ATTACKS, &BLACK_PAWN_ATTACKS];
-// const PAWN_PUSHES: [&'static [Bitboard; 64]; 2] = [&WHITE_PAWN_PUSHES, &BLACK_PAWN_PUSHES];
 
 /// Fetch the raw, unblocked pushes for a pawn of the provided color on the provided square.
 #[inline(always)]
