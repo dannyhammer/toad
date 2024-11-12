@@ -30,7 +30,7 @@ impl XoShiRo {
         Self(seeds)
     }
 
-    /// `const` analog of [`XoShiRo::get_next`], returning `(next, Self)`.
+    /// `const` analog of `XoShiRo::get_next`, returning `(next, Self)`.
     #[inline(always)]
     pub const fn get_next_const(self) -> (u64, Self) {
         let (result, s) = Self::xoshiro(self.0);

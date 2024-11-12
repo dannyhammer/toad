@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use crate::{value_of, Color, File, Piece, PieceKind, Rank, Score, Square};
+use crate::{Color, File, Piece, PieceKind, Rank, Score, Square};
 
 /// Piece-Square tables copied from [PeSTO](https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function#Source_Code)
 #[rustfmt::skip]
@@ -190,7 +190,7 @@ impl Psqt {
         while i < psqt.len() {
             // Flip the rank, not the file, so it can be used from White's perspective without modification
             // Also add in the value of this piece
-            flipped[i] = Score(psqt[i ^ 56] + value_of(kind));
+            flipped[i] = Score(psqt[i ^ 56] + kind.value());
             // flipped[i] = value_of(kind); // Functions like a material-only eval
             i += 1;
         }

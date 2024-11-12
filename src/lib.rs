@@ -8,8 +8,6 @@
 mod cli;
 /// Code related to the engine's functionality, such as user input handling.
 mod engine;
-/// Evaluation of chess positions.
-mod eval;
 /// Piece-Square tables.
 mod psqt;
 /// Types and utilities for rating how good/bad a position is.
@@ -43,8 +41,6 @@ mod board {
     mod prng;
     /// Squares on a chessboard (including files and ranks).
     mod square;
-    /// Misc utility functions and constants
-    mod utils;
     /// Zobrist keys for hashing chess positions.
     mod zobrist;
 
@@ -56,14 +52,12 @@ mod board {
     pub use position::*;
     pub use prng::*;
     pub use square::*;
-    pub use utils::*;
     pub use zobrist::*;
 }
 
 pub use board::*;
 pub use cli::*;
 pub use engine::*;
-use eval::*;
 use psqt::*;
 use score::*;
 use search::*;

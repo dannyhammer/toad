@@ -400,6 +400,21 @@ impl PieceKind {
         *self as usize
     }
 
+    /// Returns a value of this [`PieceKind`].
+    ///
+    /// Values are obtained from here: <https://www.chessprogramming.org/Simplified_Evaluation_Function>
+    #[inline(always)]
+    pub const fn value(&self) -> i32 {
+        match self {
+            Self::Pawn => 100,
+            Self::Knight => 320,
+            Self::Bishop => 330,
+            Self::Rook => 500,
+            Self::Queen => 900,
+            Self::King => 0, // King is invaluable, but 0 is easier to work with in computations
+        }
+    }
+
     /// Creates a new [`PieceKind`] from a character, according to the [Universal Chess Interface](https://en.wikipedia.org//wiki/Universal_Chess_Interface) notation.
     ///
     /// Will return a [`anyhow::Error`] if `kind` is not a valid character.

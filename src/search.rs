@@ -18,8 +18,8 @@ use std::{
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, value_of, Color, Evaluator, Game, LogLevel, LoggingLevel, Move, MoveList, Piece,
-    PieceKind, Position, Score, Square, TTable, TTableEntry, Variant, ZobristKey,
+    tune, Color, Game, LogLevel, LoggingLevel, Move, MoveList, Piece, PieceKind, Position, Score,
+    Square, TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Maximum depth that can be searched
@@ -252,7 +252,7 @@ impl HistoryTable {
 
     /// Applies a bonus based on the history heuristic for the move.
     ///
-    /// Uses the "history gravity" formula from https://www.chessprogramming.org/History_Heuristic#History_Bonuses
+    /// Uses the "history gravity" formula from <https://www.chessprogramming.org/History_Heuristic#History_Bonuses>
     #[inline(always)]
     fn update(&mut self, game: &Game, mv: &Move, bonus: Score) {
         // Safety: This is a move. There *must* be a piece at `from`.
@@ -634,7 +634,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
     fn quiescence(&mut self, game: &Game, _ply: i32, mut alpha: Score, beta: Score) -> Score {
         // Evaluate the current position, to serve as our baseline
-        let stand_pat = Evaluator::new(game).eval();
+        let stand_pat = game.eval();
 
         // Beta cutoff; this position is "too good" and our opponent would never let us get here
         if stand_pat >= beta {
@@ -869,7 +869,7 @@ const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
 
             // Default MVV-LVA except that the King is assigned a value of 0 if he is attacking
             // bench: 27032804 nodes 8136592 nps
-            let score = 10 * value_of(vtm) - value_of(atk);
+            let score = 10 * vtm.value() - atk.value();
 
             // If the attacker is the King, the score is half the victim's value.
             // This encourages the King to attack, but not as strongly as other pieces.

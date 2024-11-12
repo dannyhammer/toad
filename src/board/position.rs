@@ -5,6 +5,7 @@
  */
 
 use std::{
+    cmp::Ordering,
     fmt::{self, Write},
     ops::{Deref, Index, IndexMut},
     str::FromStr,
@@ -12,11 +13,18 @@ use std::{
 
 use anyhow::{anyhow, bail, Result};
 
-use super::{
+use crate::{
     bishop_attacks, bishop_rays, king_attacks, knight_attacks, pawn_attacks, pawn_pushes,
     queen_attacks, ray_between, ray_containing, rook_attacks, rook_rays, Bitboard, Color, File,
-    Move, MoveKind, MoveList, Piece, PieceKind, Rank, Square, ZobristKey, FEN_STARTPOS,
+    Move, MoveKind, MoveList, Piece, PieceKind, Psqt, Rank, Score, Square, ZobristKey,
 };
+
+/// FEN string for the starting position of chess.
+pub const FEN_STARTPOS: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+/// A popular FEN string for debugging move generation.
+pub const FEN_KIWIPETE: &str =
+    "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1";
 
 /// A game of chess.
 ///
@@ -48,30 +56,140 @@ pub struct Game {
 
     /// The square where the side-to-move's King resides.
     king_square: Square,
+
+    /// Value of remaining material for each side.
+    material: [i32; Color::COUNT],
+
+    /// Current evaluations for the midgame and endgame, respectively
+    evals: (Score, Score),
 }
 
 impl Game {
-    /// Creates a new [`Game`] from  the provided [`Position`].
+    /// Initial material value of all pieces in a standard setup.
+    const INITIAL_MATERIAL_VALUE: i32 = PieceKind::Pawn.value() * 16
+        + PieceKind::Knight.value() * 4
+        + PieceKind::Bishop.value() * 4
+        + PieceKind::Rook.value() * 4
+        + PieceKind::Queen.value() * 2;
+
+    /// Creates a new, empty [`Game`] with the following properties:
+    /// * No pieces on the board
+    /// * White moves first
+    /// * No castling rights
+    /// * No en passant square available
+    /// * Halfmove counter set to 0
+    /// * Fullmove counter set to 1
+    ///
+    /// # Example
+    /// ```
+    /// # use toad::Game;
+    /// let empty = Game::new();
+    /// assert_eq!(empty.to_fen(), "8/8/8/8/8/8/8/8 w - - 0 1");
+    /// ```
     #[inline(always)]
-    pub fn new(position: Position) -> Self {
-        let mut game = Self {
-            position,
+    pub fn new() -> Self {
+        Self {
+            king_square: Square::default(),
+            position: Position::new(),
             checkers: Bitboard::EMPTY_BOARD,
             checkmask: Bitboard::EMPTY_BOARD,
             pinned: Bitboard::EMPTY_BOARD,
             attacks_by_color: [Bitboard::EMPTY_BOARD; Color::COUNT],
-            // mobility_at,
-            king_square: Square::default(),
-        };
-
-        game.recompute_legal_masks();
-        game
+            material: [0; Color::COUNT],
+            evals: (Score::DRAW, Score::DRAW),
+        }
     }
 
     /// Creates a new [`Game`] from the provided FEN string.
     #[inline(always)]
     pub fn from_fen(fen: &str) -> Result<Self> {
-        Ok(Self::new(Position::from_fen(fen)?))
+        let mut game = Self::new();
+
+        let mut split = fen.trim().split(' ');
+        let Some(placements) = split.next() else {
+            bail!("FEN string must have piece placements");
+        };
+
+        // Check if the placements string is the correct length
+        if placements.matches('/').count() != 7 {
+            bail!("FEN must have piece placements for all 8 ranks");
+        }
+
+        // Need to reverse this so that White pieces are at the "bottom" of the board
+        for (rank, placements) in placements.split('/').rev().enumerate() {
+            let mut file = 0;
+            let rank = rank as u8;
+
+            for piece_char in placements.chars() {
+                // If the next char is a piece, we need to update the relevant Bitboards
+                if let Ok(piece) = Piece::from_uci(piece_char) {
+                    // Place the appropriate piece at this square
+                    let square = Square::new(File::new_unchecked(file), Rank::new_unchecked(rank));
+
+                    game.place(piece, square);
+
+                    file += 1;
+                } else {
+                    // If the next char was not a piece, increment our File counter, checking for errors along the way
+                    let Some(empty) = piece_char.to_digit(10) else {
+                        bail!(
+                            "FEN placements must contain piece chars or digits. Got {piece_char:?}"
+                        );
+                    };
+                    file += empty as u8
+                }
+            }
+        }
+
+        let active_color = split.next().unwrap_or("w");
+        game.position.side_to_move = Color::from_str(active_color)?;
+
+        // Castling is a bit more complicated; especially for Chess960
+        let castling = split.next().unwrap_or("-");
+        if castling.contains(['K', 'k', 'Q', 'q']) {
+            game.position.castling_rights[Color::White].short =
+                castling.contains('K').then_some(Square::H1);
+            game.position.castling_rights[Color::White].long =
+                castling.contains('Q').then_some(Square::A1);
+            game.position.castling_rights[Color::Black].short =
+                castling.contains('k').then_some(Square::H8);
+            game.position.castling_rights[Color::Black].long =
+                castling.contains('q').then_some(Square::A8);
+        } else if castling.chars().any(|c| File::from_char(c).is_ok()) {
+            for c in castling.chars() {
+                let color = Color::from_bool(c.is_ascii_lowercase());
+                let rook_file = File::from_char(c)?;
+                let rook_square = Square::new(rook_file, Rank::first(color));
+
+                let king_file = game.position.board.king(color).to_square_unchecked().file();
+                if rook_file > king_file {
+                    game.position.castling_rights[color].short = Some(rook_square);
+                } else {
+                    game.position.castling_rights[color].long = Some(rook_square);
+                }
+            }
+        }
+
+        let en_passant_target = split.next().unwrap_or("-");
+        game.position.ep_square = match en_passant_target {
+            "-" => None,
+            square => Some(Square::from_uci(square)?),
+        };
+
+        let halfmove = split.next().unwrap_or("0");
+        game.position.halfmove = halfmove.parse().or(Err(anyhow!(
+            "FEN string must have valid halfmove counter. Got {halfmove:?}"
+        )))?;
+
+        let fullmove = split.next().unwrap_or("1");
+        game.position.fullmove = fullmove.parse().or(Err(anyhow!(
+            "FEN string must have valid fullmove counter. Got {fullmove:?}"
+        )))?;
+
+        game.position.key = ZobristKey::new(game.position());
+
+        game.recompute_legal_masks();
+        Ok(game)
     }
 
     /// Copies `self` and returns a [`Game`] after having applied the provided [`Move`].
@@ -142,11 +260,128 @@ impl Game {
         self.attacks_by_color[color.index()]
     }
 
+    /// Counts the material value of all pieces on the board
+    ///
+    /// The King is not included in this count
+    #[inline(always)]
+    pub fn material_remaining(&self) -> i32 {
+        self.material[Color::White.index()] + self.material[Color::Black.index()]
+    }
+
+    /// Divides the original material value of the board by the current material value, yielding an `i32` in the range `[0, 100]`
+    ///
+    /// Lower numbers are closer to the beginning of the game. Higher numbers are closer to the end of the game.
+    ///
+    /// The King is ignored when performing this calculation.
+    #[inline(always)]
+    pub fn endgame_weight(&self) -> i32 {
+        let remaining = Self::INITIAL_MATERIAL_VALUE - self.material_remaining();
+        (remaining * 100 / Self::INITIAL_MATERIAL_VALUE * 100) / 100
+    }
+
+    /// Evaluate this position from the side-to-move's perspective.
+    ///
+    /// A positive/high number is good for the side-to-move, while a negative number is better for the opponent.
+    /// A score of 0 is considered equal.
+    #[inline(always)]
+    pub fn eval(self) -> Score {
+        let stm = self.side_to_move();
+        self.eval_for(stm)
+    }
+
+    /// Evaluate this position from `color`'s perspective.
+    ///
+    /// A positive/high number is good for the `color`, while a negative number is better for the opponent.
+    /// A score of 0 is considered equal.
+    #[inline(always)]
+    pub fn eval_for(&self, color: Color) -> Score {
+        self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color.negation_multiplier() as i32
+    }
+
+    pub fn eval_pretty(&self) -> String {
+        let mut s = String::with_capacity(1024);
+        let color = self.side_to_move();
+        let endgame_weight = self.endgame_weight();
+
+        let ranks = Rank::iter().rev();
+
+        s += "  +";
+        for _ in File::iter() {
+            s += "-----+";
+        }
+        s += "\n";
+        for rank in ranks {
+            s += format!("{rank} |").as_str();
+
+            // Step 1: Write the piece char
+            for file in File::iter() {
+                let square = Square::new(file, rank);
+                let piece = self.piece_at(square);
+                let piece_char = piece.map(|p| p.char()).unwrap_or(' ');
+                s += format!("  {piece_char}  |").as_str();
+            }
+            s += "\n";
+            s += "  |";
+
+            // Step 2: Write the contribution of that piece
+            for file in File::iter() {
+                let square = Square::new(file, rank);
+
+                // let score = if let Some(val) = self.value_at(square) {
+                let score = if let Some(piece) = self.piece_at(square) {
+                    let (mg, eg) = Psqt::evals(piece, square);
+                    let val =
+                        mg.lerp(eg, endgame_weight) * piece.color().negation_multiplier() as i32;
+
+                    let score = if val > Score::DRAW {
+                        format!("+{}", val.normalize())
+                    } else {
+                        format!("{}", val.normalize())
+                    };
+
+                    format!("{score:^5}")
+                } else {
+                    String::from("     ")
+                };
+                s += format!("{score}|").as_str();
+            }
+
+            s += "\n";
+
+            s += "  +";
+            for _ in File::iter() {
+                s += "-----+";
+            }
+            s += "\n";
+        }
+        for file in File::iter() {
+            s += format!("     {file}").as_str();
+        }
+
+        let score = self.eval_for(color);
+
+        let winning_side = match score.cmp(&Score::DRAW) {
+            Ordering::Greater => Some(color),
+            Ordering::Less => Some(color.opponent()),
+            Ordering::Equal => None,
+        };
+
+        s += format!("\n\nEndgame: {endgame_weight}%").as_str();
+        s += format!(
+            "\nWinning side: {}",
+            winning_side.map(|c| c.name()).unwrap_or("N/A")
+        )
+        .as_str();
+        s += format!("\nScore: {score}").as_str();
+
+        s
+    }
+
     /// Applies the provided [`Move`]. No enforcement of legality.
     #[inline(always)]
     pub fn make_move(&mut self, mv: Move) {
         // Remove the piece from it's previous location, exiting early if there is no piece there
-        let Some(mut piece) = self.position.take(mv.from()) else {
+        let Some(mut piece) = self.take(mv.from()) else {
             return;
         };
 
@@ -177,7 +412,7 @@ impl Game {
             };
 
             // Safety: This is a capture; there *must* be a piece at the destination square.
-            let victim = self.position.take(victim_square).unwrap();
+            let victim = self.take(victim_square).unwrap();
             // let victim = unsafe { self.take(victim_square).unwrap_unchecked() };
             let victim_color = victim.color();
 
@@ -205,8 +440,8 @@ impl Game {
         } else if mv.is_short_castle() {
             // Safety; This is a castle. There *must* be a Rook at `to`.
             // let rook = unsafe { self.take(to).unwrap_unchecked() };
-            let rook = self.position.take(to).unwrap();
-            self.position.place(rook, Square::rook_short_castle(color));
+            let rook = self.take(to).unwrap();
+            self.place(rook, Square::rook_short_castle(color));
 
             // The King doesn't actually move to the Rook, so update the destination square
             to = Square::king_short_castle(color);
@@ -216,8 +451,8 @@ impl Game {
         } else if mv.is_long_castle() {
             // Safety; This is a castle. There *must* be a Rook at `to`.
             // let rook = unsafe { self.take(to).unwrap_unchecked() };
-            let rook = self.position.take(to).unwrap();
-            self.position.place(rook, Square::rook_long_castle(color));
+            let rook = self.take(to).unwrap();
+            self.place(rook, Square::rook_long_castle(color));
 
             // The King doesn't actually move to the Rook, so update the destination square
             to = Square::king_long_castle(color);
@@ -258,7 +493,7 @@ impl Game {
         }
 
         // Place the piece in it's new position
-        self.position.place(piece, to);
+        self.place(piece, to);
 
         // Next player's turn
         self.toggle_side_to_move();
@@ -413,7 +648,6 @@ impl Game {
     /// Generate all legal moves from the current position.
     ///
     /// If you need all legal moves for the position, use this method.
-    /// If you want to incrementally generated moves one-by-one, use [`MoveGenIter`].
     #[inline(always)]
     pub fn get_legal_moves(&self) -> MoveList {
         let friendlies = self.color(self.side_to_move());
@@ -812,6 +1046,40 @@ impl Game {
         // Pseudo-legal attacks that are within the check/pin mask and attack non-friendly squares
         default_attacks & legal_squares
     }
+
+    /// Places a piece at the provided square, updating Zobrist hash information.
+    #[inline(always)]
+    fn place(&mut self, piece: Piece, square: Square) {
+        let color = piece.color();
+        let multiplier = color.negation_multiplier() as i32;
+
+        self.position.board.place(piece, square);
+        self.position.key.hash_piece(square, piece);
+        self.material[color] += piece.kind().value();
+
+        // Update PSQT contributions
+        let (mg, eg) = Psqt::evals(piece, square);
+        self.evals.0 += mg * multiplier;
+        self.evals.1 += eg * multiplier;
+    }
+
+    /// Removes and returns a piece on the provided square, updating Zobrist hash information.
+    #[inline(always)]
+    fn take(&mut self, square: Square) -> Option<Piece> {
+        let piece = self.position.board.take(square)?;
+        let color = piece.color();
+        let multiplier = color.negation_multiplier() as i32;
+
+        self.position.key.hash_piece(square, piece);
+        self.material[piece.color()] -= piece.kind().value();
+
+        // Update PSQT contributions
+        let (mg, eg) = Psqt::evals(piece, square);
+        self.evals.0 -= mg * multiplier;
+        self.evals.1 -= eg * multiplier;
+
+        Some(piece)
+    }
 }
 
 impl Deref for Game {
@@ -836,7 +1104,8 @@ impl Default for Game {
     /// Standard starting position for Chess.
     #[inline(always)]
     fn default() -> Self {
-        Self::new(Position::default())
+        // Safety: The FEN for startpos is always valid
+        unsafe { Self::from_fen(FEN_STARTPOS).unwrap_unchecked() }
     }
 }
 
@@ -872,8 +1141,22 @@ impl fmt::Display for Game {
                 write!(f, "   Checkers: {}", squares_to_string(self.checkers()))?;
             } else if rank == Rank::FOUR {
                 write!(f, "     Pinned: {}", squares_to_string(self.pinned()))?;
-                // } else if rank == Rank::THREE {
-                // } else if rank == Rank::TWO {
+            } else if rank == Rank::THREE {
+                write!(
+                    f,
+                    "   Material: {} (white) {} (black)",
+                    self.material[Color::White],
+                    self.material[Color::Black]
+                )?;
+            } else if rank == Rank::TWO {
+                write!(
+                    f,
+                    "       Eval: {} ({} mg, {} eg)",
+                    self.eval(),
+                    self.evals.0,
+                    self.evals.1
+                )?;
+
                 // } else if rank == Rank::ONE {
             }
             writeln!(f)?;
@@ -986,7 +1269,7 @@ impl CastlingRights {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Position {
     /// Bitboard representation of the game board.
-    pub(crate) board: Board,
+    board: Board,
 
     /// The [`Color`] of the current player.
     side_to_move: Color,
@@ -1298,12 +1581,6 @@ impl Position {
         &self.board
     }
 
-    /// Mutably fetches this position's [`Board`]
-    #[inline(always)]
-    pub fn board_mut(&mut self) -> &mut Board {
-        &mut self.board
-    }
-
     /*
     /// Checks if the provided move is pseudo-legal to perform.
     ///
@@ -1517,21 +1794,6 @@ impl Position {
         }
 
         moves
-    }
-
-    /// Places a piece at the provided square, updating Zobrist hash information.
-    #[inline(always)]
-    fn place(&mut self, piece: Piece, square: Square) {
-        self.board_mut().place(piece, square);
-        self.key.hash_piece(square, piece);
-    }
-
-    /// Removes and returns a piece on the provided square, updating Zobrist hash information.
-    #[inline(always)]
-    fn take(&mut self, square: Square) -> Option<Piece> {
-        let piece = self.board_mut().take(square)?;
-        self.key.hash_piece(square, piece);
-        Some(piece)
     }
 
     /// Clears the castling rights of `color`
@@ -1776,20 +2038,6 @@ impl Board {
         self.mailbox[square] = Some(piece);
     }
 
-    /// Clears the supplied [`Square`] of any pieces.
-    ///
-    /// # Example
-    /// ```
-    /// # use toad::{Board, Square};
-    /// let mut board = Board::from_fen("k7/8/8/8/2N5/8/8/7K").unwrap();
-    /// board.clear(Square::C4);
-    /// assert_eq!(board.to_fen(), "k7/8/8/8/8/8/8/7K");
-    /// ```
-    #[inline(always)]
-    pub fn clear(&mut self, square: Square) {
-        self.take(square);
-    }
-
     /// Takes the [`Piece`] from a given [`Square`], if there is one present.
     ///
     /// # Example
@@ -1813,49 +2061,6 @@ impl Board {
         Some(piece)
     }
 
-    /// Clears the entire board, removing all pieces.
-    ///
-    /// # Example
-    /// ```
-    /// # use toad::Board;
-    /// let mut board = Board::default();
-    /// board.clear_all();
-    /// assert_eq!(board.to_fen(), "8/8/8/8/8/8/8/8");
-    /// ```
-    #[inline(always)]
-    pub fn clear_all(&mut self) {
-        *self = Self::new();
-    }
-
-    /// Fetches the [`Color`] of the piece at the provided [`Square`], if there is one.
-    ///
-    /// # Example
-    /// ```
-    /// # use toad::{Board, Color, Square};
-    /// let board = Board::default();
-    /// assert_eq!(board.color_at(Square::A2), Some(Color::White));
-    /// assert_eq!(board.color_at(Square::E8), Some(Color::Black));
-    /// assert!(board.color_at(Square::E4).is_none());
-    /// ```
-    #[inline(always)]
-    pub fn color_at(&self, square: Square) -> Option<Color> {
-        self.mailbox[square].map(|piece| piece.color())
-    }
-
-    /// Fetches the [`PieceKind`] of the piece at the provided [`Square`], if there is one.
-    ///
-    /// # Example
-    /// ```
-    /// # use toad::{Board, PieceKind, Square};
-    /// let mut board = Board::default();
-    /// assert_eq!(board.kind_at(Square::A2), Some(PieceKind::Pawn));
-    /// assert!(board.kind_at(Square::E4).is_none());
-    /// ```
-    #[inline(always)]
-    pub fn kind_at(&self, square: Square) -> Option<PieceKind> {
-        self.mailbox[square].map(|piece| piece.kind())
-    }
-
     /// Fetches the [`Piece`] of the piece at the provided [`Square`], if there is one.
     ///
     /// # Example
@@ -1869,16 +2074,6 @@ impl Board {
     #[inline(always)]
     pub const fn piece_at(&self, square: Square) -> Option<Piece> {
         self.mailbox[square.index()]
-    }
-
-    /// Fetches the [`Piece`] of the piece at the provided [`Square`], without checking if one is there.
-    ///
-    /// The primary use case of this function is to get the piece at a [`Move`]'s `to` field.
-    ///
-    /// It is undefined behavior to call this function on a square that has no piece.
-    #[inline(always)]
-    pub fn piece_at_unchecked(&self, square: Square) -> Piece {
-        unsafe { self.piece_at(square).unwrap_unchecked() }
     }
 
     /// Fetches the [`Bitboard`] corresponding to the supplied [`PieceKind`].
@@ -1917,29 +2112,6 @@ impl Board {
     #[inline(always)]
     pub const fn occupied(&self) -> Bitboard {
         self.color(Color::White).or(self.color(Color::Black))
-    }
-
-    /// Fetches a [`Bitboard`] of all non-occupied squares on the board.
-    #[inline(always)]
-    pub const fn empty(&self) -> Bitboard {
-        self.occupied().not()
-    }
-
-    /// Fetches the [`Bitboard`] corresponding to the supplied [`Piece`].
-    ///
-    /// The returned [`Bitboard`] will hold the locations of every occurrence of the supplied [`Piece`].
-    ///
-    /// # Example
-    /// ```
-    /// # use toad::{Board, PieceKind, Color, Piece, Bitboard};
-    /// let board = Board::default();
-    /// let white_pawn = Piece::new(Color::White, PieceKind::Pawn);
-    /// let white_pawns = board.piece(white_pawn);
-    /// assert_eq!(white_pawns, Bitboard::RANK_2);
-    /// ```
-    #[inline(always)]
-    pub const fn piece(&self, piece: Piece) -> Bitboard {
-        self.piece_parts(piece.color(), piece.kind())
     }
 
     /// Analogous to [`Board::piece`] with a [`Piece`]'s individual components.
@@ -2261,7 +2433,7 @@ impl fmt::Debug for Board {
 
         let metadata = format(&[
             (self.occupied(), "Occupied"),
-            (self.empty(), "Empty"),
+            (!self.occupied(), "Empty"),
             (self.colors[Color::White], "White"),
             (self.colors[Color::Black], "Black"),
         ]);
@@ -2289,7 +2461,7 @@ impl<'a> Iterator for BoardIter<'a> {
         let square = self.occupancy.pop_lsb()?;
 
         // Safety: Because we early return when calling `pop_lsb` above, there is guaranteed to be a piece at `square`.
-        let piece = self.board.piece_at_unchecked(square);
+        let piece = unsafe { self.board.piece_at(square).unwrap_unchecked() };
         Some((square, piece))
     }
 

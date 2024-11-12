@@ -49,7 +49,7 @@ const DISTANCES: ([[u8;Square::COUNT]; Square::COUNT], [[u8;Square::COUNT]; Squa
 
 /// Chebyshev distance of a square from the center of the board.
 /// 
-/// Fetched from https://www.chessprogramming.org/Center_Distance
+/// Fetched from <https://www.chessprogramming.org/Center_Distance>
 #[rustfmt::skip]
 const CENTER_DIST_CHEBYSHEV: [u8; Square::COUNT] = [ 
   3, 3, 3, 3, 3, 3, 3, 3,
@@ -64,7 +64,7 @@ const CENTER_DIST_CHEBYSHEV: [u8; Square::COUNT] = [
 
 /// Manhattan distance of a square from the center of the board.
 /// 
-/// Fetched from https://www.chessprogramming.org/Center_Distance
+/// Fetched from <https://www.chessprogramming.org/Center_Distance>
 #[rustfmt::skip]
 const CENTER_DIST_MANHATTAN: [u8; Square::COUNT] = [ 
   6, 5, 4, 3, 3, 4, 5, 6,

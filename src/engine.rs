@@ -19,9 +19,9 @@ use anyhow::{bail, Context, Result};
 use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
-    perft, splitperft, Bitboard, Chess960, EngineCommand, Evaluator, Game, GameVariant,
-    HistoryTable, LogLevel, Move, Piece, Position, Psqt, Search, SearchConfig, SearchResult,
-    Square, Standard, TTable, Variant, BENCHMARK_FENS,
+    perft, splitperft, Bitboard, Chess960, EngineCommand, Game, GameVariant, HistoryTable,
+    LogLevel, Move, Piece, Position, Psqt, Search, SearchConfig, SearchResult, Square, Standard,
+    TTable, Variant, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -319,12 +319,10 @@ impl Engine {
 
     /// Executes the `eval` command, printing an evaluation of the current position.
     fn eval(&self, pretty: bool) {
-        let evaluator = Evaluator::new(&self.game);
-
         if pretty {
-            println!("{evaluator}");
+            println!("{}", self.game.eval_pretty());
         } else {
-            println!("{}", evaluator.eval());
+            println!("{}", self.game.eval());
         }
     }
 
@@ -440,7 +438,7 @@ impl Engine {
     /// Executes the `psqt` command, printing the piece-square table info for the provided piece.
     fn psqt(&self, piece: Piece, square: Option<Square>, endgame_weight: Option<i32>) {
         // Compute the current endgame weight, if it wasn't provided
-        let weight = endgame_weight.unwrap_or(Evaluator::new(&self.game).endgame_weight);
+        let weight = endgame_weight.unwrap_or(self.game.endgame_weight());
         // Fetch the middle-game and end-game tables
         let (mg, eg) = Psqt::get_tables_for(piece.kind());
 
