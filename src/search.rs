@@ -523,19 +523,9 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             return self.quiescence(game, ply, alpha, beta);
         }
 
-        // If there are no legal moves, it's either mate or a draw.
-        let mut moves = game.get_legal_moves();
-        if moves.is_empty() {
-            let score = if game.is_in_check() {
-                // Offset by ply to prefer earlier mates
-                -Score::MATE + ply
-            } else {
-                // Drawing is better than losing
-                Score::DRAW
-            };
-
-            return score;
-        }
+        // let mut moves = game.get_legal_moves();
+        let mut moves = game.get_pseudo_legal_moves();
+        let mut num_legal = 0;
 
         // Sort moves so that we look at "promising" ones first
         let tt_move = self.get_tt_bestmove(game.key());
@@ -543,14 +533,27 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
         // Start with a *really bad* initial score
         let mut best = -Score::INF;
-        let mut bestmove = moves[0]; // Safe because we guaranteed `moves` to be nonempty above
+        let Some(mut bestmove) = moves.first().copied() else {
+            return if game.is_in_check() {
+                // Offset by ply to prefer earlier mates
+                -Score::MATE + ply
+            } else {
+                // Drawing is better than losing
+                Score::DRAW
+            };
+        };
         let original_alpha = alpha;
 
         /****************************************************************************************************
          * Primary move loop
          ****************************************************************************************************/
-
         for (i, mv) in moves.iter().enumerate() {
+            // If the move isn't legal, skip it
+            if !game.is_legal(*mv) {
+                continue;
+            }
+            num_legal += 1;
+
             // Copy-make the new position
             let new = game.with_move_made(*mv);
             let mut score;
@@ -612,6 +615,8 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                     for mv in moves[..i].iter().filter(|mv| mv.is_quiet()) {
                         self.history.update(game, mv, -bonus);
                     }
+
+                    // Prune this branch
                     break;
                 }
             }
@@ -620,6 +625,17 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             if self.search_cancelled() {
                 break;
             }
+        }
+
+        // If there are no legal moves, it's either mate or a draw.
+        if num_legal == 0 {
+            return if game.is_in_check() {
+                // Offset by ply to prefer earlier mates
+                -Score::MATE + ply
+            } else {
+                // Drawing is better than losing
+                Score::DRAW
+            };
         }
 
         // Save this node to the TTable

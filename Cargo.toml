@@ -13,7 +13,7 @@ keywords = ["chess", "chess-engine", "uci"]
 anyhow = "1.0.89"
 #chessie = "2.0.0"
 #chessie = { path = "../chessie/chessie" }
-chessie = { git = "https://github.com/dannyhammer/chessie.git" }
+chessie = { git = "https://github.com/dannyhammer/chessie.git", branch = "pseudo-legal" }
 clap = { version = "4.5.18", features = ["derive"] }
 #uci-parser = { path = "../uci-parser", features = ["parse-go-perft", "parse-position-kiwipete", "clamp-negatives", "err-on-unused-input"] }
 uci-parser = { git = "https://github.com/dannyhammer/uci-parser.git", features = ["parse-go-perft", "parse-position-kiwipete", "clamp-negatives", "err-on-unused-input"] }
