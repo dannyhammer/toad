@@ -894,17 +894,17 @@ const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
 #[allow(dead_code)]
 pub fn print_mvv_lva_table() {
     print!("\nX  ");
-    for victim in Piece::iter() {
+    for victim in Piece::all() {
         print!("{victim}     ");
     }
     print!("\n +");
-    for _ in Piece::iter() {
+    for _ in Piece::all() {
         print!("------");
     }
     println!("-+");
-    for attacker in Piece::iter() {
+    for attacker in Piece::all() {
         print!("{attacker}| ");
-        for victim in Piece::iter() {
+        for victim in Piece::all() {
             let score = MVV_LVA[attacker][victim];
             print!("{score:<4}  ")
         }

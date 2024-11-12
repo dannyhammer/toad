@@ -33,12 +33,6 @@ impl Color {
         [Self::White, Self::Black]
     }
 
-    /// An iterator over both colors, starting with White.
-    #[inline(always)]
-    pub fn iter() -> impl Iterator<Item = Self> {
-        Self::all().into_iter()
-    }
-
     /// Creates a new [`Color`] from a set of bits.
     ///
     /// `bits` must be `[0,1]`.
@@ -320,12 +314,6 @@ impl PieceKind {
         [Pawn, Knight, Bishop, Rook, Queen]
     }
 
-    /// An iterator over all [`PieceKind`]s, starting with Pawn.
-    #[inline(always)]
-    pub fn iter() -> impl Iterator<Item = Self> {
-        Self::all().into_iter()
-    }
-
     /// Creates a new [`PieceKind`] from a set of bits.
     ///
     /// `bits` must be `[0,5]`.
@@ -561,12 +549,6 @@ impl Piece {
             Self::BLACK_QUEEN,
             Self::BLACK_KING,
         ]
-    }
-
-    /// An iterator over all [`Piece`]s, starting with White Pawn.
-    #[inline(always)]
-    pub fn iter() -> impl Iterator<Item = Self> {
-        Self::all().into_iter()
     }
 
     /// Creates a new [`Piece`] from the given [`Color`] and [`PieceKind`].

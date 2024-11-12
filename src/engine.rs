@@ -359,7 +359,7 @@ impl Engine {
     fn moves(&self, square: Option<Square>, pretty: bool, debug: bool, sort: bool) {
         // Get the legal moves
         let moves = if let Some(square) = square {
-            self.game.get_legal_moves_from(square.into())
+            self.game.get_legal_moves_from(square)
         } else {
             self.game.get_legal_moves()
         };

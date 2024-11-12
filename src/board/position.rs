@@ -145,8 +145,126 @@ impl Game {
     /// Applies the provided [`Move`]. No enforcement of legality.
     #[inline(always)]
     pub fn make_move(&mut self, mv: Move) {
-        // Actually make the move
-        self.position.make_move(mv);
+        // Remove the piece from it's previous location, exiting early if there is no piece there
+        let Some(mut piece) = self.position.take(mv.from()) else {
+            return;
+        };
+
+        let color = piece.color();
+        let mut to = mv.to();
+        let from = mv.from();
+
+        // Un-hash the side-to-move
+        self.position.key.hash_side_to_move(self.side_to_move());
+
+        // Clear the EP square from the last move (and un-hash it)
+        if let Some(ep_square) = self.position.ep_square.take() {
+            self.position.key.hash_ep_square(ep_square);
+        }
+
+        // Increment move counters
+        self.position.halfmove += 1; // This is reset if a capture occurs or a pawn moves
+        self.position.fullmove += self.side_to_move().bits();
+
+        // First, deal with special cases like captures and castling
+        if mv.is_capture() {
+            // If this move was en passant, the piece we captured isn't at `to`, it's one square behind
+            let victim_square = if mv.is_en_passant() {
+                // Safety: En passant cannot occur on the first or eighth rank, so this is guaranteed to have a square behind it.
+                unsafe { to.backward_by(color, 1).unwrap_unchecked() }
+            } else {
+                to
+            };
+
+            // Safety: This is a capture; there *must* be a piece at the destination square.
+            let victim = self.position.take(victim_square).unwrap();
+            // let victim = unsafe { self.take(victim_square).unwrap_unchecked() };
+            let victim_color = victim.color();
+
+            // If the capture was on a rook's starting square, disable that side's castling.
+            if self
+                .castling_rights_for(victim_color)
+                .long
+                .is_some_and(|sq| victim_square == sq)
+            {
+                self.position.clear_long_castling_rights(victim_color);
+            } else if self
+                .castling_rights_for(victim_color)
+                .short
+                .is_some_and(|sq| victim_square == sq)
+            {
+                self.position.clear_short_castling_rights(victim_color);
+            }
+
+            // Reset halfmove counter, since a capture occurred
+            self.position.halfmove = 0;
+        } else if mv.is_pawn_double_push() {
+            // Double pawn push, so set the EP square
+            self.position.ep_square = from.forward_by(color, 1);
+            self.position.key.hash_optional_ep_square(self.ep_square());
+        } else if mv.is_short_castle() {
+            // Safety; This is a castle. There *must* be a Rook at `to`.
+            // let rook = unsafe { self.take(to).unwrap_unchecked() };
+            let rook = self.position.take(to).unwrap();
+            self.position.place(rook, Square::rook_short_castle(color));
+
+            // The King doesn't actually move to the Rook, so update the destination square
+            to = Square::king_short_castle(color);
+
+            // Disable castling
+            self.position.clear_castling_rights(color);
+        } else if mv.is_long_castle() {
+            // Safety; This is a castle. There *must* be a Rook at `to`.
+            // let rook = unsafe { self.take(to).unwrap_unchecked() };
+            let rook = self.position.take(to).unwrap();
+            self.position.place(rook, Square::rook_long_castle(color));
+
+            // The King doesn't actually move to the Rook, so update the destination square
+            to = Square::king_long_castle(color);
+
+            // Disable castling
+            self.position.clear_castling_rights(color);
+        }
+
+        // Next, handle special cases for Pawn (halfmove), Rook, and King (castling)
+        match piece.kind() {
+            PieceKind::Pawn => self.position.halfmove = 0,
+
+            // Disable castling if a rook moved for the first time
+            PieceKind::Rook => {
+                if self
+                    .castling_rights_for(color)
+                    .long
+                    .is_some_and(|sq| from == sq)
+                {
+                    self.position.clear_long_castling_rights(color);
+                } else if self
+                    .castling_rights_for(color)
+                    .short
+                    .is_some_and(|sq| from == sq)
+                {
+                    self.position.clear_short_castling_rights(color);
+                }
+            }
+
+            PieceKind::King => self.position.clear_castling_rights(color),
+
+            _ => {}
+        }
+
+        // Now we check for promotions, since all special cases for Pawns and Rooks have been dealt with
+        if let Some(promotion) = mv.promotion() {
+            piece = piece.promoted(promotion);
+        }
+
+        // Place the piece in it's new position
+        self.position.place(piece, to);
+
+        // Next player's turn
+        self.toggle_side_to_move();
+
+        // Toggle the hash of the current player
+        self.position.key.hash_side_to_move(self.side_to_move());
 
         // Now update movegen metadata
         self.recompute_legal_masks();
@@ -322,8 +440,9 @@ impl Game {
     /// assert!(knight_moves.next().is_none());
     /// ```
     #[inline(always)]
-    pub fn get_legal_moves_from(&self, mask: Bitboard) -> MoveList {
+    pub fn get_legal_moves_from(&self, mask: impl Into<Bitboard>) -> MoveList {
         let mut moves = MoveList::default();
+        let mask = mask.into();
         match self.checkers().population() {
             0 => self.generate_all_moves::<false>(mask, &mut moves),
             1 => self.generate_all_moves::<true>(mask, &mut moves),
@@ -683,12 +802,12 @@ impl Game {
         square: Square,
         default_attacks: Bitboard,
     ) -> Bitboard {
-        let mut legal_squares = self.checkmask();
-
         // Check if this piece is pinned along any of the pinmasks
-        if self.pinned().intersects(square) {
-            legal_squares &= ray_containing(square, self.king_square);
-        }
+        let legal_squares = if self.pinned().intersects(square) {
+            self.checkmask() & ray_containing(square, self.king_square)
+        } else {
+            self.checkmask()
+        };
 
         // Pseudo-legal attacks that are within the check/pin mask and attack non-friendly squares
         default_attacks & legal_squares
@@ -844,6 +963,12 @@ impl CastlingRights {
     ///
     /// Used for Zobrist hashing.
     pub const COUNT: usize = 16;
+
+    /// Creates a new [`CastlingRights`] with the provided values.
+    #[inline(always)]
+    pub const fn new(short: Option<Square>, long: Option<Square>) -> Self {
+        Self { short, long }
+    }
 
     /// Creates a `usize` for indexing into lists of 4 elements.
     ///
@@ -1271,126 +1396,6 @@ impl Position {
     }
      */
 
-    /// Applies the move. No enforcement of legality
-    pub fn make_move(&mut self, mv: Move) {
-        // Remove the piece from it's previous location, exiting early if there is no piece there
-        let Some(mut piece) = self.take(mv.from()) else {
-            return;
-        };
-
-        let color = piece.color();
-        let mut to = mv.to();
-        let from = mv.from();
-
-        // Un-hash the side-to-move
-        self.key.hash_side_to_move(self.side_to_move());
-
-        // Clear the EP square from the last move (and un-hash it)
-        if let Some(ep_square) = self.ep_square.take() {
-            self.key.hash_ep_square(ep_square);
-        }
-
-        // Increment move counters
-        self.halfmove += 1; // This is reset if a capture occurs or a pawn moves
-        self.fullmove += self.side_to_move().bits();
-
-        // First, deal with special cases like captures and castling
-        if mv.is_capture() {
-            // If this move was en passant, the piece we captured isn't at `to`, it's one square behind
-            let victim_square = if mv.is_en_passant() {
-                // Safety: En passant cannot occur on the first or eighth rank, so this is guaranteed to have a square behind it.
-                unsafe { to.backward_by(color, 1).unwrap_unchecked() }
-            } else {
-                to
-            };
-
-            // Safety: This is a capture; there *must* be a piece at the destination square.
-            let victim = self.take(victim_square).unwrap();
-            // let victim = unsafe { self.take(victim_square).unwrap_unchecked() };
-            let victim_color = victim.color();
-
-            // If the capture was on a rook's starting square, disable that side's castling.
-            if self.castling_rights[victim_color]
-                .long
-                .is_some_and(|sq| victim_square == sq)
-            {
-                self.clear_long_castling_rights(victim_color);
-            } else if self.castling_rights[victim_color]
-                .short
-                .is_some_and(|sq| victim_square == sq)
-            {
-                self.clear_short_castling_rights(victim_color);
-            }
-
-            // Reset halfmove counter, since a capture occurred
-            self.halfmove = 0;
-        } else if mv.is_pawn_double_push() {
-            // Double pawn push, so set the EP square
-            self.ep_square = from.forward_by(color, 1);
-            self.key.hash_optional_ep_square(self.ep_square());
-        } else if mv.is_short_castle() {
-            // Safety; This is a castle. There *must* be a Rook at `to`.
-            // let rook = unsafe { self.take(to).unwrap_unchecked() };
-            let rook = self.take(to).unwrap();
-            self.place(rook, Square::rook_short_castle(color));
-
-            // The King doesn't actually move to the Rook, so update the destination square
-            to = Square::king_short_castle(color);
-
-            // Disable castling
-            self.clear_castling_rights(color);
-        } else if mv.is_long_castle() {
-            // Safety; This is a castle. There *must* be a Rook at `to`.
-            // let rook = unsafe { self.take(to).unwrap_unchecked() };
-            let rook = self.take(to).unwrap();
-            self.place(rook, Square::rook_long_castle(color));
-
-            // The King doesn't actually move to the Rook, so update the destination square
-            to = Square::king_long_castle(color);
-
-            // Disable castling
-            self.clear_castling_rights(color);
-        }
-
-        // Next, handle special cases for Pawn (halfmove), Rook, and King (castling)
-        match piece.kind() {
-            PieceKind::Pawn => self.halfmove = 0,
-
-            // Disable castling if a rook moved for the first time
-            PieceKind::Rook => {
-                if self.castling_rights[color]
-                    .long
-                    .is_some_and(|sq| from == sq)
-                {
-                    self.clear_long_castling_rights(color);
-                } else if self.castling_rights[color]
-                    .short
-                    .is_some_and(|sq| from == sq)
-                {
-                    self.clear_short_castling_rights(color);
-                }
-            }
-
-            PieceKind::King => self.clear_castling_rights(color),
-
-            _ => {}
-        }
-
-        // Now we check for promotions, since all special cases for Pawns and Rooks have been dealt with
-        if let Some(promotion) = mv.promotion() {
-            piece = piece.promoted(promotion);
-        }
-
-        // Place the piece in it's new position
-        self.place(piece, to);
-
-        // Next player's turn
-        self.toggle_side_to_move();
-
-        // Toggle the hash of the current player
-        self.key.hash_side_to_move(self.side_to_move());
-    }
-
     /// Generate all pseudo-legal moves from the current position.
     ///
     /// Pseudo-legal moves are consistent with the current board representation,
@@ -1406,25 +1411,71 @@ impl Position {
     /// Pseudo-legal moves are consistent with the current board representation,
     /// but may leave the side-to-move's King in check after being made.
     #[inline(always)]
-    pub fn get_pseudo_legal_moves_from(&self, mask: Bitboard) -> MoveList {
+    pub fn get_pseudo_legal_moves_from(&self, mask: impl Into<Bitboard>) -> MoveList {
         let mut moves = MoveList::default();
         let color = self.side_to_move();
         let opponent = color.opponent();
         let blockers = self.occupied();
         // Cannot capture enemy king, so remove him from the possible target squares
-        let enemy_or_empty = self.enemy_or_empty(color) ^ self.king(opponent);
+        let target_squares = self.enemy_or_empty(color) ^ self.king(opponent);
         // Ensure the mask ONLY contains the side-to-move's pieces
-        let mask = mask & self.color(color);
+        let mask = mask.into() & self.color(color);
 
         let pawns = self.pawns(color) & mask;
         let king = self.king(color) & mask;
         let normal_pieces = (blockers ^ pawns ^ king) & mask;
 
-        // Pawns first
+        // King first
+        for from in king {
+            // Castling is handled separately from regular attacks
+            if let Some(rook) = self.castling_rights_for(color).short {
+                moves.push(Move::new(from, rook, MoveKind::ShortCastle));
+            }
+
+            if let Some(rook) = self.castling_rights_for(color).long {
+                moves.push(Move::new(from, rook, MoveKind::LongCastle));
+            }
+
+            // Attacks are either quiet or captures
+            for to in king_attacks(from) & target_squares {
+                let kind = if self.has(to) {
+                    MoveKind::Capture
+                } else {
+                    MoveKind::Quiet
+                };
+
+                moves.push(Move::new(from, to, kind));
+            }
+        }
+
+        // All non-Pawns next
+        for (from, piece) in self.iter_for(normal_pieces) {
+            let attacks = match piece.kind() {
+                PieceKind::Knight => knight_attacks(from),
+                PieceKind::Bishop => bishop_attacks(from, blockers),
+                PieceKind::Rook => rook_attacks(from, blockers),
+                PieceKind::Queen => queen_attacks(from, blockers),
+                _ => unreachable!("Pawn and King moves already handled"),
+            } & target_squares;
+
+            for to in attacks {
+                // If the destination is occupied, it's a capture. Otherwise, it's a quiet.
+                let kind = if self.has(to) {
+                    MoveKind::Capture
+                } else {
+                    MoveKind::Quiet
+                };
+
+                moves.push(Move::new(from, to, kind));
+            }
+        }
+
+        // Pawns can attack opponent pieces or the EP square, but cannot capture the enemy King.
+        let pawn_targets = self.color(opponent) ^ self.king(opponent)
+            | self.ep_square().map(|sq| sq.bitboard()).unwrap_or_default();
+        // Pawns last
         for from in pawns {
-            let attacks = pawn_attacks(from, color)
-                & (self.color(opponent)
-                    | self.ep_square().map(|sq| sq.bitboard()).unwrap_or_default());
+            let attacks = pawn_attacks(from, color) & pawn_targets;
 
             let all_but_this_pawn = blockers ^ from;
             let double_push_mask = all_but_this_pawn | all_but_this_pawn.forward_by(color, 1);
@@ -1460,52 +1511,6 @@ impl Position {
                 if from.distance_ranks(to) == 2 {
                     kind = MoveKind::PawnDoublePush;
                 }
-
-                moves.push(Move::new(from, to, kind));
-            }
-        }
-
-        // King next
-        for from in king {
-            // Castling is handled separately from regular attacks
-            if let Some(rook) = self.castling_rights_for(color).short {
-                moves.push(Move::new(from, rook, MoveKind::ShortCastle));
-            }
-
-            if let Some(rook) = self.castling_rights_for(color).long {
-                moves.push(Move::new(from, rook, MoveKind::LongCastle));
-            }
-
-            // Attacks are either quiet or captures
-            for to in king_attacks(from) & enemy_or_empty {
-                let kind = if self.has(to) {
-                    MoveKind::Capture
-                } else {
-                    MoveKind::Quiet
-                };
-
-                moves.push(Move::new(from, to, kind));
-            }
-        }
-
-        // All remaining pieces
-        for (from, piece) in self.iter_for(normal_pieces) {
-            // let attacks = attacks_for(piece, from, blockers) & enemy_or_empty;
-            let attacks = match piece.kind() {
-                PieceKind::Knight => knight_attacks(from),
-                PieceKind::Bishop => bishop_attacks(from, blockers),
-                PieceKind::Rook => rook_attacks(from, blockers),
-                PieceKind::Queen => queen_attacks(from, blockers),
-                _ => unreachable!("Pawn and King moves already handled"),
-            };
-
-            for to in attacks {
-                // If the destination is occupied, it's a capture. Otherwise, it's a quiet.
-                let kind = if self.has(to) {
-                    MoveKind::Capture
-                } else {
-                    MoveKind::Quiet
-                };
 
                 moves.push(Move::new(from, to, kind));
             }
@@ -2336,7 +2341,7 @@ mod tests {
 
     #[test]
     fn test_zobrist_key_updates_on_quiet_moves() {
-        let mut pos = Position::default();
+        let mut pos = Game::default();
         let original_key = pos.key();
         assert_ne!(original_key.inner(), 0);
 
@@ -2372,7 +2377,7 @@ mod tests {
         /* Test case 1: The King was moved */
         /***********************************/
         let fen = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
-        let mut pos = Position::from_fen(fen).unwrap();
+        let mut pos = Game::from_fen(fen).unwrap();
         let original_key = pos.key();
         let original_rights = pos.castling_rights().clone();
 
@@ -2408,7 +2413,7 @@ mod tests {
         /* Test case 2: A Rook was moved */
         /*********************************/
         let fen = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
-        let mut pos = Position::from_fen(fen).unwrap();
+        let mut pos = Game::from_fen(fen).unwrap();
         let original_key = pos.key();
         let original_rights = pos.castling_rights().clone();
 
@@ -2443,7 +2448,7 @@ mod tests {
         /* Test case 3: A Rook was captured */
         /************************************/
         let fen = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
-        let mut pos = Position::from_fen(fen).unwrap();
+        let mut pos = Game::from_fen(fen).unwrap();
         let original_key = pos.key();
         let original_rights = pos.castling_rights().clone();
 
@@ -2468,7 +2473,7 @@ mod tests {
         /* Test case 3: Castling was performed */
         /***************************************/
         let fen = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
-        let mut pos = Position::from_fen(fen).unwrap();
+        let mut pos = Game::from_fen(fen).unwrap();
         let original_key = pos.key();
         let original_rights = pos.castling_rights().clone();
 
@@ -2497,7 +2502,7 @@ mod tests {
         // Queenside/Long castling rights for White should NOT be restored!
 
         let fen = "4k2r/P7/8/8/r7/8/8/RB2K2R b KQk - 0 1";
-        let mut pos = Position::from_fen(fen).unwrap();
+        let mut pos = Game::from_fen(fen).unwrap();
         let original_key = pos.key();
         let original_rights = pos.castling_rights().clone();
         assert_eq!(pos.castling_rights_uci(), "KQk");
