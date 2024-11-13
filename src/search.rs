@@ -5,7 +5,7 @@
  */
 
 use std::{
-    fmt,
+    fmt::{self, Debug},
     marker::PhantomData,
     ops::Deref,
     sync::{
@@ -184,7 +184,7 @@ impl SearchConfig {
     /// Constructs a new [`SearchConfig`] from the provided UCI options and game.
     ///
     /// The [`Game`] is used to determine side to move, and other factors when computing the soft/hard timeouts.
-    pub fn new(options: UciSearchOptions, game: &Game) -> Self {
+    pub fn new<V: Variant>(options: UciSearchOptions, game: &Game<V>) -> Self {
         let mut config = Self::default();
 
         // If supplied, set the max depth / node allowance
@@ -254,7 +254,7 @@ impl HistoryTable {
     ///
     /// Uses the "history gravity" formula from <https://www.chessprogramming.org/History_Heuristic#History_Bonuses>
     #[inline(always)]
-    fn update(&mut self, game: &Game, mv: &Move, bonus: Score) {
+    fn update<V: Variant>(&mut self, game: &Game<V>, mv: &Move, bonus: Score) {
         // Safety: This is a move. There *must* be a piece at `from`.
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
@@ -334,7 +334,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     /// This is the entrypoint of the search, and prints UCI info before starting iterative deepening.
     /// and concluding by sending the `bestmove` message and exiting.
     #[inline(always)]
-    pub fn start(mut self, game: &Game) -> SearchResult {
+    pub fn start(mut self, game: &Game<V>) -> SearchResult {
         if LOG.allows(LogLevel::Debug) {
             self.send_string(format!("Starting search on {:?}", game.to_fen(false)));
 
@@ -425,7 +425,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     /// However, with features such as move ordering, a/b pruning, and aspiration windows, ID enhances performance.
     ///
     /// After each iteration, we check if we've exceeded our `soft_timeout` and, if we haven't, we run a search at a greater depth.
-    fn iterative_deepening(&mut self, game: &Game) -> SearchResult {
+    fn iterative_deepening(&mut self, game: &Game<V>) -> SearchResult {
         // Initialize `bestmove` to the first move available
         let mut result = SearchResult {
             bestmove: game.get_legal_moves().first().copied(),
@@ -512,7 +512,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     /// Uses the [negamax](https://www.chessprogramming.org/Negamax) algorithm in a [fail soft](https://www.chessprogramming.org/Alpha-Beta#Negamax_Framework) framework.
     fn negamax<const PV: bool>(
         &mut self,
-        game: &Game,
+        game: &Game<V>,
         depth: u8,
         ply: i32,
         mut alpha: Score,
@@ -632,7 +632,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     ///
     /// A search that looks at only possible captures and capture-chains.
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
-    fn quiescence(&mut self, game: &Game, _ply: i32, mut alpha: Score, beta: Score) -> Score {
+    fn quiescence(&mut self, game: &Game<V>, _ply: i32, mut alpha: Score, beta: Score) -> Score {
         // Evaluate the current position, to serve as our baseline
         let stand_pat = game.eval();
 
@@ -732,7 +732,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
     /// Checks if `game` is a repetition, comparing it to previous positions
     #[inline(always)]
-    fn is_repetition(&self, game: &Game) -> bool {
+    fn is_repetition(&self, game: &Game<V>) -> bool {
         // We can skip the previous position, because there's no way it can be a repetition
         for prev in self.prev_positions.iter().rev().skip(1) {
             if prev.key() == game.key() {
@@ -749,7 +749,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
     /// Returns `true` if `game` can be claimed as a draw
     #[inline(always)]
-    fn is_draw(&self, game: &Game) -> bool {
+    fn is_draw(&self, game: &Game<V>) -> bool {
         self.is_repetition(game)
             || game.can_draw_by_fifty()
             || game.can_draw_by_insufficient_material()
@@ -797,7 +797,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
     /// Applies a score to the provided move, intended to be used when ordering moves during search.
     #[inline(always)]
-    fn score_move(&self, game: &Game, mv: &Move, tt_move: Option<Move>) -> Score {
+    fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> Score {
         // TT move should be looked at first, so assign it the best possible score and immediately exit.
         if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
             return Score(i32::MIN);

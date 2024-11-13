@@ -6,7 +6,8 @@
 
 use std::{
     cmp::Ordering,
-    fmt::{self, Write},
+    fmt::{self, Debug, Write},
+    marker::PhantomData,
     ops::{Deref, Index, IndexMut},
     str::FromStr,
 };
@@ -26,14 +27,156 @@ pub const FEN_STARTPOS: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQ
 pub const FEN_KIWIPETE: &str =
     "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1";
 
+/*
+/// Variant of chess being played by the Engine.
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum GameVariant {
+    /// Standard chess
+    Standard,
+
+    /// Fischer Random chess
+    Chess960,
+}
+
+impl GameVariant {
+    #[inline(always)]
+    pub fn is_chess960(&self) -> bool {
+        matches!(self, Self::Chess960)
+    }
+}
+
+impl Default for GameVariant {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::Standard
+    }
+}
+     */
+
+/// Abstraction over the specific chess variant being played.
+///
+/// Different chess variants have slightly different ways of doing things.
+/// For example, castling moves are printed differently in Chess960 than in standard chess.
+pub trait Variant
+where
+    Self: Debug + Default + PartialEq + Eq + Clone + Copy,
+{
+    fn fmt_move(mv: Move) -> String;
+
+    fn parse_castling_rights(castling: &str) -> Result<[CastlingRights; Color::COUNT]> {
+        let mut rights = [CastlingRights::default(); Color::COUNT];
+        if castling.contains(['K', 'k', 'Q', 'q']) {
+            rights[Color::White].short = castling.contains('K').then_some(Square::H1);
+            rights[Color::White].long = castling.contains('Q').then_some(Square::A1);
+            rights[Color::Black].short = castling.contains('k').then_some(Square::H8);
+            rights[Color::Black].long = castling.contains('q').then_some(Square::A8);
+        } else if castling.chars().any(|c| File::from_char(c).is_ok()) {
+            // for c in castling.chars() {
+            //     let color = Color::from_bool(c.is_ascii_lowercase());
+            //     let rook_file = File::from_char(c)?;
+            //     let rook_square = Square::new(rook_file, Rank::first(color));
+
+            //     let king_file = game.position.board.king(color).to_square_unchecked().file();
+            //     if rook_file > king_file {
+            //         rights[color].short = Some(rook_square);
+            //     } else {
+            //         rights[color].long = Some(rook_square);
+            //     }
+            // }
+            let mut chars = castling.chars();
+            if let Some(c) = chars.next() {
+                rights[Color::White].short = Some(Square::new(File::from_char(c)?, Rank::ONE));
+            }
+            if let Some(c) = chars.next() {
+                rights[Color::White].long = Some(Square::new(File::from_char(c)?, Rank::ONE));
+            }
+            if let Some(c) = chars.next() {
+                rights[Color::Black].short = Some(Square::new(File::from_char(c)?, Rank::EIGHT));
+            }
+            if let Some(c) = chars.next() {
+                rights[Color::Black].long = Some(Square::new(File::from_char(c)?, Rank::EIGHT));
+            }
+        }
+
+        Ok(rights)
+    }
+}
+
+/// Marker type for standard chess.
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
+pub struct Standard;
+impl Variant for Standard {
+    #[inline(always)]
+    fn fmt_move(mv: Move) -> String {
+        format!("{mv}")
+    }
+
+    #[inline(always)]
+    fn parse_castling_rights(castling: &str) -> Result<[CastlingRights; Color::COUNT]> {
+        let mut rights = [CastlingRights::default(); Color::COUNT];
+
+        if castling.contains(['K', 'k', 'Q', 'q']) {
+            rights[Color::White].short = castling.contains('K').then_some(Square::H1);
+            rights[Color::White].long = castling.contains('Q').then_some(Square::A1);
+            rights[Color::Black].short = castling.contains('k').then_some(Square::H8);
+            rights[Color::Black].long = castling.contains('q').then_some(Square::A8);
+        }
+
+        Ok(rights)
+    }
+}
+
+/// Marker type for chess 960.
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
+pub struct Chess960;
+impl Variant for Chess960 {
+    #[inline(always)]
+    fn fmt_move(mv: Move) -> String {
+        format!("{mv:#}")
+    }
+
+    #[inline(always)]
+    fn parse_castling_rights(castling: &str) -> Result<[CastlingRights; Color::COUNT]> {
+        let mut rights = [CastlingRights::default(); Color::COUNT];
+
+        let mut chars = castling.chars();
+        if let Some(c) = chars.next() {
+            rights[Color::White].short = Some(Square::new(File::from_char(c)?, Rank::ONE));
+        }
+        if let Some(c) = chars.next() {
+            rights[Color::White].long = Some(Square::new(File::from_char(c)?, Rank::ONE));
+        }
+        if let Some(c) = chars.next() {
+            rights[Color::Black].short = Some(Square::new(File::from_char(c)?, Rank::EIGHT));
+        }
+        if let Some(c) = chars.next() {
+            rights[Color::Black].long = Some(Square::new(File::from_char(c)?, Rank::EIGHT));
+        }
+
+        Ok(rights)
+    }
+}
+
+impl From<Chess960> for Standard {
+    fn from(_: Chess960) -> Self {
+        Standard
+    }
+}
+
+impl From<Standard> for Chess960 {
+    fn from(_: Standard) -> Self {
+        Chess960
+    }
+}
+
 /// A game of chess.
 ///
 /// This type encapsulates a [`Position`] and adds metadata about piece movements, such as all pieces currently checking the side-to-move's King.
 /// It is the primary type for working with a chess game, and is suitable for use in engines.
 ///
-/// The basic methods you're probably looking for are [`Game::from_fen`], [`Game::make_move`], and [`Game::get_legal_moves`].
+/// The basic methods you're probably looking for are [`Game::<Standard>::from_fen`], [`Game::make_move`], and [`Game::get_legal_moves`].
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Game {
+pub struct Game<V: Variant> {
     /// The current [`Position`] of the game, including piece layouts, castling rights, turn counters, etc.
     position: Position,
 
@@ -62,9 +205,20 @@ pub struct Game {
 
     /// Current evaluations for the midgame and endgame, respectively
     evals: (Score, Score),
+
+    /// The variant of Chess this game represents.
+    pub variant: PhantomData<V>,
 }
 
-impl Game {
+impl Game<Standard> {
+    //
+}
+
+impl Game<Chess960> {
+    //
+}
+
+impl<V: Variant> Game<V> {
     /// Initial material value of all pieces in a standard setup.
     const INITIAL_MATERIAL_VALUE: i32 = PieceKind::Pawn.value() * 16
         + PieceKind::Knight.value() * 4
@@ -97,6 +251,7 @@ impl Game {
             attacks_by_color: [Bitboard::EMPTY_BOARD; Color::COUNT],
             material: [0; Color::COUNT],
             evals: (Score::DRAW, Score::DRAW),
+            variant: PhantomData,
         }
     }
 
@@ -146,29 +301,7 @@ impl Game {
 
         // Castling is a bit more complicated; especially for Chess960
         let castling = split.next().unwrap_or("-");
-        if castling.contains(['K', 'k', 'Q', 'q']) {
-            game.position.castling_rights[Color::White].short =
-                castling.contains('K').then_some(Square::H1);
-            game.position.castling_rights[Color::White].long =
-                castling.contains('Q').then_some(Square::A1);
-            game.position.castling_rights[Color::Black].short =
-                castling.contains('k').then_some(Square::H8);
-            game.position.castling_rights[Color::Black].long =
-                castling.contains('q').then_some(Square::A8);
-        } else if castling.chars().any(|c| File::from_char(c).is_ok()) {
-            for c in castling.chars() {
-                let color = Color::from_bool(c.is_ascii_lowercase());
-                let rook_file = File::from_char(c)?;
-                let rook_square = Square::new(rook_file, Rank::first(color));
-
-                let king_file = game.position.board.king(color).to_square_unchecked().file();
-                if rook_file > king_file {
-                    game.position.castling_rights[color].short = Some(rook_square);
-                } else {
-                    game.position.castling_rights[color].long = Some(rook_square);
-                }
-            }
-        }
+        game.position.castling_rights = V::parse_castling_rights(castling)?;
 
         let en_passant_target = split.next().unwrap_or("-");
         game.position.ep_square = match en_passant_target {
@@ -1073,7 +1206,7 @@ impl Game {
     }
 }
 
-impl Deref for Game {
+impl<V: Variant> Deref for Game<V> {
     type Target = Position;
     /// A [`Game`] immutably dereferences to a [`Position`], for simplicity.
     #[inline(always)]
@@ -1082,16 +1215,16 @@ impl Deref for Game {
     }
 }
 
-impl FromStr for Game {
+impl<V: Variant> FromStr for Game<V> {
     type Err = anyhow::Error;
-    /// Wrapper for [`Game::from_fen`]
+    /// Wrapper for [`Game::<Standard>::from_fen`]
     #[inline(always)]
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         Self::from_fen(s)
     }
 }
 
-impl Default for Game {
+impl<V: Variant> Default for Game<V> {
     /// Standard starting position for Chess.
     #[inline(always)]
     fn default() -> Self {
@@ -1100,7 +1233,7 @@ impl Default for Game {
     }
 }
 
-impl fmt::Display for Game {
+impl<V: Variant> fmt::Display for Game<V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ranks = Rank::iter().rev();
 
@@ -1164,7 +1297,7 @@ impl fmt::Display for Game {
     }
 }
 
-impl fmt::Debug for Game {
+impl<V: Variant> fmt::Debug for Game<V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let format = |to_fmt: &[(Bitboard, &str)]| {
             let strings = to_fmt
@@ -1789,7 +1922,11 @@ impl Default for Position {
     #[inline(always)]
     fn default() -> Self {
         // Safety: The FEN for startpos is always valid
-        unsafe { Game::from_fen(FEN_STARTPOS).unwrap_unchecked().position }
+        unsafe {
+            Game::<Standard>::from_fen(FEN_STARTPOS)
+                .unwrap_unchecked()
+                .position
+        }
     }
 }
 
@@ -2137,7 +2274,11 @@ impl Default for Board {
     #[inline(always)]
     fn default() -> Self {
         // Safety: The FEN for startpos is always valid
-        unsafe { Game::from_fen(FEN_STARTPOS).unwrap_unchecked().board }
+        unsafe {
+            Game::<Standard>::from_fen(FEN_STARTPOS)
+                .unwrap_unchecked()
+                .board
+        }
     }
 }
 
@@ -2345,10 +2486,10 @@ mod tests {
     #[test]
     fn test_zobrist_key_side_to_move() {
         let fen = "r3k2r/pppp1ppp/8/4p3/8/8/PPPPPPPP/R3K2R w KQkq e6 0 1";
-        let pos = Game::from_fen(fen).unwrap();
+        let pos = Game::<Standard>::from_fen(fen).unwrap();
 
         let fen_black = "r3k2r/pppp1ppp/8/4p3/8/8/PPPPPPPP/R3K2R b KQkq - 0 1";
-        let pos_black = Game::from_fen(fen_black).unwrap();
+        let pos_black = Game::<Standard>::from_fen(fen_black).unwrap();
 
         assert_ne!(pos.key(), pos_black.key());
     }
@@ -2356,10 +2497,10 @@ mod tests {
     #[test]
     fn test_zobrist_key_ep() {
         let fen = "r3k2r/pppp1ppp/8/4p3/8/8/PPPPPPPP/R3K2R w KQkq e6 0 1";
-        let pos = Game::from_fen(fen).unwrap();
+        let pos = Game::<Standard>::from_fen(fen).unwrap();
 
         let fen_without_ep = "r3k2r/pppp1ppp/8/4p3/8/8/PPPPPPPP/R3K2R w KQkq - 0 1";
-        let pos_without_ep = Game::from_fen(fen_without_ep).unwrap();
+        let pos_without_ep = Game::<Standard>::from_fen(fen_without_ep).unwrap();
 
         assert_ne!(pos.key(), pos_without_ep.key());
     }
@@ -2367,17 +2508,17 @@ mod tests {
     #[test]
     fn test_zobrist_key_castling() {
         let fen = "r3k2r/pppp1ppp/8/4p3/8/8/PPPPPPPP/R3K2R w KQkq e6 0 1";
-        let pos = Game::from_fen(fen).unwrap();
+        let pos = Game::<Standard>::from_fen(fen).unwrap();
 
         let fen_without_k = "r3k2r/pppp1ppp/8/4p3/8/8/PPPPPPPP/R3K2R w KQq - 0 1";
-        let pos_without_k = Game::from_fen(fen_without_k).unwrap();
+        let pos_without_k = Game::<Standard>::from_fen(fen_without_k).unwrap();
 
         assert_ne!(pos.key(), pos_without_k.key());
     }
 
     #[test]
     fn test_zobrist_key_updates_on_quiet_moves() {
-        let mut pos = Game::default();
+        let mut pos = Game::<Standard>::default();
         let original_key = pos.key();
         assert_ne!(original_key.inner(), 0);
 
@@ -2413,7 +2554,7 @@ mod tests {
         /* Test case 1: The King was moved */
         /***********************************/
         let fen = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
-        let mut pos = Game::from_fen(fen).unwrap();
+        let mut pos = Game::<Standard>::from_fen(fen).unwrap();
         let original_key = pos.key();
         let original_rights = pos.castling_rights().clone();
 
@@ -2449,7 +2590,7 @@ mod tests {
         /* Test case 2: A Rook was moved */
         /*********************************/
         let fen = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
-        let mut pos = Game::from_fen(fen).unwrap();
+        let mut pos = Game::<Standard>::from_fen(fen).unwrap();
         let original_key = pos.key();
         let original_rights = pos.castling_rights().clone();
 
@@ -2484,7 +2625,7 @@ mod tests {
         /* Test case 3: A Rook was captured */
         /************************************/
         let fen = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
-        let mut pos = Game::from_fen(fen).unwrap();
+        let mut pos = Game::<Standard>::from_fen(fen).unwrap();
         let original_key = pos.key();
         let original_rights = pos.castling_rights().clone();
 
@@ -2509,7 +2650,7 @@ mod tests {
         /* Test case 3: Castling was performed */
         /***************************************/
         let fen = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1";
-        let mut pos = Game::from_fen(fen).unwrap();
+        let mut pos = Game::<Standard>::from_fen(fen).unwrap();
         let original_key = pos.key();
         let original_rights = pos.castling_rights().clone();
 
@@ -2538,7 +2679,7 @@ mod tests {
         // Queenside/Long castling rights for White should NOT be restored!
 
         let fen = "4k2r/P7/8/8/r7/8/8/RB2K2R b KQk - 0 1";
-        let mut pos = Game::from_fen(fen).unwrap();
+        let mut pos = Game::<Standard>::from_fen(fen).unwrap();
         let original_key = pos.key();
         let original_rights = pos.castling_rights().clone();
         assert_eq!(pos.castling_rights_uci(), "KQk");

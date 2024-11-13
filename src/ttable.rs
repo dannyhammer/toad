@@ -243,8 +243,8 @@ mod test {
     #[test]
     fn test_ttable() {
         // Create two positions whose Zobrist keys are equal mod 2
-        let pos1 = Game::default();
-        let mut pos2 = Game::from_fen(FEN_KIWIPETE).unwrap();
+        let pos1 = Game::<Standard>::default();
+        let mut pos2 = Game::<Standard>::from_fen(FEN_KIWIPETE).unwrap();
 
         // Ensure that the two positions have Zobrist keys that are both odd/even
         while pos1.key().inner() % 2 != pos2.key().inner() % 2 {

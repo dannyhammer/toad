@@ -4,7 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use super::Game;
+use super::{Game, Variant};
 
 /// Perform a perft at the specified depth, collecting only data about the number of possible positions (nodes).
 ///
@@ -12,7 +12,7 @@ use super::Game;
 /// rather than making them, recursing again, and returning 1 for each terminal case.
 /// If you do *not* want to use bulk counting, use [`perft_generic`].
 #[inline(always)]
-pub fn perft(game: &Game, depth: usize) -> u64 {
+pub fn perft<V: Variant>(game: &Game<V>, depth: usize) -> u64 {
     // Bulk counting; no need to recurse again just to apply a singular move and return 1.
     if depth == 1 {
         return game.get_legal_moves().len() as u64;
@@ -35,15 +35,18 @@ pub fn perft(game: &Game, depth: usize) -> u64 {
 /// rather than making them, recursing again, and returning 1 for each terminal case.
 /// If you do *not* want to use bulk counting, use [`perft_generic`].
 #[inline(always)]
-pub fn splitperft(game: &Game, depth: usize) -> u64 {
-    perft_generic::<true, true>(game, depth)
+pub fn splitperft<V: Variant>(game: &Game<V>, depth: usize) -> u64 {
+    perft_generic::<true, true, V>(game, depth)
 }
 
 /// Generic version of `perft` that allows you to specify whether to perform bulk counting and splitperft.
 ///
 /// If `BULK` is set to `true`, this will perform bulk counting.
 /// If `SPLIT` is set to `true`, this will perform a splitperft.
-pub fn perft_generic<const BULK: bool, const SPLIT: bool>(game: &Game, depth: usize) -> u64 {
+pub fn perft_generic<const BULK: bool, const SPLIT: bool, V: Variant>(
+    game: &Game<V>,
+    depth: usize,
+) -> u64 {
     // Bulk counting; no need to recurse again just to apply a singular move and return 1.
     if BULK && !SPLIT && depth == 1 {
         return game.get_legal_moves().len() as u64;
@@ -59,7 +62,7 @@ pub fn perft_generic<const BULK: bool, const SPLIT: bool>(game: &Game, depth: us
     //     .filter(|mv| game.is_legal(*mv))
     //     .fold(0, |nodes, mv| {
     game.get_legal_moves().into_iter().fold(0, |nodes, mv| {
-        let new_nodes = perft_generic::<BULK, false>(&game.with_move_made(mv), depth - 1);
+        let new_nodes = perft_generic::<BULK, false, V>(&game.with_move_made(mv), depth - 1);
 
         if SPLIT {
             println!("{mv:}\t{new_nodes}");

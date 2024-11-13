@@ -820,7 +820,7 @@ mod test {
 
     /// Helper function to assert that the `uci` move is parsed as `expected` on the position created from `fen`.
     fn test_move_parse(fen: &str, uci: &str, expected: Move) {
-        let pos = fen.parse::<Game>().unwrap();
+        let pos = fen.parse::<Game<Standard>>().unwrap();
 
         let mv = Move::from_uci(&pos, uci);
         assert!(mv.is_ok(), "{}", mv.unwrap_err());

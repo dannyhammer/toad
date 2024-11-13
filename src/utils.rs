@@ -4,8 +4,6 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use crate::Move;
-
 /// Added functionality to `u8` to make the logging API cleaner.
 ///
 /// See [`LogLevel`] for more.
@@ -57,34 +55,6 @@ impl Default for GameVariant {
     #[inline(always)]
     fn default() -> Self {
         Self::Standard
-    }
-}
-
-/// Abstraction over the specific chess variant being played.
-///
-/// Different chess variants have slightly different ways of doing things.
-/// For example, castling moves are printed differently in Chess960 than in standard chess.
-pub trait Variant {
-    fn fmt_move(mv: Move) -> String;
-}
-
-/// Marker type for standard chess.
-#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
-pub struct Standard;
-impl Variant for Standard {
-    #[inline(always)]
-    fn fmt_move(mv: Move) -> String {
-        format!("{mv}")
-    }
-}
-
-/// Marker type for chess 960.
-#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
-pub struct Chess960;
-impl Variant for Chess960 {
-    #[inline(always)]
-    fn fmt_move(mv: Move) -> String {
-        format!("{mv:#}")
     }
 }
 

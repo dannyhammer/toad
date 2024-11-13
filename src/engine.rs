@@ -34,8 +34,8 @@ pub struct Engine {
     ///
     /// This is modified whenever moves are played or new positions are given,
     /// and is reset whenever the engine is told to start a new game.
-    game: Game,
-
+    game: Game<Standard>,
+    // game: Game<Box<dyn Variant>>,
     /// All previous positions of `self.game`, including the current position.
     ///
     /// Updated when the engine makes a move or receives `position ... moves [move list]`.
@@ -492,6 +492,9 @@ impl Engine {
 
         // Clone the parameters that will be sent into the thread
         let game = self.game;
+        // let game = V::change_variant(self.game);
+        // let game: Game<V> = self.game.into();
+
         let is_searching = Arc::clone(&self.is_searching);
         let mut prev_positions = self.prev_positions.clone();
         // Cloning a vec doesn't clone its capacity, so we need to do that manually
@@ -507,7 +510,8 @@ impl Engine {
             let mut history = history.lock().unwrap();
 
             // Start the search, returning the result when completed.
-            Search::<LOG, V>::new(
+            Search::<LOG, Standard>::new(
+                // Search::<LOG, V>::new(
                 is_searching,
                 config,
                 prev_positions,
