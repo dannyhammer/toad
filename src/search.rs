@@ -810,8 +810,10 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         let mut score = Score::BASE_MOVE_SCORE;
 
         // Incorporate the PSQT values for this move
-        score += Psqt::eval(piece, to, game.endgame_weight())
-            - Psqt::eval(piece, from, game.endgame_weight());
+        // score += Psqt::eval(piece, to, game.endgame_weight())
+        //     - Psqt::eval(piece, from, game.endgame_weight());
+        score += Psqt::eval(piece, from, game.endgame_weight())
+            - Psqt::eval(piece, to, game.endgame_weight());
 
         // Apply history bonus to quiets
         if mv.is_quiet() {
