@@ -62,6 +62,12 @@ pub struct Game {
 
     /// Current evaluations for the midgame and endgame, respectively
     evals: (Score, Score),
+
+    /// Value to use when interpolating midgame and endgame scores.
+    ///
+    /// This value will be in the range [0, 100], with lower numbers being closer to the start of the game,
+    /// and 100 being when only Kings remain.
+    endgame_weight: i32,
 }
 
 impl Game {
@@ -97,6 +103,7 @@ impl Game {
             attacks_by_color: [Bitboard::EMPTY_BOARD; Color::COUNT],
             material: [0; Color::COUNT],
             evals: (Score::DRAW, Score::DRAW),
+            endgame_weight: 0,
         }
     }
 
@@ -275,8 +282,7 @@ impl Game {
     /// The King is ignored when performing this calculation.
     #[inline(always)]
     pub fn endgame_weight(&self) -> i32 {
-        let remaining = Self::INITIAL_MATERIAL_VALUE - self.material_remaining();
-        (remaining * 100 / Self::INITIAL_MATERIAL_VALUE * 100) / 100
+        self.endgame_weight
     }
 
     /// Evaluate this position from the side-to-move's perspective.
@@ -1052,6 +1058,10 @@ impl Game {
         let (mg, eg) = Psqt::evals(piece, square);
         self.evals.0 += mg * multiplier;
         self.evals.1 += eg * multiplier;
+
+        // Recompute the endgame weight
+        let remaining = Self::INITIAL_MATERIAL_VALUE - self.material_remaining();
+        self.endgame_weight = (remaining * 100 / Self::INITIAL_MATERIAL_VALUE * 100) / 100;
     }
 
     /// Removes and returns a piece on the provided square, updating Zobrist hash information.
@@ -1068,6 +1078,10 @@ impl Game {
         let (mg, eg) = Psqt::evals(piece, square);
         self.evals.0 -= mg * multiplier;
         self.evals.1 -= eg * multiplier;
+
+        // Recompute the endgame weight
+        let remaining = Self::INITIAL_MATERIAL_VALUE - self.material_remaining();
+        self.endgame_weight = (remaining * 100 / Self::INITIAL_MATERIAL_VALUE * 100) / 100;
 
         Some(piece)
     }

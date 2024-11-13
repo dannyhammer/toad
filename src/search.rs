@@ -18,8 +18,8 @@ use std::{
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, Color, Game, LogLevel, LoggingLevel, Move, MoveList, Piece, PieceKind, Position, Score,
-    Square, TTable, TTableEntry, Variant, ZobristKey,
+    tune, Color, Game, LogLevel, LoggingLevel, Move, MoveList, Piece, PieceKind, Position, Psqt,
+    Score, Square, TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Maximum depth that can be searched
@@ -803,10 +803,15 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             return Score(i32::MIN);
         }
 
-        // Safe unwrap because we can't move unless there's a piece at `from`
-        let piece = game.piece_at(mv.from()).unwrap();
+        let from = mv.from();
         let to = mv.to();
+        // Safe unwrap because we can't move unless there's a piece at `from`
+        let piece = game.piece_at(from).unwrap();
         let mut score = Score::BASE_MOVE_SCORE;
+
+        // Incorporate the PSQT values for this move
+        score += Psqt::eval(piece, to, game.endgame_weight())
+            - Psqt::eval(piece, from, game.endgame_weight());
 
         // Apply history bonus to quiets
         if mv.is_quiet() {
@@ -956,7 +961,8 @@ mod tests {
         };
 
         let res = ensure_is_mate_in(fen, config, 1);
-        assert_eq!(res.bestmove.unwrap(), "b6a7")
+        let mates = ["b6a7", "b6b7", "b6d8"];
+        assert!(mates.contains(&res.bestmove.unwrap().to_string().as_str()));
     }
 
     #[test]

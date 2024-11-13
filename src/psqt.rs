@@ -169,6 +169,13 @@ impl Psqt {
         (mg.get(square), eg.get(square))
     }
 
+    /// Fetch the interpolated evaluation for a `piece` at `square`.
+    #[inline(always)]
+    pub fn eval(piece: Piece, square: Square, weight: i32) -> Score {
+        let (mg, eg) = Self::evals(piece, square);
+        mg.lerp(eg, weight)
+    }
+
     /// Fetch the Piece-Square Tables (middle-game and end-game) for the provided [`PieceKind`].
     #[inline(always)]
     pub fn get_tables_for<'a>(kind: PieceKind) -> (&'a Self, &'a Self) {
