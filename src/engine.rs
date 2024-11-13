@@ -147,7 +147,7 @@ impl Engine {
                     break;
                 }
 
-                EngineCommand::Fen => println!("{}", self.game.to_fen()),
+                EngineCommand::Fen => println!("{}", self.game.to_fen(self.variant.is_chess960())),
 
                 EngineCommand::Flip => self.game.toggle_side_to_move(),
 

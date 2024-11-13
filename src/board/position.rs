@@ -84,7 +84,7 @@ impl Game {
     /// ```
     /// # use toad::Game;
     /// let empty = Game::new();
-    /// assert_eq!(empty.to_fen(), "8/8/8/8/8/8/8/8 w - - 0 1");
+    /// assert_eq!(empty.to_fen(false), "8/8/8/8/8/8/8/8 w - - 0 1");
     /// ```
     #[inline(always)]
     pub fn new() -> Self {
@@ -238,9 +238,9 @@ impl Game {
     /// ```
     /// # use toad::*;
     /// let mut game = Game::default();
-    /// assert_eq!(game.to_fen(), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    /// assert_eq!(game.to_fen(false), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
     /// game.toggle_side_to_move();
-    /// assert_eq!(game.to_fen(), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1");
+    /// assert_eq!(game.to_fen(false), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1");
     /// ```
     #[inline(always)]
     pub fn toggle_side_to_move(&mut self) {
@@ -298,8 +298,9 @@ impl Game {
         self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color.negation_multiplier() as i32
     }
 
+    /// Returns a string of a "pretty" evaluation of the current position, from the side-to-move's perspective.
     pub fn eval_pretty(&self) -> String {
-        let mut s = String::with_capacity(1024);
+        let mut s = String::new();
         let color = self.side_to_move();
         let endgame_weight = self.endgame_weight();
 
@@ -417,17 +418,10 @@ impl Game {
             let victim_color = victim.color();
 
             // If the capture was on a rook's starting square, disable that side's castling.
-            if self
-                .castling_rights_for(victim_color)
-                .long
-                .is_some_and(|sq| victim_square == sq)
-            {
+            let rights = self.castling_rights_for(victim_color);
+            if rights.long.is_some_and(|sq| victim_square == sq) {
                 self.position.clear_long_castling_rights(victim_color);
-            } else if self
-                .castling_rights_for(victim_color)
-                .short
-                .is_some_and(|sq| victim_square == sq)
-            {
+            } else if rights.short.is_some_and(|sq| victim_square == sq) {
                 self.position.clear_short_castling_rights(victim_color);
             }
 
@@ -467,17 +461,10 @@ impl Game {
 
             // Disable castling if a rook moved for the first time
             PieceKind::Rook => {
-                if self
-                    .castling_rights_for(color)
-                    .long
-                    .is_some_and(|sq| from == sq)
-                {
+                let rights = self.castling_rights_for(color);
+                if rights.long.is_some_and(|sq| from == sq) {
                     self.position.clear_long_castling_rights(color);
-                } else if self
-                    .castling_rights_for(color)
-                    .short
-                    .is_some_and(|sq| from == sq)
-                {
+                } else if rights.short.is_some_and(|sq| from == sq) {
                     self.position.clear_short_castling_rights(color);
                 }
             }
@@ -933,13 +920,12 @@ impl Game {
 
         // If, after performing EP, any sliders can attack our King, EP is not legal
         let enemy_ortho_sliders = self.orthogonal_sliders(color.opponent());
-        if (rook_attacks(self.king_square, blockers_after_ep) & enemy_ortho_sliders).is_nonempty() {
+        if rook_attacks(self.king_square, blockers_after_ep).intersects(enemy_ortho_sliders) {
             return Bitboard::EMPTY_BOARD;
         }
 
         let enemy_diag_sliders = self.diagonal_sliders(color.opponent());
-        if (bishop_attacks(self.king_square, blockers_after_ep) & enemy_diag_sliders).is_nonempty()
-        {
+        if bishop_attacks(self.king_square, blockers_after_ep).intersects(enemy_diag_sliders) {
             return Bitboard::EMPTY_BOARD;
         }
 
@@ -973,9 +959,7 @@ impl Game {
                 self.generate_castling_bitboard(rook_start, rook_end, king_end, enemy_attacks)
             });
 
-            (short.unwrap_or_default() | long.unwrap_or_default())
-            // Can only castle to friendly Rooks
-                & self.piece_parts(color, PieceKind::Rook)
+            short.unwrap_or_default() | long.unwrap_or_default()
         };
 
         // Safe squares are ones not attacked by the enemy or part of a discoverable check
@@ -989,29 +973,36 @@ impl Game {
     #[inline(always)]
     fn generate_castling_bitboard(
         &self,
-        rook_square: Square,
-        rook_dst_square: Square,
-        king_dst_square: Square,
+        rook_src: Square,
+        rook_dst: Square,
+        king_dst: Square,
         enemy_attacks: Bitboard,
     ) -> Bitboard {
         // The King and Rook don't count as blockers, since they're moving through each other
-        let blockers = self.occupied() ^ self.king_square ^ rook_square;
+        let blockers = self.occupied() ^ self.king_square ^ rook_src;
 
         // All squares between the King and his destination must be empty
-        let king_to_dst = ray_between(self.king_square, king_dst_square) | king_dst_square;
+        if (ray_between(self.king_square, king_dst) | king_dst).intersects(blockers) {
+            return Bitboard::EMPTY_BOARD;
+        }
+
         // All squares between the Rook and its destination must be empty
-        let rook_to_dst = ray_between(rook_square, rook_dst_square) | rook_dst_square;
-        let squares_are_empty =
-            (rook_to_dst & blockers).is_empty() && (king_to_dst & blockers).is_empty();
+        if (ray_between(rook_src, rook_dst) | rook_dst).intersects(blockers) {
+            return Bitboard::EMPTY_BOARD;
+        }
 
         // All squares between the King and his destination (inclusive) must not be attacked
-        let squares_that_must_be_safe = ray_between(self.king_square, king_dst_square)
-            | king_dst_square
-            | (self.pinned() & rook_square); // If the Rook is pinned, we can't castle
-        let squares_are_safe = (squares_that_must_be_safe & enemy_attacks).is_empty();
+        if (ray_between(self.king_square, king_dst) | king_dst).intersects(enemy_attacks) {
+            return Bitboard::EMPTY_BOARD;
+        }
 
-        Bitboard::from_square(rook_square)
-            & Bitboard::from_bool(squares_are_empty && squares_are_safe)
+        // If the Rook is pinned, we can't castle (Chess960)
+        if self.pinned().intersects(rook_src) {
+            return Bitboard::EMPTY_BOARD;
+        }
+
+        // Castling is safe to perform
+        Bitboard::from_square(rook_src)
     }
 
     /// These are the rays containing the King and his Checkers.
@@ -1129,12 +1120,10 @@ impl fmt::Display for Game {
                 write!(f, " {piece_char}")?;
             }
 
+            // if rank == Rank::EIGHT {
+            // } else
             if rank == Rank::SEVEN {
-                if f.alternate() {
-                    write!(f, "        FEN: {:#}", self.position())?;
-                } else {
-                    write!(f, "        FEN: {}", self.position())?;
-                }
+                write!(f, "        FEN: {}", self.to_fen(f.alternate()))?;
             } else if rank == Rank::SIX {
                 write!(f, "        Key: {}", self.key())?;
             } else if rank == Rank::FIVE {
@@ -1151,12 +1140,12 @@ impl fmt::Display for Game {
             } else if rank == Rank::TWO {
                 write!(
                     f,
-                    "       Eval: {} ({} mg, {} eg)",
+                    "       Eval: {} (mg={}, eg={}, %={})",
                     self.eval(),
                     self.evals.0,
-                    self.evals.1
+                    self.evals.1,
+                    self.endgame_weight(),
                 )?;
-
                 // } else if rank == Rank::ONE {
             }
             writeln!(f)?;
@@ -1308,7 +1297,7 @@ impl Position {
     /// ```
     /// # use toad::Position;
     /// let state = Position::new();
-    /// assert_eq!(state.to_fen(), "8/8/8/8/8/8/8/8 w - - 0 1");
+    /// assert_eq!(state.to_fen(false), "8/8/8/8/8/8/8/8 w - - 0 1");
     /// ```
     #[inline(always)]
     pub fn new() -> Self {
@@ -1330,71 +1319,37 @@ impl Position {
         }
     }
 
-    /// Creates a new [`Position`] from the provided FEN string.
-    pub fn from_fen(fen: &str) -> Result<Self> {
-        let mut pos = Self::new();
-        let mut split = fen.trim().split(' ');
-        let placements = split
-            .next()
-            .ok_or(anyhow!("FEN string must have piece placements."))?;
-        pos.board = Board::from_fen(placements)?;
-
-        let active_color = split.next().unwrap_or("w");
-        pos.side_to_move = Color::from_str(active_color)?;
-
-        // Castling is a bit more complicated; especially for Chess960
-        let castling = split.next().unwrap_or("-");
-        if castling.contains(['K', 'k', 'Q', 'q']) {
-            pos.castling_rights[Color::White].short = castling.contains('K').then_some(Square::H1);
-            pos.castling_rights[Color::White].long = castling.contains('Q').then_some(Square::A1);
-            pos.castling_rights[Color::Black].short = castling.contains('k').then_some(Square::H8);
-            pos.castling_rights[Color::Black].long = castling.contains('q').then_some(Square::A8);
-        } else if castling.chars().any(|c| File::from_char(c).is_ok()) {
-            for c in castling.chars() {
-                let color = Color::from_bool(c.is_ascii_lowercase());
-                let rook_file = File::from_char(c)?;
-                let rook_square = Square::new(rook_file, Rank::first(color));
-
-                let king_file = pos.board.king(color).to_square_unchecked().file();
-                if rook_file > king_file {
-                    pos.castling_rights[color].short = Some(rook_square);
-                } else {
-                    pos.castling_rights[color].long = Some(rook_square);
-                }
-            }
-        }
-
-        let en_passant_target = split.next().unwrap_or("-");
-        pos.ep_square = match en_passant_target {
-            "-" => None,
-            square => Some(Square::from_uci(square)?),
-        };
-
-        let halfmove = split.next().unwrap_or("0");
-        pos.halfmove = halfmove.parse().or(Err(anyhow!(
-            "FEN string must have valid halfmove counter. Got {halfmove:?}"
-        )))?;
-
-        let fullmove = split.next().unwrap_or("1");
-        pos.fullmove = fullmove.parse().or(Err(anyhow!(
-            "FEN string must have valid fullmove counter. Got {fullmove:?}"
-        )))?;
-
-        pos.key = ZobristKey::new(&pos);
-
-        Ok(pos)
-    }
-
     /// Generates a FEN string from this [`Position`].
+    ///
+    /// The `is_chess960` parameter will determine whether to print castling rights in Chess960 notation.
     ///
     /// # Example
     /// ```
     /// # use toad::Position;
     /// let state = Position::default();
-    /// assert_eq!(state.to_fen(), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    /// assert_eq!(state.to_fen(false), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    /// assert_eq!(state.to_fen(true), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w HAha - 0 1");
     /// ```
-    pub fn to_fen(&self) -> String {
-        format!("{self}")
+    pub fn to_fen(&self, is_chess960: bool) -> String {
+        let placements = self.board().to_fen();
+        let active_color = self.side_to_move();
+
+        let castling = if is_chess960 {
+            self.castling_rights_960()
+        } else {
+            self.castling_rights_uci()
+        };
+
+        let en_passant_target = if let Some(square) = self.ep_square {
+            square.to_string()
+        } else {
+            String::from("-")
+        };
+
+        let halfmove = self.halfmove;
+        let fullmove = self.fullmove;
+
+        format!("{placements} {active_color} {castling} {en_passant_target} {halfmove} {fullmove}")
     }
 
     /// Returns the current player as a [`Color`].
@@ -1425,6 +1380,12 @@ impl Position {
     #[inline(always)]
     pub fn key(&self) -> ZobristKey {
         self.key
+    }
+
+    /// Fetches this position's [`Board`]
+    #[inline(always)]
+    pub const fn board(&self) -> &Board {
+        &self.board
     }
 
     /// Returns the [`CastlingRights`] of the current position.
@@ -1507,23 +1468,23 @@ impl Position {
     /// ```
     /// # use toad::*;
     /// // Lone Kings
-    /// let kk: Position = "8/4k3/8/8/3K4/8/8/8 w - - 0 1".parse().unwrap();
+    /// let kk: Game = "8/4k3/8/8/3K4/8/8/8 w - - 0 1".parse().unwrap();
     /// assert!(kk.can_draw_by_insufficient_material());
     ///
     /// // A single Bishop (either color)
-    /// let kbk: Position = "8/4k3/8/8/3K4/8/5B2/8 w - - 0 1".parse().unwrap();
+    /// let kbk: Game = "8/4k3/8/8/3K4/8/5B2/8 w - - 0 1".parse().unwrap();
     /// assert!(kbk.can_draw_by_insufficient_material());
     ///
     /// // A single Knight
-    /// let knk: Position = "8/4k3/2n5/8/3K4/8/8/8 w - - 0 1".parse().unwrap();
+    /// let knk: Game = "8/4k3/2n5/8/3K4/8/8/8 w - - 0 1".parse().unwrap();
     /// assert!(knk.can_draw_by_insufficient_material());
     ///
     /// // Opposing Bishops on the same color square
-    /// let same_square_bishops: Position = "8/2b1k3/8/8/3K4/8/5B2/8 w - - 0 1".parse().unwrap();
+    /// let same_square_bishops: Game = "8/2b1k3/8/8/3K4/8/5B2/8 w - - 0 1".parse().unwrap();
     /// assert!(same_square_bishops.can_draw_by_insufficient_material());
     ///
     /// // Opposing Bishops on different color squares
-    /// let diff_square_bishops: Position = "8/3bk3/8/8/3K4/8/5B2/8 w - - 0 1".parse().unwrap();
+    /// let diff_square_bishops: Game = "8/3bk3/8/8/3K4/8/5B2/8 w - - 0 1".parse().unwrap();
     /// assert!(!diff_square_bishops.can_draw_by_insufficient_material());
     /// ```
     #[inline(always)]
@@ -1573,12 +1534,6 @@ impl Position {
     #[inline(always)]
     pub fn toggle_side_to_move(&mut self) {
         self.side_to_move = self.side_to_move.opponent();
-    }
-
-    /// Fetches this position's [`Board`]
-    #[inline(always)]
-    pub const fn board(&self) -> &Board {
-        &self.board
     }
 
     /*
@@ -1822,14 +1777,6 @@ impl Position {
     }
 }
 
-impl FromStr for Position {
-    type Err = anyhow::Error;
-    #[inline(always)]
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Self::from_fen(s)
-    }
-}
-
 impl Deref for Position {
     type Target = Board;
     #[inline(always)]
@@ -1842,7 +1789,7 @@ impl Default for Position {
     #[inline(always)]
     fn default() -> Self {
         // Safety: The FEN for startpos is always valid
-        unsafe { Self::from_fen(FEN_STARTPOS).unwrap_unchecked() }
+        unsafe { Game::from_fen(FEN_STARTPOS).unwrap_unchecked().position }
     }
 }
 
@@ -1851,28 +1798,7 @@ impl fmt::Display for Position {
     ///
     /// If the alternate format mode (`#`) was specified, this will print the castling rights in Chess960 format.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let placements = self.board().to_fen();
-        let active_color = self.side_to_move();
-
-        let castling = if f.alternate() {
-            self.castling_rights_960()
-        } else {
-            self.castling_rights_uci()
-        };
-
-        let en_passant_target = if let Some(square) = self.ep_square {
-            square.to_string()
-        } else {
-            String::from("-")
-        };
-
-        let halfmove = self.halfmove;
-        let fullmove = self.fullmove;
-
-        write!(
-            f,
-            "{placements} {active_color} {castling} {en_passant_target} {halfmove} {fullmove}"
-        )
+        write!(f, "{}", self.to_fen(f.alternate()))
     }
 }
 
@@ -1891,7 +1817,7 @@ impl fmt::Debug for Position {
             }
 
             if rank == Rank::SEVEN {
-                write!(f, "           FEN: {}", self.to_fen())?;
+                write!(f, "           FEN: {}", self.to_fen(f.alternate()))?;
             } else if rank == Rank::SIX {
                 write!(f, "          Side: {}", self.side_to_move())?;
             } else if rank == Rank::FIVE {
@@ -1944,13 +1870,6 @@ pub struct Board {
 
 impl Board {
     /// Creates a new, empty [`Board`] containing no pieces.
-    ///
-    /// # Example
-    /// ```
-    /// # use toad::Board;
-    /// let board = Board::new();
-    /// assert_eq!(board.to_fen(), "8/8/8/8/8/8/8/8");
-    /// ```
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
@@ -1958,51 +1877,6 @@ impl Board {
             pieces: [Bitboard::EMPTY_BOARD; PieceKind::COUNT],
             mailbox: [None; Square::COUNT],
         }
-    }
-
-    /// Constructs a [`Board`] from the provided FEN string, ignoring castling/ep/move counters.
-    pub fn from_fen(fen: &str) -> Result<Self> {
-        let mut board = Self::new();
-
-        // If this FEN string contains more than just the initial placements, extract the placements
-        let placements = if fen.contains(' ') {
-            fen.split(' ').next().unwrap()
-        } else {
-            fen
-        };
-
-        // Check if the placements string is the correct length
-        if placements.matches('/').count() != 7 {
-            bail!("FEN must have piece placements for all 8 ranks");
-        }
-
-        // Need to reverse this so that White pieces are at the "bottom" of the board
-        for (rank, placements) in placements.split('/').rev().enumerate() {
-            let mut file = 0;
-            let rank = rank as u8;
-
-            for piece_char in placements.chars() {
-                // If the next char is a piece, we need to update the relevant Bitboards
-                if let Ok(piece) = Piece::from_uci(piece_char) {
-                    // Firstly, create a square and set the "Occupied" board at this location.
-                    let square = Square::new(File::new_unchecked(file), Rank::new_unchecked(rank));
-
-                    board.place(piece, square);
-
-                    file += 1;
-                } else {
-                    // If the next char was not a piece, increment our File counter, checking for errors along the way
-                    let Some(empty) = piece_char.to_digit(10) else {
-                        bail!(
-                            "FEN placements must contain piece chars or digits. Got {piece_char:?}"
-                        );
-                    };
-                    file += empty as u8
-                }
-            }
-        }
-
-        Ok(board)
     }
 
     /// Returns `true` if there is a piece at the given [`Square`], else `false`.
@@ -2039,16 +1913,6 @@ impl Board {
     }
 
     /// Takes the [`Piece`] from a given [`Square`], if there is one present.
-    ///
-    /// # Example
-    /// ```
-    /// # use toad::{Board, Piece, PieceKind, Color, Square};
-    /// let mut board = Board::from_fen("k7/8/8/8/2N5/8/8/7K").unwrap();
-    /// let white_knight = Piece::new(Color::White, PieceKind::Knight);
-    /// let taken = board.take(Square::C4);
-    /// assert_eq!(board.to_fen(), "k7/8/8/8/8/8/8/7K");
-    /// assert_eq!(taken, Some(white_knight));
-    /// ```
     #[inline(always)]
     pub fn take(&mut self, square: Square) -> Option<Piece> {
         // Take the piece from the mailbox, exiting early if there is none
@@ -2273,7 +2137,7 @@ impl Default for Board {
     #[inline(always)]
     fn default() -> Self {
         // Safety: The FEN for startpos is always valid
-        unsafe { Self::from_fen(FEN_STARTPOS).unwrap_unchecked() }
+        unsafe { Game::from_fen(FEN_STARTPOS).unwrap_unchecked().board }
     }
 }
 
@@ -2481,10 +2345,10 @@ mod tests {
     #[test]
     fn test_zobrist_key_side_to_move() {
         let fen = "r3k2r/pppp1ppp/8/4p3/8/8/PPPPPPPP/R3K2R w KQkq e6 0 1";
-        let pos = Position::from_fen(fen).unwrap();
+        let pos = Game::from_fen(fen).unwrap();
 
         let fen_black = "r3k2r/pppp1ppp/8/4p3/8/8/PPPPPPPP/R3K2R b KQkq - 0 1";
-        let pos_black = Position::from_fen(fen_black).unwrap();
+        let pos_black = Game::from_fen(fen_black).unwrap();
 
         assert_ne!(pos.key(), pos_black.key());
     }
@@ -2492,10 +2356,10 @@ mod tests {
     #[test]
     fn test_zobrist_key_ep() {
         let fen = "r3k2r/pppp1ppp/8/4p3/8/8/PPPPPPPP/R3K2R w KQkq e6 0 1";
-        let pos = Position::from_fen(fen).unwrap();
+        let pos = Game::from_fen(fen).unwrap();
 
         let fen_without_ep = "r3k2r/pppp1ppp/8/4p3/8/8/PPPPPPPP/R3K2R w KQkq - 0 1";
-        let pos_without_ep = Position::from_fen(fen_without_ep).unwrap();
+        let pos_without_ep = Game::from_fen(fen_without_ep).unwrap();
 
         assert_ne!(pos.key(), pos_without_ep.key());
     }
@@ -2503,10 +2367,10 @@ mod tests {
     #[test]
     fn test_zobrist_key_castling() {
         let fen = "r3k2r/pppp1ppp/8/4p3/8/8/PPPPPPPP/R3K2R w KQkq e6 0 1";
-        let pos = Position::from_fen(fen).unwrap();
+        let pos = Game::from_fen(fen).unwrap();
 
         let fen_without_k = "r3k2r/pppp1ppp/8/4p3/8/8/PPPPPPPP/R3K2R w KQq - 0 1";
-        let pos_without_k = Position::from_fen(fen_without_k).unwrap();
+        let pos_without_k = Game::from_fen(fen_without_k).unwrap();
 
         assert_ne!(pos.key(), pos_without_k.key());
     }
