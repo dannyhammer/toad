@@ -64,24 +64,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
-name = "chessie"
-version = "2.0.0"
-source = "git+https://github.com/dannyhammer/chessie.git#b9ff0e4340b4600c497570ed11cd18c3654c99b9"
-dependencies = [
- "anyhow",
- "arrayvec",
- "chessie_types",
-]
-
-[[package]]
-name = "chessie_types"
-version = "2.0.0"
-source = "git+https://github.com/dannyhammer/chessie.git#b9ff0e4340b4600c497570ed11cd18c3654c99b9"
-dependencies = [
- "anyhow",
-]
-
-[[package]]
 name = "clap"
 version = "4.5.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -221,7 +203,7 @@ name = "toad"
 version = "1.2.0"
 dependencies = [
  "anyhow",
- "chessie",
+ "arrayvec",
  "clap",
  "uci-parser",
 ]

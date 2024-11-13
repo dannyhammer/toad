@@ -4,7 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use chessie::Move;
+use crate::Move;
 
 /// Added functionality to `u8` to make the logging API cleaner.
 ///

@@ -6,7 +6,7 @@
 
 use std::str::FromStr;
 
-use chessie::{Piece, Square};
+use crate::{Piece, Square};
 use clap::Parser;
 use uci_parser::UciCommand;
 

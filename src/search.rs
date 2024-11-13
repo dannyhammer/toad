@@ -15,11 +15,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chessie::{Color, Game, Move, MoveList, Piece, PieceKind, Position, Square, ZobristKey};
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, value_of, Evaluator, LogLevel, LoggingLevel, Score, TTable, TTableEntry, Variant,
+    tune, Color, Game, LogLevel, LoggingLevel, Move, MoveList, Piece, PieceKind, Position, Score,
+    Square, TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Maximum depth that can be searched
@@ -252,7 +252,7 @@ impl HistoryTable {
 
     /// Applies a bonus based on the history heuristic for the move.
     ///
-    /// Uses the "history gravity" formula from https://www.chessprogramming.org/History_Heuristic#History_Bonuses
+    /// Uses the "history gravity" formula from <https://www.chessprogramming.org/History_Heuristic#History_Bonuses>
     #[inline(always)]
     fn update(&mut self, game: &Game, mv: &Move, bonus: Score) {
         // Safety: This is a move. There *must* be a piece at `from`.
@@ -336,7 +336,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     #[inline(always)]
     pub fn start(mut self, game: &Game) -> SearchResult {
         if LOG.allows(LogLevel::Debug) {
-            self.send_string(format!("Starting search on {:?}", game.to_fen()));
+            self.send_string(format!("Starting search on {:?}", game.to_fen(false)));
 
             let soft = self.config.soft_timeout.as_millis();
             let hard = self.config.hard_timeout.as_millis();
@@ -428,7 +428,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     fn iterative_deepening(&mut self, game: &Game) -> SearchResult {
         // Initialize `bestmove` to the first move available
         let mut result = SearchResult {
-            bestmove: game.into_iter().next(),
+            bestmove: game.get_legal_moves().first().copied(),
             ..Default::default()
         };
 
@@ -634,7 +634,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
     fn quiescence(&mut self, game: &Game, _ply: i32, mut alpha: Score, beta: Score) -> Score {
         // Evaluate the current position, to serve as our baseline
-        let stand_pat = Evaluator::new(game).eval();
+        let stand_pat = game.eval();
 
         // Beta cutoff; this position is "too good" and our opponent would never let us get here
         if stand_pat >= beta {
@@ -869,7 +869,7 @@ const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
 
             // Default MVV-LVA except that the King is assigned a value of 0 if he is attacking
             // bench: 27032804 nodes 8136592 nps
-            let score = 10 * value_of(vtm) - value_of(atk);
+            let score = 10 * vtm.value() - atk.value();
 
             // If the attacker is the King, the score is half the victim's value.
             // This encourages the King to attack, but not as strongly as other pieces.
@@ -894,17 +894,17 @@ const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
 #[allow(dead_code)]
 pub fn print_mvv_lva_table() {
     print!("\nX  ");
-    for victim in Piece::iter() {
+    for victim in Piece::all() {
         print!("{victim}     ");
     }
     print!("\n +");
-    for _ in Piece::iter() {
+    for _ in Piece::all() {
         print!("------");
     }
     println!("-+");
-    for attacker in Piece::iter() {
+    for attacker in Piece::all() {
         print!("{attacker}| ");
-        for victim in Piece::iter() {
+        for victim in Piece::all() {
             let score = MVV_LVA[attacker][victim];
             print!("{score:<4}  ")
         }
@@ -997,7 +997,7 @@ mod tests {
     #[test]
     fn test_quick_search_finds_move() {
         // If *any* legal move is available, it should be found, regardless of how much time was given.
-        let fen = chessie::FEN_STARTPOS;
+        let fen = FEN_STARTPOS;
         let config = SearchConfig {
             soft_timeout: Duration::from_millis(0),
             hard_timeout: Duration::from_millis(0),

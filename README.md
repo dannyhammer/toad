@@ -1,7 +1,7 @@
 # Toad - A UCI-compatible toy chess engine
 
 Toad is a work-in-progress [chess engine](https://en.wikipedia.org/wiki/Chess_engine), and serves as my personal excuse to write fun code in Rust.
-It is built upon my [`chessie`](https://crates.io/crates/chessie) crate, which is the "core" library that handles move generation and all other rules of chess.
+It was originally built upon my [`chessie`](https://crates.io/crates/chessie) crate, which is a chess library that handles board representation, move generation and all other rules of chess.
 
 Up for a game? Play against Toad on [Lichess](https://lichess.org/@/toad-bot)!
 
@@ -80,31 +80,40 @@ Alternatively, you can build from source:
     ```sh
     cargo run --release
     ```
+    or run `make` to generate an executable named `toad-<version>`.
+    ```sh
+    make
+    ./toad-<version>
+    ```
 
-**Note**: At this time, development and testing has been done solely on Linux (Ubuntu).
+**Note**: Development has primarily been done on Linux (Ubuntu 22.04), with minimal testing on Windows 10 and no testing on MacOS.
 If you are willing to test the installation and execution of Toad on other operating systems, please provide feedback!
 
 ## Features
 
--   [Bitboard representation](https://www.chessprogramming.org/Bitboards).
--   [Magic Bitboards](https://www.chessprogramming.org/Magic_Bitboards) for sliding piece attacks.
+-   Core:
+    -   [Bitboard representation](https://www.chessprogramming.org/Bitboards).
+    -   [Magic Bitboards](https://www.chessprogramming.org/Magic_Bitboards) for sliding piece attacks.
+    -   [Repetition](https://www.chessprogramming.org/Repetitions) detection through [Zobrist Hashing](https://www.chessprogramming.org/Zobrist_Hashing).
 -   Search:
     -   Based on the [Negamax](https://www.chessprogramming.org/Negamax) algorithm.
     -   [Alpha-Beta Pruning](https://www.chessprogramming.org/Alpha-Beta#Negamax_Framework) in a fail soft framework.
     -   [Time Management](https://www.chessprogramming.org/Time_Management) with soft and hard timeouts.
     -   [Quiescence Search](https://www.chessprogramming.org/Quiescence_Search) in a fail soft framework.
     -   [Draw detection](https://www.chessprogramming.org/Draw) through insufficient material, 2-fold repetition, and the 50-move rule.
-    -   [Transposition Table](https://www.chessprogramming.org/Transposition_Table)
-    -   [Principal Variation Search](https://www.chessprogramming.org/Principal_Variation_Search)
-    -   [Aspiration Windows](https://www.chessprogramming.org/Aspiration_Windows) with [gradual widening](https://www.chessprogramming.org/Aspiration_Windows#Gradual_Widening)
+    -   [Transposition Table](https://www.chessprogramming.org/Transposition_Table).
+    -   [Principal Variation Search](https://www.chessprogramming.org/Principal_Variation_Search).
+    -   [Aspiration Windows](https://www.chessprogramming.org/Aspiration_Windows) with [gradual widening](https://www.chessprogramming.org/Aspiration_Windows#Gradual_Widening).
     -   Move Ordering:
         -   [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) with relative piece values `K < P < N < B < R < Q`, so `KxR` is ordered before `PxR`.
-        -   [Hash moves](https://www.chessprogramming.org/Hash_Move)
+        -   [Hash moves](https://www.chessprogramming.org/Hash_Move).
+        -   [History Heuristic](https://www.chessprogramming.org/History_Heuristic).
 -   Evaluation:
-    -   [Hand-Crafted Evaluation (HCE)](https://www.chessprogramming.org/Evaluation)
-        -   [Material difference](https://www.chessprogramming.org/Material)
-        -   [Piece-Square Tables](https://www.chessprogramming.org/Piece-Square_Tables) with initial values from [PeSTO](https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function#Source_Code)
-        -   [Tapered Evaluation](https://www.chessprogramming.org/Tapered_Eval)
+    -   [Hand-Crafted Evaluation (HCE)](https://www.chessprogramming.org/Evaluation).
+        -   [Material difference](https://www.chessprogramming.org/Material).
+        -   [Piece-Square Tables](https://www.chessprogramming.org/Piece-Square_Tables) with initial values from [PeSTO](https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function#Source_Code).
+        -   [Tapered Evaluation](https://www.chessprogramming.org/Tapered_Eval).
+        -   [Incrementally-updated board evaluation](https://www.chessprogramming.org/Incremental_Updates).
 
 More features will be added as development continues! You can see most of my future plans in the [backlog](https://github.com/dannyhammer/toad/issues).
 

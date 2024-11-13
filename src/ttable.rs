@@ -4,9 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use chessie::{Move, ZobristKey};
-
-use crate::{Score, BYTES_IN_MB};
+use crate::{Move, Score, ZobristKey, BYTES_IN_MB};
 
 /// Type of node encountered during search.
 ///
@@ -240,7 +238,7 @@ impl Default for TTable {
 #[cfg(test)]
 mod test {
     use super::*;
-    use chessie::*;
+    use crate::*;
 
     #[test]
     fn test_ttable() {
