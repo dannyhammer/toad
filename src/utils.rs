@@ -34,30 +34,6 @@ pub enum LogLevel {
     Debug,
 }
 
-/// Variant of chess being played by the Engine.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub enum GameVariant {
-    /// Standard chess
-    Standard,
-
-    /// Fischer Random chess
-    Chess960,
-}
-
-impl GameVariant {
-    #[inline(always)]
-    pub fn is_chess960(&self) -> bool {
-        matches!(self, Self::Chess960)
-    }
-}
-
-impl Default for GameVariant {
-    #[inline(always)]
-    fn default() -> Self {
-        Self::Standard
-    }
-}
-
 /// Number of bytes in a megabyte
 pub const BYTES_IN_MB: usize = 1024 * 1024;
 

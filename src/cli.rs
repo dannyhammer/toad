@@ -6,7 +6,7 @@
 
 use std::str::FromStr;
 
-use crate::{Piece, Square};
+use crate::{GameVariant, Piece, Square};
 use clap::Parser;
 use uci_parser::UciCommand;
 
@@ -34,6 +34,16 @@ pub enum EngineCommand {
         /// Override the default benchmark depth.
         #[arg(short, long, required = false)]
         depth: Option<u8>,
+    },
+
+    /// Change the variant of chess being played, or display the current variant.
+    ///
+    /// This is handled automatically when setting the UCI options like UCI_Chess960,
+    /// but exists here for convenience.
+    #[command(aliases = ["variant", "v"])]
+    ChangeVariant {
+        /// The chess variant to switch to.
+        variant: Option<GameVariant>,
     },
 
     /// Print a visual representation of the current board state.

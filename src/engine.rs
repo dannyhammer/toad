@@ -30,12 +30,6 @@ const BENCH_DEPTH: u8 = 7;
 /// The Toad chess engine.
 #[derive(Debug)]
 pub struct Engine {
-    /// The current state of the chess board, as known to the engine.
-    ///
-    /// This is modified whenever moves are played or new positions are given,
-    /// and is reset whenever the engine is told to start a new game.
-    game: Game<Standard>,
-    // game: Game<Box<dyn Variant>>,
     /// All previous positions of `self.game`, including the current position.
     ///
     /// Updated when the engine makes a move or receives `position ... moves [move list]`.
@@ -62,8 +56,7 @@ pub struct Engine {
     /// Whether to display extra information during execution.
     debug: bool,
 
-    /// Chess variant being played
-    variant: GameVariant,
+    variant_stack: Vec<GameVariant>,
 }
 
 impl Engine {
@@ -74,7 +67,6 @@ impl Engine {
         let (sender, receiver) = channel();
 
         Self {
-            game: Game::default(),
             prev_positions: Vec::with_capacity(512),
             sender,
             receiver,
@@ -83,7 +75,7 @@ impl Engine {
             ttable: Arc::default(),
             history: Arc::default(),
             debug: false,
-            variant: Default::default(),
+            variant_stack: Vec::with_capacity(2),
         }
     }
 
@@ -109,9 +101,6 @@ impl Engine {
         self.sender.send(command).unwrap();
     }
 
-    /// Execute the main event loop for the engine.
-    ///
-    /// This function spawns a thread to handle input from `stdin` and waits on received commands.
     pub fn run(&mut self) -> Result<()> {
         // Spawn a separate thread for handling user input
         let sender = self.sender.clone();
@@ -120,6 +109,22 @@ impl Engine {
                 eprintln!("Input handler thread stopping after fatal error: {err:#}");
             }
         });
+
+        self.run_variant::<Standard>()
+    }
+
+    /// Execute the main event loop for the engine.
+    ///
+    /// This function spawns a thread to handle input from `stdin` and waits on received commands.
+    fn run_variant<V: Variant>(&mut self) -> Result<()> {
+        eprintln!("Calling RUN for {:?}", V::variant());
+
+        if self.variant_stack.contains(&V::variant()) {
+            //
+        }
+        self.variant_stack.push(V::variant());
+
+        let mut game = Game::<V>::default();
 
         // Loop on user input
         while let Ok(cmd) = self.receiver.recv() {
@@ -133,9 +138,29 @@ impl Engine {
 
                 EngineCommand::Bench { depth, pretty } => self.bench(depth, pretty)?,
 
-                EngineCommand::Display => self.display(),
+                EngineCommand::ChangeVariant { variant } => {
+                    if let Some(variant) = variant {
+                        if variant == V::variant() {
+                            println!("Variant is already {variant:?}");
+                            continue;
+                        }
 
-                EngineCommand::Eval { pretty } => self.eval(pretty),
+                        if self.debug {
+                            println!("Switching to {variant:?}");
+                        }
+
+                        match variant {
+                            GameVariant::Standard => self.run_variant::<Standard>()?,
+                            GameVariant::Chess960 => self.run_variant::<Chess960>()?,
+                        }
+                    } else {
+                        println!("Current variant: {:?}", V::variant());
+                    }
+                }
+
+                EngineCommand::Display => println!("{game}"),
+
+                EngineCommand::Eval { pretty } => self.eval(&game, pretty),
 
                 EngineCommand::Exit { cleanup } => {
                     // If requested, await the completion of any ongoing search threads
@@ -147,23 +172,21 @@ impl Engine {
                     break;
                 }
 
-                EngineCommand::Fen => println!("{}", self.game.to_fen(self.variant.is_chess960())),
+                EngineCommand::Fen => println!("{}", game.to_fen()),
 
-                EngineCommand::Flip => self.game.toggle_side_to_move(),
+                EngineCommand::Flip => game.toggle_side_to_move(),
 
-                EngineCommand::MakeMove { mv_string } => {
-                    match Move::from_uci(&self.game, &mv_string) {
-                        Ok(mv) => self.make_move(mv),
-                        Err(e) => eprintln!("{e:#}"),
-                    }
-                }
+                EngineCommand::MakeMove { mv_string } => match Move::from_uci(&game, &mv_string) {
+                    Ok(mv) => self.make_move(&mut game, mv),
+                    Err(e) => eprintln!("{e:#}"),
+                },
 
                 EngineCommand::Moves {
                     square,
                     pretty,
                     debug,
                     sort,
-                } => self.moves(square, pretty, debug, sort),
+                } => self.moves(&game, square, pretty, debug, sort),
 
                 EngineCommand::Option { name } => {
                     if let Some(value) = self.get_option(&name) {
@@ -173,23 +196,23 @@ impl Engine {
                     }
                 }
 
-                EngineCommand::Perft { depth } => println!("{}", perft(&self.game, depth)),
+                EngineCommand::Perft { depth } => println!("{}", perft(&game, depth)),
 
                 EngineCommand::Psqt {
                     piece,
                     square,
                     endgame_weight: weight,
-                } => self.psqt(piece, square, weight),
+                } => self.psqt(&game, piece, square, weight),
 
                 EngineCommand::Splitperft { depth } => {
-                    println!("{}", splitperft(&self.game, depth))
+                    println!("{}", splitperft(&game, depth))
                 }
 
                 EngineCommand::HashInfo => self.hash_info(),
 
                 EngineCommand::Uci { cmd } => {
                     // Keep running, even on error
-                    if let Err(e) = self.handle_uci_command(cmd) {
+                    if let Err(e) = self.handle_uci_command(cmd, &mut game) {
                         eprintln!("Error: {e:#}");
                     }
                 }
@@ -200,7 +223,11 @@ impl Engine {
     }
 
     /// Handle the execution of a single [`UciCommand`].
-    fn handle_uci_command(&mut self, uci: UciCommand) -> Result<()> {
+    fn handle_uci_command<V: Variant>(
+        &mut self,
+        uci: UciCommand,
+        game: &mut Game<V>,
+    ) -> Result<()> {
         use UciCommand::*;
         match uci {
             Uci => self.uci(),
@@ -215,30 +242,22 @@ impl Engine {
 
             UciNewGame => self.new_game(),
 
-            Position { fen, moves } => self.position(fen, moves)?,
-
             Go(options) => {
                 if let Some(depth) = options.perft {
-                    println!("{}", splitperft(&self.game, depth as usize));
+                    println!("{}", splitperft(&game, depth as usize));
                     return Ok(());
                 }
 
-                let config = SearchConfig::new(options, &self.game);
-                self.search_thread = match (self.variant, self.debug) {
-                    (GameVariant::Standard, true) => {
-                        self.start_search::<{ LogLevel::Debug as u8 }, Standard>(config)
-                    }
-                    (GameVariant::Standard, false) => {
-                        self.start_search::<{ LogLevel::Info as u8 }, Standard>(config)
-                    }
-
-                    (GameVariant::Chess960, true) => {
-                        self.start_search::<{ LogLevel::Debug as u8 }, Chess960>(config)
-                    }
-                    (GameVariant::Chess960, false) => {
-                        self.start_search::<{ LogLevel::Info as u8 }, Chess960>(config)
-                    }
+                let config = SearchConfig::new(options, &game);
+                self.search_thread = if self.debug {
+                    self.start_search::<{ LogLevel::Debug as u8 }, V>(*game, config)
+                } else {
+                    self.start_search::<{ LogLevel::Info as u8 }, V>(*game, config)
                 };
+            }
+
+            Position { fen, moves } => {
+                *game = self.position(fen, moves)?;
             }
 
             Stop => self.set_is_searching(false),
@@ -272,8 +291,9 @@ impl Engine {
             println!("Benchmark position {}/{}: {fen}", i + 1, num_tests);
 
             // Set up the game and start the search
-            self.position(Some(fen), [])?;
-            self.search_thread = self.start_search::<{ LogLevel::None as u8 }, Standard>(config);
+            let game = self.position(Some(fen), [])?;
+            self.search_thread =
+                self.start_search::<{ LogLevel::None as u8 }, Standard>(game, config);
 
             // Await the search, appending the node count once concluded.
             let res = self.stop_search().unwrap();
@@ -308,21 +328,12 @@ impl Engine {
         Ok(())
     }
 
-    /// Executes the `display` command, printing the current position.
-    fn display(&self) {
-        if self.variant.is_chess960() {
-            println!("{:#}", self.game);
-        } else {
-            println!("{}", self.game);
-        }
-    }
-
     /// Executes the `eval` command, printing an evaluation of the current position.
-    fn eval(&self, pretty: bool) {
+    fn eval<V: Variant>(&self, game: &Game<V>, pretty: bool) {
         if pretty {
-            println!("{}", self.game.eval_pretty());
+            println!("{}", game.eval_pretty());
         } else {
-            println!("{}", self.game.eval());
+            println!("{}", game.eval());
         }
     }
 
@@ -348,18 +359,25 @@ impl Engine {
 
     /// Makes the supplied move on the current position.
     #[inline(always)]
-    fn make_move(&mut self, mv: Move) {
-        self.prev_positions.push(*self.game.position());
-        self.game.make_move(mv);
+    fn make_move<V: Variant>(&mut self, game: &mut Game<V>, mv: Move) {
+        self.prev_positions.push(*game.position());
+        game.make_move(mv);
     }
 
     /// Executes the `moves` command, displaying all available moves on the board, or for the given square.
-    fn moves(&self, square: Option<Square>, pretty: bool, debug: bool, sort: bool) {
+    fn moves<V: Variant>(
+        &self,
+        game: &Game<V>,
+        square: Option<Square>,
+        pretty: bool,
+        debug: bool,
+        sort: bool,
+    ) {
         // Get the legal moves
         let moves = if let Some(square) = square {
-            self.game.get_legal_moves_from(square)
+            game.get_legal_moves_from(square)
         } else {
-            self.game.get_legal_moves()
+            game.get_legal_moves()
         };
 
         // If there are none, print "(none)"
@@ -371,11 +389,12 @@ impl Engine {
             let string = {
                 let mut s = moves
                     .iter()
-                    .map(|mv| match (debug, self.variant.is_chess960()) {
-                        (true, true) => format!("{mv:#?}"),
-                        (true, false) => format!("{mv:?}"),
-                        (false, true) => format!("{mv:#}"),
-                        (false, false) => format!("{mv}"),
+                    .map(|mv| {
+                        if debug {
+                            V::fmt_move(*mv)
+                        } else {
+                            V::fmt_move(*mv)
+                        }
                     })
                     .collect::<Vec<_>>();
 
@@ -404,41 +423,47 @@ impl Engine {
     #[inline(always)]
     fn new_game(&mut self) {
         self.set_is_searching(false);
-        self.game = Game::default();
+        // self.game = Game::default();
         self.prev_positions.clear();
         self.clear_hash_tables();
     }
 
     /// Set the position to the supplied FEN string (defaults to the standard startpos if not supplied),
     /// and then apply `moves` one-by-one to the position.
-    fn position<T: AsRef<str>>(
+    fn position<T: AsRef<str>, V: Variant>(
         &mut self,
         fen: Option<T>,
         moves: impl IntoIterator<Item = T>,
-    ) -> Result<()> {
+    ) -> Result<Game<V>> {
         // Set the new position
-        if let Some(fen) = fen {
-            self.game = fen.as_ref().parse()?;
+        let mut game = if let Some(fen) = fen {
+            fen.as_ref().parse()?
         } else {
-            self.game = Game::default();
-        }
+            Game::default()
+        };
 
         // Since this is a new position, it has a new history
         self.prev_positions.clear();
 
         // Apply the provided moves
         for mv_str in moves {
-            let mv = Move::from_uci(&self.game, mv_str.as_ref())?;
-            self.make_move(mv);
+            let mv = Move::from_uci(&game, mv_str.as_ref())?;
+            self.make_move(&mut game, mv);
         }
 
-        Ok(())
+        Ok(game)
     }
 
     /// Executes the `psqt` command, printing the piece-square table info for the provided piece.
-    fn psqt(&self, piece: Piece, square: Option<Square>, endgame_weight: Option<i32>) {
+    fn psqt<V: Variant>(
+        &self,
+        game: &Game<V>,
+        piece: Piece,
+        square: Option<Square>,
+        endgame_weight: Option<i32>,
+    ) {
         // Compute the current endgame weight, if it wasn't provided
-        let weight = endgame_weight.unwrap_or(self.game.endgame_weight());
+        let weight = endgame_weight.unwrap_or(game.endgame_weight());
         // Fetch the middle-game and end-game tables
         let (mg, eg) = Psqt::get_tables_for(piece.kind());
 
@@ -481,6 +506,7 @@ impl Engine {
     /// Starts a search on the current position, given the parameters in `config`.
     fn start_search<const LOG: u8, V: Variant>(
         &mut self,
+        game: Game<V>,
         config: SearchConfig,
     ) -> Option<JoinHandle<SearchResult>> {
         // Cannot start a search if one is already running
@@ -491,7 +517,7 @@ impl Engine {
         self.set_is_searching(true);
 
         // Clone the parameters that will be sent into the thread
-        let game = self.game;
+        // let game = self.game;
         // let game = V::change_variant(self.game);
         // let game: Game<V> = self.game.into();
 
@@ -510,8 +536,8 @@ impl Engine {
             let mut history = history.lock().unwrap();
 
             // Start the search, returning the result when completed.
-            Search::<LOG, Standard>::new(
-                // Search::<LOG, V>::new(
+            // Search::<LOG, Standard>::new(
+            Search::<LOG, V>::new(
                 is_searching,
                 config,
                 prev_positions,
@@ -614,11 +640,19 @@ impl Engine {
                     .parse::<bool>()
                     .context(format!("expected bool. got {value:?}"))?;
 
-                if enabled {
-                    self.variant = GameVariant::Chess960;
+                let v = if enabled {
+                    GameVariant::Chess960
                 } else {
-                    self.variant = Default::default();
-                }
+                    GameVariant::Standard
+                };
+
+                self.send_command(EngineCommand::ChangeVariant { variant: Some(v) });
+
+                // if enabled {
+                //     self.variant = GameVariant::Chess960;
+                // } else {
+                //     self.variant = Default::default();
+                // }
             }
 
             _ => {
@@ -651,8 +685,7 @@ impl Engine {
 
             "Threads" => String::from("1"),
 
-            "UCI_Chess960" => format!("{}", self.variant.is_chess960()),
-
+            // "UCI_Chess960" => format!("{}", self.variant.is_chess960()),
             _ => return None,
         };
 

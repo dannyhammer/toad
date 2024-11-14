@@ -336,7 +336,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     #[inline(always)]
     pub fn start(mut self, game: &Game<V>) -> SearchResult {
         if LOG.allows(LogLevel::Debug) {
-            self.send_string(format!("Starting search on {:?}", game.to_fen(false)));
+            self.send_string(format!("Starting search on {:?}", game.to_fen()));
 
             let soft = self.config.soft_timeout.as_millis();
             let hard = self.config.hard_timeout.as_millis();

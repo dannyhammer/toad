@@ -27,7 +27,6 @@ pub const FEN_STARTPOS: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQ
 pub const FEN_KIWIPETE: &str =
     "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1";
 
-/*
 /// Variant of chess being played by the Engine.
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum GameVariant {
@@ -38,68 +37,39 @@ pub enum GameVariant {
     Chess960,
 }
 
-impl GameVariant {
-    #[inline(always)]
-    pub fn is_chess960(&self) -> bool {
-        matches!(self, Self::Chess960)
-    }
-}
-
 impl Default for GameVariant {
     #[inline(always)]
     fn default() -> Self {
         Self::Standard
     }
 }
-     */
+
+impl FromStr for GameVariant {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_ref() {
+            "standard" => Ok(Self::Standard),
+            "chess960" => Ok(Self::Chess960),
+            _ => bail!("Unsupported variant {s:?}"),
+        }
+    }
+}
 
 /// Abstraction over the specific chess variant being played.
 ///
-/// Different chess variants have slightly different ways of doing things.
+/// Different chess variants have slightly different rules.
 /// For example, castling moves are printed differently in Chess960 than in standard chess.
 pub trait Variant
 where
-    Self: Debug + Default + PartialEq + Eq + Clone + Copy,
+    Self: Debug + Default + PartialEq + Eq + Clone + Copy + Send + 'static,
 {
     fn fmt_move(mv: Move) -> String;
 
-    fn parse_castling_rights(castling: &str) -> Result<[CastlingRights; Color::COUNT]> {
-        let mut rights = [CastlingRights::default(); Color::COUNT];
-        if castling.contains(['K', 'k', 'Q', 'q']) {
-            rights[Color::White].short = castling.contains('K').then_some(Square::H1);
-            rights[Color::White].long = castling.contains('Q').then_some(Square::A1);
-            rights[Color::Black].short = castling.contains('k').then_some(Square::H8);
-            rights[Color::Black].long = castling.contains('q').then_some(Square::A8);
-        } else if castling.chars().any(|c| File::from_char(c).is_ok()) {
-            // for c in castling.chars() {
-            //     let color = Color::from_bool(c.is_ascii_lowercase());
-            //     let rook_file = File::from_char(c)?;
-            //     let rook_square = Square::new(rook_file, Rank::first(color));
+    fn variant() -> GameVariant;
 
-            //     let king_file = game.position.board.king(color).to_square_unchecked().file();
-            //     if rook_file > king_file {
-            //         rights[color].short = Some(rook_square);
-            //     } else {
-            //         rights[color].long = Some(rook_square);
-            //     }
-            // }
-            let mut chars = castling.chars();
-            if let Some(c) = chars.next() {
-                rights[Color::White].short = Some(Square::new(File::from_char(c)?, Rank::ONE));
-            }
-            if let Some(c) = chars.next() {
-                rights[Color::White].long = Some(Square::new(File::from_char(c)?, Rank::ONE));
-            }
-            if let Some(c) = chars.next() {
-                rights[Color::Black].short = Some(Square::new(File::from_char(c)?, Rank::EIGHT));
-            }
-            if let Some(c) = chars.next() {
-                rights[Color::Black].long = Some(Square::new(File::from_char(c)?, Rank::EIGHT));
-            }
-        }
+    fn fen_startpos() -> &'static str;
 
-        Ok(rights)
-    }
+    fn fmt_castling_rights(rights: &[CastlingRights; Color::COUNT]) -> String;
 }
 
 /// Marker type for standard chess.
@@ -112,17 +82,37 @@ impl Variant for Standard {
     }
 
     #[inline(always)]
-    fn parse_castling_rights(castling: &str) -> Result<[CastlingRights; Color::COUNT]> {
-        let mut rights = [CastlingRights::default(); Color::COUNT];
+    fn variant() -> GameVariant {
+        GameVariant::Standard
+    }
 
-        if castling.contains(['K', 'k', 'Q', 'q']) {
-            rights[Color::White].short = castling.contains('K').then_some(Square::H1);
-            rights[Color::White].long = castling.contains('Q').then_some(Square::A1);
-            rights[Color::Black].short = castling.contains('k').then_some(Square::H8);
-            rights[Color::Black].long = castling.contains('q').then_some(Square::A8);
+    #[inline(always)]
+    fn fen_startpos() -> &'static str {
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    }
+
+    #[inline(always)]
+    fn fmt_castling_rights(rights: &[CastlingRights; Color::COUNT]) -> String {
+        let mut castling = String::with_capacity(4);
+
+        if rights[Color::White].short.is_some() {
+            castling.push('K');
+        }
+        if rights[Color::White].long.is_some() {
+            castling.push('Q');
+        }
+        if rights[Color::Black].short.is_some() {
+            castling.push('k');
+        }
+        if rights[Color::Black].long.is_some() {
+            castling.push('q');
         }
 
-        Ok(rights)
+        // If no side can castle, use a hyphen
+        if castling.is_empty() {
+            castling.push('-');
+        }
+        castling
     }
 }
 
@@ -136,38 +126,54 @@ impl Variant for Chess960 {
     }
 
     #[inline(always)]
-    fn parse_castling_rights(castling: &str) -> Result<[CastlingRights; Color::COUNT]> {
-        let mut rights = [CastlingRights::default(); Color::COUNT];
+    fn variant() -> GameVariant {
+        GameVariant::Chess960
+    }
 
-        let mut chars = castling.chars();
-        if let Some(c) = chars.next() {
-            rights[Color::White].short = Some(Square::new(File::from_char(c)?, Rank::ONE));
-        }
-        if let Some(c) = chars.next() {
-            rights[Color::White].long = Some(Square::new(File::from_char(c)?, Rank::ONE));
-        }
-        if let Some(c) = chars.next() {
-            rights[Color::Black].short = Some(Square::new(File::from_char(c)?, Rank::EIGHT));
-        }
-        if let Some(c) = chars.next() {
-            rights[Color::Black].long = Some(Square::new(File::from_char(c)?, Rank::EIGHT));
+    #[inline(always)]
+    fn fen_startpos() -> &'static str {
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w HAha - 0 1"
+    }
+
+    #[inline(always)]
+    fn fmt_castling_rights(rights: &[CastlingRights; Color::COUNT]) -> String {
+        let mut castling = String::with_capacity(4);
+
+        if let Some(sq) = rights[Color::White].short {
+            castling.push(sq.file().char().to_ascii_uppercase());
         }
 
-        Ok(rights)
+        if let Some(sq) = rights[Color::White].long {
+            castling.push(sq.file().char().to_ascii_uppercase());
+        }
+
+        if let Some(sq) = rights[Color::Black].short {
+            castling.push(sq.file().char());
+        }
+
+        if let Some(sq) = rights[Color::Black].long {
+            castling.push(sq.file().char());
+        }
+
+        // If no side can castle, use a hyphen
+        if castling.is_empty() {
+            castling.push('-');
+        }
+        castling
     }
 }
 
-impl From<Chess960> for Standard {
-    fn from(_: Chess960) -> Self {
-        Standard
-    }
-}
+// impl From<Chess960> for Standard {
+//     fn from(_: Chess960) -> Self {
+//         Standard
+//     }
+// }
 
-impl From<Standard> for Chess960 {
-    fn from(_: Standard) -> Self {
-        Chess960
-    }
-}
+// impl From<Standard> for Chess960 {
+//     fn from(_: Standard) -> Self {
+//         Chess960
+//     }
+// }
 
 /// A game of chess.
 ///
@@ -301,7 +307,28 @@ impl<V: Variant> Game<V> {
 
         // Castling is a bit more complicated; especially for Chess960
         let castling = split.next().unwrap_or("-");
-        game.position.castling_rights = V::parse_castling_rights(castling)?;
+        let mut rights = [CastlingRights::default(); Color::COUNT];
+        if castling.contains(['K', 'k', 'Q', 'q']) {
+            rights[Color::White].short = castling.contains('K').then_some(Square::H1);
+            rights[Color::White].long = castling.contains('Q').then_some(Square::A1);
+            rights[Color::Black].short = castling.contains('k').then_some(Square::H8);
+            rights[Color::Black].long = castling.contains('q').then_some(Square::A8);
+        } else if castling.chars().any(|c| File::from_char(c).is_ok()) {
+            let mut chars = castling.chars();
+            if let Some(c) = chars.next() {
+                rights[Color::White].short = Some(Square::new(File::from_char(c)?, Rank::ONE));
+            }
+            if let Some(c) = chars.next() {
+                rights[Color::White].long = Some(Square::new(File::from_char(c)?, Rank::ONE));
+            }
+            if let Some(c) = chars.next() {
+                rights[Color::Black].short = Some(Square::new(File::from_char(c)?, Rank::EIGHT));
+            }
+            if let Some(c) = chars.next() {
+                rights[Color::Black].long = Some(Square::new(File::from_char(c)?, Rank::EIGHT));
+            }
+        }
+        game.position.castling_rights = rights;
 
         let en_passant_target = split.next().unwrap_or("-");
         game.position.ep_square = match en_passant_target {
@@ -323,6 +350,31 @@ impl<V: Variant> Game<V> {
 
         game.recompute_legal_masks();
         Ok(game)
+    }
+
+    /// Generates a FEN string from this [`Position`].
+    ///
+    /// The `is_chess960` parameter will determine whether to print castling rights in Chess960 notation.
+    ///
+    /// # Example
+    /// ```
+    /// # use toad::Position;
+    /// let state = Position::default();
+    /// assert_eq!(state.to_fen(false), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    /// assert_eq!(state.to_fen(true), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w HAha - 0 1");
+    /// ```
+    pub fn to_fen(&self) -> String {
+        let placements = self.board().to_fen();
+        let active_color = self.side_to_move();
+        let castling = V::fmt_castling_rights(self.castling_rights());
+        let en_passant = self
+            .ep_square()
+            .map(|ep| ep.to_string())
+            .unwrap_or(String::from("-"));
+        let halfmove = self.halfmove;
+        let fullmove = self.fullmove;
+
+        format!("{placements} {active_color} {castling} {en_passant} {halfmove} {fullmove}")
     }
 
     /// Copies `self` and returns a [`Game`] after having applied the provided [`Move`].
@@ -1229,7 +1281,8 @@ impl<V: Variant> Default for Game<V> {
     #[inline(always)]
     fn default() -> Self {
         // Safety: The FEN for startpos is always valid
-        unsafe { Self::from_fen(FEN_STARTPOS).unwrap_unchecked() }
+        // unsafe { Self::from_fen(FEN_STARTPOS).unwrap_unchecked() }
+        Self::from_fen(V::fen_startpos()).unwrap()
     }
 }
 
@@ -1253,10 +1306,10 @@ impl<V: Variant> fmt::Display for Game<V> {
                 write!(f, " {piece_char}")?;
             }
 
-            // if rank == Rank::EIGHT {
-            // } else
-            if rank == Rank::SEVEN {
-                write!(f, "        FEN: {}", self.to_fen(f.alternate()))?;
+            if rank == Rank::EIGHT {
+                write!(f, "    Variant: {:?}", V::variant())?;
+            } else if rank == Rank::SEVEN {
+                write!(f, "        FEN: {}", self.to_fen())?;
             } else if rank == Rank::SIX {
                 write!(f, "        Key: {}", self.key())?;
             } else if rank == Rank::FIVE {
