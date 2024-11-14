@@ -7,7 +7,7 @@
 use std::str::FromStr;
 
 use crate::{GameVariant, Piece, Square};
-use clap::Parser;
+use clap::{builder::PossibleValue, Parser, ValueEnum};
 use uci_parser::UciCommand;
 
 /// A command to be sent to the engine.
@@ -146,5 +146,25 @@ impl FromStr for EngineCommand {
                 }
             }
         }
+    }
+}
+
+impl ValueEnum for GameVariant {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[GameVariant::Standard, GameVariant::Chess960]
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        // By default, possible values are the variant's name (case-insensitive)
+        let name = format!("{self:?}");
+        let mut value = PossibleValue::new(&name).alias(name.to_ascii_lowercase());
+
+        // Some variants have additional aliases
+        match self {
+            GameVariant::Standard => {}
+            GameVariant::Chess960 => value = value.aliases(["960", "frc"]),
+        }
+
+        Some(value)
     }
 }

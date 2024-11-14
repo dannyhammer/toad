@@ -7,6 +7,7 @@
 use core::fmt;
 use std::{
     io,
+    ops::ControlFlow,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{channel, Receiver, Sender},
@@ -55,8 +56,6 @@ pub struct Engine {
 
     /// Whether to display extra information during execution.
     debug: bool,
-
-    variant_stack: Vec<GameVariant>,
 }
 
 impl Engine {
@@ -75,7 +74,6 @@ impl Engine {
             ttable: Arc::default(),
             history: Arc::default(),
             debug: false,
-            variant_stack: Vec::with_capacity(2),
         }
     }
 
@@ -83,6 +81,9 @@ impl Engine {
     #[inline(always)]
     pub fn name(&self) -> String {
         format!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+
+        // This could be done with `concat!`, but I'm keeping it consistent with `Engine::authors`
+        // concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG_VERSION"))
     }
 
     /// Returns a string of all authors of this engine.
@@ -101,7 +102,14 @@ impl Engine {
         self.sender.send(command).unwrap();
     }
 
-    pub fn run(&mut self) -> Result<()> {
+    /// Entrypoint of the engine.
+    ///
+    /// This function first spawns a new thread that handles user input from `stdin`.
+    /// It then loops on commands received by the engine, executing them in the order received.
+    /// If the [`EngineCommand::ChangeVariant`] command is received,
+    /// it exits the event loop and spawns a new one,
+    /// changing the generic parameter to the appropriate type representing the requested chess variant.
+    pub fn run(&mut self) {
         // Spawn a separate thread for handling user input
         let sender = self.sender.clone();
         thread::spawn(|| {
@@ -110,48 +118,50 @@ impl Engine {
             }
         });
 
-        self.run_variant::<Standard>()
+        // By default, we're playing standard chess
+        let mut variant = GameVariant::Standard;
+
+        // Run the event loop on the current variant.
+        while let ControlFlow::Continue(new_variant) = match variant {
+            GameVariant::Standard => self.run_variant::<Standard>(),
+            GameVariant::Chess960 => self.run_variant::<Chess960>(),
+            // GameVariant::Horde => self.run_variant::<Horde>(),
+        } {
+            variant = new_variant;
+
+            if self.debug {
+                println!("Switching to chess variant: {new_variant:?}");
+            }
+        }
     }
 
-    /// Execute the main event loop for the engine.
-    ///
-    /// This function spawns a thread to handle input from `stdin` and waits on received commands.
-    fn run_variant<V: Variant>(&mut self) -> Result<()> {
-        eprintln!("Calling RUN for {:?}", V::variant());
-
-        if self.variant_stack.contains(&V::variant()) {
-            //
-        }
-        self.variant_stack.push(V::variant());
-
+    /// Execute the main event loop for the engine for a specific variant of chess.
+    fn run_variant<V: Variant>(&mut self) -> ControlFlow<(), GameVariant> {
+        // .
         let mut game = Game::<V>::default();
 
-        // Loop on user input
+        // When we exit the event loop, we will, by default, not spawn another instance of it
+        let mut status = ControlFlow::Break(());
+
+        // Execute commands as they are received
         while let Ok(cmd) = self.receiver.recv() {
             if self.debug {
                 println!("info string Received command {cmd:?}");
             }
-            match cmd {
-                EngineCommand::Await => {
-                    self.stop_search();
-                }
 
-                EngineCommand::Bench { depth, pretty } => self.bench(depth, pretty)?,
+            match cmd {
+                EngineCommand::Await => _ = self.stop_search(),
+
+                EngineCommand::Bench { depth, pretty } => self.bench(depth, pretty),
 
                 EngineCommand::ChangeVariant { variant } => {
+                    // If a new variant was provided, change the current variant, if necessary.
                     if let Some(variant) = variant {
-                        if variant == V::variant() {
-                            println!("Variant is already {variant:?}");
-                            continue;
-                        }
-
-                        if self.debug {
-                            println!("Switching to {variant:?}");
-                        }
-
-                        match variant {
-                            GameVariant::Standard => self.run_variant::<Standard>()?,
-                            GameVariant::Chess960 => self.run_variant::<Chess960>()?,
+                        // If we're already in this variant, there's nothing to change
+                        if variant != V::variant() {
+                            // Otherwise, kill this event loop with a signal to spawn a new one.
+                            status = ControlFlow::Continue(variant);
+                            break;
                         }
                     } else {
                         println!("Current variant: {:?}", V::variant());
@@ -211,7 +221,7 @@ impl Engine {
                 EngineCommand::HashInfo => self.hash_info(),
 
                 EngineCommand::Uci { cmd } => {
-                    // Keep running, even on error
+                    // UCI spec states to continue execution if an error occurs
                     if let Err(e) = self.handle_uci_command(cmd, &mut game) {
                         eprintln!("Error: {e:#}");
                     }
@@ -219,7 +229,8 @@ impl Engine {
             };
         }
 
-        Ok(())
+        // Return whether to spawn another event loop
+        status
     }
 
     /// Handle the execution of a single [`UciCommand`].
@@ -244,11 +255,11 @@ impl Engine {
 
             Go(options) => {
                 if let Some(depth) = options.perft {
-                    println!("{}", splitperft(&game, depth as usize));
+                    println!("{}", splitperft(game, depth as usize));
                     return Ok(());
                 }
 
-                let config = SearchConfig::new(options, &game);
+                let config = SearchConfig::new(options, game);
                 self.search_thread = if self.debug {
                     self.start_search::<{ LogLevel::Debug as u8 }, V>(*game, config)
                 } else {
@@ -272,7 +283,7 @@ impl Engine {
     }
 
     /// Execute the `bench` command, running a benchmark of a fixed search on a series of positions and displaying the results.
-    fn bench(&mut self, depth: Option<u8>, pretty: bool) -> Result<()> {
+    fn bench(&mut self, depth: Option<u8>, pretty: bool) {
         // Set up the benchmarking config
         let config = SearchConfig {
             max_depth: depth.unwrap_or(BENCH_DEPTH),
@@ -291,7 +302,7 @@ impl Engine {
             println!("Benchmark position {}/{}: {fen}", i + 1, num_tests);
 
             // Set up the game and start the search
-            let game = self.position(Some(fen), [])?;
+            let game = self.position(Some(fen), []).unwrap();
             self.search_thread =
                 self.start_search::<{ LogLevel::None as u8 }, Standard>(game, config);
 
@@ -324,8 +335,6 @@ impl Engine {
 
         // Re-set the internal game state.
         self.new_game();
-
-        Ok(())
     }
 
     /// Executes the `eval` command, printing an evaluation of the current position.
@@ -393,7 +402,7 @@ impl Engine {
                         if debug {
                             V::fmt_move(*mv)
                         } else {
-                            V::fmt_move(*mv)
+                            V::dbg_move(*mv)
                         }
                     })
                     .collect::<Vec<_>>();

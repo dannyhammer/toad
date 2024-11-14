@@ -28,31 +28,24 @@ pub const FEN_KIWIPETE: &str =
     "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1";
 
 /// Variant of chess being played by the Engine.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum GameVariant {
-    /// Standard chess
+    /// Standard chess.
+    #[default]
     Standard,
 
-    /// Fischer Random chess
+    /// Fischer Random chess.
+    ///
+    /// The home ranks of each color are shuffled into one of 960 possible starting positions.
     Chess960,
-}
-
-impl Default for GameVariant {
-    #[inline(always)]
-    fn default() -> Self {
-        Self::Standard
-    }
-}
-
-impl FromStr for GameVariant {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_ref() {
-            "standard" => Ok(Self::Standard),
-            "chess960" => Ok(Self::Chess960),
-            _ => bail!("Unsupported variant {s:?}"),
-        }
-    }
+    /*
+    /// Horde chess.
+    ///
+    /// Black plays as normal, while White hahs 36 Pawns and no other pieces.
+    /// Black must eliminate all of White's pieces, while White must checkmate Black's King.
+    ///
+    Horde,
+    */
 }
 
 /// Abstraction over the specific chess variant being played.
@@ -63,38 +56,32 @@ pub trait Variant
 where
     Self: Debug + Default + PartialEq + Eq + Clone + Copy + Send + 'static,
 {
-    fn fmt_move(mv: Move) -> String;
-
-    fn variant() -> GameVariant;
-
-    fn fen_startpos() -> &'static str;
-
-    fn fmt_castling_rights(rights: &[CastlingRights; Color::COUNT]) -> String;
-}
-
-/// Marker type for standard chess.
-#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
-pub struct Standard;
-impl Variant for Standard {
+    /// Formats a [`Move`] according to this variant's notation semantics.
+    ///
+    /// Calls the [`fmt::Display`] implementation.
     #[inline(always)]
     fn fmt_move(mv: Move) -> String {
         format!("{mv}")
     }
 
+    /// Formats a [`Move`] according to this variant's notation semantics.
+    ///
+    /// Calls the [`fmt::Debug`] implementation.
     #[inline(always)]
-    fn variant() -> GameVariant {
-        GameVariant::Standard
+    fn dbg_move(mv: Move) -> String {
+        format!("{mv:?}")
     }
 
-    #[inline(always)]
-    fn fen_startpos() -> &'static str {
-        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-    }
+    /// Fetch the [`GameVariant`] value of this variant.
+    fn variant() -> GameVariant;
 
+    /// Fetch the FEN string of the starting position of this variant.
+    fn fen_startpos() -> &'static str;
+
+    /// Formats the castling rights of this variant into a string.
     #[inline(always)]
     fn fmt_castling_rights(rights: &[CastlingRights; Color::COUNT]) -> String {
         let mut castling = String::with_capacity(4);
-
         if rights[Color::White].short.is_some() {
             castling.push('K');
         }
@@ -116,6 +103,21 @@ impl Variant for Standard {
     }
 }
 
+/// Marker type for standard chess.
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
+pub struct Standard;
+impl Variant for Standard {
+    #[inline(always)]
+    fn variant() -> GameVariant {
+        GameVariant::Standard
+    }
+
+    #[inline(always)]
+    fn fen_startpos() -> &'static str {
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    }
+}
+
 /// Marker type for chess 960.
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct Chess960;
@@ -126,10 +128,16 @@ impl Variant for Chess960 {
     }
 
     #[inline(always)]
+    fn dbg_move(mv: Move) -> String {
+        format!("{mv:#?}")
+    }
+
+    #[inline(always)]
     fn variant() -> GameVariant {
         GameVariant::Chess960
     }
 
+    /// This uses the standard chess starting position, just with castling rights formatted as Files, rather than `K`/`Q`.
     #[inline(always)]
     fn fen_startpos() -> &'static str {
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w HAha - 0 1"
@@ -163,17 +171,22 @@ impl Variant for Chess960 {
     }
 }
 
-// impl From<Chess960> for Standard {
-//     fn from(_: Chess960) -> Self {
-//         Standard
-//     }
-// }
+/*
+/// Marker type for horde chess.
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
+pub struct Horde;
+impl Variant for Horde {
+    #[inline(always)]
+    fn variant() -> GameVariant {
+        GameVariant::Horde
+    }
 
-// impl From<Standard> for Chess960 {
-//     fn from(_: Standard) -> Self {
-//         Chess960
-//     }
-// }
+    #[inline(always)]
+    fn fen_startpos() -> &'static str {
+        "rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1"
+    }
+}
+ */
 
 /// A game of chess.
 ///
@@ -213,16 +226,25 @@ pub struct Game<V: Variant> {
     evals: (Score, Score),
 
     /// The variant of Chess this game represents.
-    pub variant: PhantomData<V>,
+    variant: PhantomData<V>,
 }
 
+/// Implementation details specific to standard chess.
 impl Game<Standard> {
     //
 }
 
+/// Implementation details specific to chess 960.
 impl Game<Chess960> {
     //
 }
+
+/*
+/// Implementation details specific to horde chess.
+impl Game<Horde> {
+    //
+}
+ */
 
 impl<V: Variant> Game<V> {
     /// Initial material value of all pieces in a standard setup.
@@ -242,9 +264,9 @@ impl<V: Variant> Game<V> {
     ///
     /// # Example
     /// ```
-    /// # use toad::Game;
-    /// let empty = Game::new();
-    /// assert_eq!(empty.to_fen(false), "8/8/8/8/8/8/8/8 w - - 0 1");
+    /// # use toad::*;
+    /// let empty = Game::<Standard>::new();
+    /// assert_eq!(empty.to_fen(), "8/8/8/8/8/8/8/8 w - - 0 1");
     /// ```
     #[inline(always)]
     pub fn new() -> Self {
@@ -276,6 +298,7 @@ impl<V: Variant> Game<V> {
             bail!("FEN must have piece placements for all 8 ranks");
         }
 
+        let mut king_files = [File::E; Color::COUNT];
         // Need to reverse this so that White pieces are at the "bottom" of the board
         for (rank, placements) in placements.split('/').rev().enumerate() {
             let mut file = 0;
@@ -288,6 +311,11 @@ impl<V: Variant> Game<V> {
                     let square = Square::new(File::new_unchecked(file), Rank::new_unchecked(rank));
 
                     game.place(piece, square);
+
+                    // Keep track of the Kings, for castling rights in (D)FRC
+                    if piece.is_king() {
+                        king_files[piece.color()] = File::new_unchecked(file);
+                    }
 
                     file += 1;
                 } else {
@@ -308,24 +336,30 @@ impl<V: Variant> Game<V> {
         // Castling is a bit more complicated; especially for Chess960
         let castling = split.next().unwrap_or("-");
         let mut rights = [CastlingRights::default(); Color::COUNT];
-        if castling.contains(['K', 'k', 'Q', 'q']) {
-            rights[Color::White].short = castling.contains('K').then_some(Square::H1);
-            rights[Color::White].long = castling.contains('Q').then_some(Square::A1);
-            rights[Color::Black].short = castling.contains('k').then_some(Square::H8);
-            rights[Color::Black].long = castling.contains('q').then_some(Square::A8);
-        } else if castling.chars().any(|c| File::from_char(c).is_ok()) {
-            let mut chars = castling.chars();
-            if let Some(c) = chars.next() {
-                rights[Color::White].short = Some(Square::new(File::from_char(c)?, Rank::ONE));
-            }
-            if let Some(c) = chars.next() {
-                rights[Color::White].long = Some(Square::new(File::from_char(c)?, Rank::ONE));
-            }
-            if let Some(c) = chars.next() {
-                rights[Color::Black].short = Some(Square::new(File::from_char(c)?, Rank::EIGHT));
-            }
-            if let Some(c) = chars.next() {
-                rights[Color::Black].long = Some(Square::new(File::from_char(c)?, Rank::EIGHT));
+        // Parse castling rights, if they exist
+        for c in castling.replace("-", "").chars() {
+            let color = Color::from_case(c);
+
+            // If we can parse the char into a file, use it
+            let file = if let Ok(file) = File::from_char(c) {
+                file
+            } else
+            // Otherwise, check if it's in the default notation for short ("kingside") castling
+            if c.to_ascii_lowercase() == 'k' {
+                File::H
+            } else
+            // Same for long ("queenside")
+            if c.to_ascii_lowercase() == 'q' {
+                File::A
+            } else {
+                bail!("Castling chars must be either valid files or [K, Q, k, q]. Got {c:?}");
+            };
+
+            // Files higher than the one on which the King resides are "short" castles. (g > e)
+            if file > king_files[color] {
+                rights[color].short = Some(Square::new(file, Rank::first(color)));
+            } else {
+                rights[color].long = Some(Square::new(file, Rank::first(color)));
             }
         }
         game.position.castling_rights = rights;
@@ -358,10 +392,12 @@ impl<V: Variant> Game<V> {
     ///
     /// # Example
     /// ```
-    /// # use toad::Position;
-    /// let state = Position::default();
-    /// assert_eq!(state.to_fen(false), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-    /// assert_eq!(state.to_fen(true), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w HAha - 0 1");
+    /// # use toad::*;
+    /// let state = Game::<Standard>::default();
+    /// assert_eq!(state.to_fen(), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    ///
+    /// let state = Game::<Chess960>::default();
+    /// assert_eq!(state.to_fen(), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w HAha - 0 1");
     /// ```
     pub fn to_fen(&self) -> String {
         let placements = self.board().to_fen();
@@ -422,10 +458,10 @@ impl<V: Variant> Game<V> {
     /// # Example
     /// ```
     /// # use toad::*;
-    /// let mut game = Game::default();
-    /// assert_eq!(game.to_fen(false), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    /// let mut game = Game::<Standard>::default();
+    /// assert_eq!(game.to_fen(), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
     /// game.toggle_side_to_move();
-    /// assert_eq!(game.to_fen(false), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1");
+    /// assert_eq!(game.to_fen(), "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1");
     /// ```
     #[inline(always)]
     pub fn toggle_side_to_move(&mut self) {
@@ -677,6 +713,12 @@ impl<V: Variant> Game<V> {
         self.recompute_legal_masks();
     }
 
+    /// Returns the [`GameVariant`] of this game.
+    #[inline(always)]
+    pub fn variant(&self) -> GameVariant {
+        V::variant()
+    }
+
     /// Fetch the internal [`Position`] of this [`Game`].
     #[inline(always)]
     pub const fn position(&self) -> &Position {
@@ -834,8 +876,8 @@ impl<V: Variant> Game<V> {
     ///
     /// # Example
     /// ```
-    /// use toad::{Game, Color};
-    /// let game = Game::default();
+    /// use toad::*;
+    /// let game = Game::<Standard>::default();
     /// let mask = game.knights(Color::White);
     /// let mut knight_moves = game.get_legal_moves_from(mask).into_iter();
     ///
@@ -865,7 +907,11 @@ impl<V: Variant> Game<V> {
         let opponent = color.opponent();
         let occupied = self.occupied();
 
-        self.king_square = self.king(color).to_square_unchecked();
+        // For Horde: return if no King, because there are no legal masks to compute.
+        let Some(sq) = self.king(color).to_square() else {
+            return;
+        };
+        self.king_square = sq;
 
         // Reset the pinmask and checkmask
         self.pinned = Bitboard::EMPTY_BOARD;
@@ -1654,23 +1700,23 @@ impl Position {
     /// ```
     /// # use toad::*;
     /// // Lone Kings
-    /// let kk: Game = "8/4k3/8/8/3K4/8/8/8 w - - 0 1".parse().unwrap();
+    /// let kk: Game<Standard> = "8/4k3/8/8/3K4/8/8/8 w - - 0 1".parse().unwrap();
     /// assert!(kk.can_draw_by_insufficient_material());
     ///
     /// // A single Bishop (either color)
-    /// let kbk: Game = "8/4k3/8/8/3K4/8/5B2/8 w - - 0 1".parse().unwrap();
+    /// let kbk: Game<Standard> = "8/4k3/8/8/3K4/8/5B2/8 w - - 0 1".parse().unwrap();
     /// assert!(kbk.can_draw_by_insufficient_material());
     ///
     /// // A single Knight
-    /// let knk: Game = "8/4k3/2n5/8/3K4/8/8/8 w - - 0 1".parse().unwrap();
+    /// let knk: Game<Standard> = "8/4k3/2n5/8/3K4/8/8/8 w - - 0 1".parse().unwrap();
     /// assert!(knk.can_draw_by_insufficient_material());
     ///
     /// // Opposing Bishops on the same color square
-    /// let same_square_bishops: Game = "8/2b1k3/8/8/3K4/8/5B2/8 w - - 0 1".parse().unwrap();
+    /// let same_square_bishops: Game<Standard> = "8/2b1k3/8/8/3K4/8/5B2/8 w - - 0 1".parse().unwrap();
     /// assert!(same_square_bishops.can_draw_by_insufficient_material());
     ///
     /// // Opposing Bishops on different color squares
-    /// let diff_square_bishops: Game = "8/3bk3/8/8/3K4/8/5B2/8 w - - 0 1".parse().unwrap();
+    /// let diff_square_bishops: Game<Standard> = "8/3bk3/8/8/3K4/8/5B2/8 w - - 0 1".parse().unwrap();
     /// assert!(!diff_square_bishops.can_draw_by_insufficient_material());
     /// ```
     #[inline(always)]
