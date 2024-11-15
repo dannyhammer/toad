@@ -137,8 +137,8 @@ impl Engine {
 
     /// Execute the main event loop for the engine for a specific variant of chess.
     fn run_variant<V: Variant>(&mut self) -> ControlFlow<(), GameVariant> {
-        // .
-        let mut game = Game::<V>::default();
+        // Since we're starting the engine for a new variant, create a new game.
+        let mut game = self.new_game::<V>();
 
         // When we exit the event loop, we will, by default, not spawn another instance of it
         let mut status = ControlFlow::Break(());
@@ -199,7 +199,7 @@ impl Engine {
                 } => self.moves(&game, square, pretty, debug, sort),
 
                 EngineCommand::Option { name } => {
-                    if let Some(value) = self.get_option(&name) {
+                    if let Some(value) = self.get_option::<V>(&name) {
                         println!("Option {name:?} := {value}");
                     } else {
                         println!("{} has no option {name:?}", self.name());
@@ -251,7 +251,7 @@ impl Engine {
 
             Register { name: _, code: _ } => println!("{} requires no registration", self.name()),
 
-            UciNewGame => self.new_game(),
+            UciNewGame => *game = self.new_game(),
 
             Go(options) => {
                 if let Some(depth) = options.perft {
@@ -334,7 +334,7 @@ impl Engine {
         }
 
         // Re-set the internal game state.
-        self.new_game();
+        self.new_game::<Standard>();
     }
 
     /// Executes the `eval` command, printing an evaluation of the current position.
@@ -430,11 +430,11 @@ impl Engine {
     /// This clears all internal caches and hash tables, as well as search history.
     /// It also cancels any ongoing searches, ignoring their results.
     #[inline(always)]
-    fn new_game(&mut self) {
+    fn new_game<V: Variant>(&mut self) -> Game<V> {
         self.set_is_searching(false);
-        // self.game = Game::default();
         self.prev_positions.clear();
         self.clear_hash_tables();
+        Game::default()
     }
 
     /// Set the position to the supplied FEN string (defaults to the standard startpos if not supplied),
@@ -526,10 +526,6 @@ impl Engine {
         self.set_is_searching(true);
 
         // Clone the parameters that will be sent into the thread
-        // let game = self.game;
-        // let game = V::change_variant(self.game);
-        // let game: Game<V> = self.game.into();
-
         let is_searching = Arc::clone(&self.is_searching);
         let mut prev_positions = self.prev_positions.clone();
         // Cloning a vec doesn't clone its capacity, so we need to do that manually
@@ -545,7 +541,6 @@ impl Engine {
             let mut history = history.lock().unwrap();
 
             // Start the search, returning the result when completed.
-            // Search::<LOG, Standard>::new(
             Search::<LOG, V>::new(
                 is_searching,
                 config,
@@ -622,9 +617,9 @@ impl Engine {
                     bail!("usage: setoption name {name} value <value>");
                 };
 
-                let mb = value
-                    .parse::<usize>()
-                    .context(format!("expected integer. got {value:?}"))?;
+                let Ok(mb) = value.parse() else {
+                    bail!("expected integer. got {value:?}");
+                };
 
                 // Ensure the value is within bounds
                 if mb < TTable::MIN_SIZE {
@@ -645,9 +640,9 @@ impl Engine {
                     bail!("usage: setoption name {name} value <true / false>");
                 };
 
-                let enabled = value
-                    .parse::<bool>()
-                    .context(format!("expected bool. got {value:?}"))?;
+                let Ok(enabled) = value.parse() else {
+                    bail!("expected bool. got {value:?}");
+                };
 
                 let v = if enabled {
                     GameVariant::Chess960
@@ -656,12 +651,6 @@ impl Engine {
                 };
 
                 self.send_command(EngineCommand::ChangeVariant { variant: Some(v) });
-
-                // if enabled {
-                //     self.variant = GameVariant::Chess960;
-                // } else {
-                //     self.variant = Default::default();
-                // }
             }
 
             _ => {
@@ -686,7 +675,7 @@ impl Engine {
     }
 
     /// Returns the current value of the option `name`, if it exists on this engine.
-    fn get_option(&self, name: &str) -> Option<String> {
+    fn get_option<V: Variant>(&self, name: &str) -> Option<String> {
         let value = match name {
             "Clear Hash" => String::default(),
 
@@ -694,7 +683,7 @@ impl Engine {
 
             "Threads" => String::from("1"),
 
-            // "UCI_Chess960" => format!("{}", self.variant.is_chess960()),
+            "UCI_Chess960" => format!("{}", V::variant() == GameVariant::Chess960),
             _ => return None,
         };
 

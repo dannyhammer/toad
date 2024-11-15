@@ -54,7 +54,7 @@ pub enum GameVariant {
 /// For example, castling moves are printed differently in Chess960 than in standard chess.
 pub trait Variant
 where
-    Self: Debug + Default + PartialEq + Eq + Clone + Copy + Send + 'static,
+    Self: Copy + Send + 'static,
 {
     /// Formats a [`Move`] according to this variant's notation semantics.
     ///
@@ -907,11 +907,8 @@ impl<V: Variant> Game<V> {
         let opponent = color.opponent();
         let occupied = self.occupied();
 
-        // For Horde: return if no King, because there are no legal masks to compute.
-        let Some(sq) = self.king(color).to_square() else {
-            return;
-        };
-        self.king_square = sq;
+        // Find the King
+        self.king_square = self.king(color).to_square_unchecked();
 
         // Reset the pinmask and checkmask
         self.pinned = Bitboard::EMPTY_BOARD;
