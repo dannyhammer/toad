@@ -315,8 +315,8 @@ impl Move {
     ///
     /// # Example
     /// ```
-    /// # use toad::{Move, Square, MoveKind, PieceKind, Game, FEN_KIWIPETE};
-    /// let position = Game::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/Pp2P3/2N2Q1p/1PPBBPPP/R3K2R b KQkq a3 0 1").unwrap();
+    /// # use toad::*;
+    /// let position = Game::<Standard>::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/Pp2P3/2N2Q1p/1PPBBPPP/R3K2R b KQkq a3 0 1").unwrap();
     ///
     /// let capture = Move::from_uci(&position, "b4c3").unwrap();
     /// assert_eq!(capture.is_capture(), true);
@@ -333,8 +333,8 @@ impl Move {
     ///
     /// # Example
     /// ```
-    /// # use toad::{Move, Square, MoveKind, PieceKind, Game, FEN_KIWIPETE};
-    /// let position = Game::from_fen(FEN_KIWIPETE).unwrap();
+    /// # use toad::*;
+    /// let position = Game::<Standard>::from_fen(FEN_KIWIPETE).unwrap();
     ///
     /// let quiet = Move::from_uci(&position, "e1d1").unwrap();
     /// assert_eq!(quiet.is_quiet(), true);
@@ -422,9 +422,9 @@ impl Move {
     ///
     /// # Example
     /// ```
-    /// # use toad::{Move, Square, MoveKind, PieceKind, Game};
+    /// # use toad::*;
     /// // An sample test position for discovering promotion bugs.
-    /// let position = Game::from_fen("n1n5/PPPk4/8/8/8/8/4Kppp/5N1N b - - 0 1 ").unwrap();
+    /// let position = Game::<Standard>::from_fen("n1n5/PPPk4/8/8/8/8/4Kppp/5N1N b - - 0 1 ").unwrap();
     /// let b7c8b = Move::from_uci(&position, "b7c8b").unwrap();
     /// assert_eq!(b7c8b.promotion(), Some(PieceKind::Bishop));
     /// ```
@@ -446,12 +446,12 @@ impl Move {
     /// # Example
     /// ```
     /// # use toad::*;
-    /// let position = Game::from_fen("n1n5/PPPk4/8/8/8/8/4Kppp/5N1N b - - 0 1 ").unwrap();
+    /// let position = Game::<Standard>::from_fen("n1n5/PPPk4/8/8/8/8/4Kppp/5N1N b - - 0 1 ").unwrap();
     /// let b7c8b = Move::from_uci(&position, "b7c8b");
     /// assert_eq!(b7c8b.unwrap(), Move::new(Square::B7, Square::C8, MoveKind::promotion_capture(PieceKind::Bishop)));
     ///
     /// // Automatically parses castling moves in standard notation to use the KxR format
-    /// let position = Game::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1").unwrap();
+    /// let position = Game::<Standard>::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1").unwrap();
     /// let e1c1 = Move::from_uci(&position, "e1c1");
     /// // Rook is on A1
     /// assert_eq!(e1c1.unwrap(), Move::new(Square::E1, Square::A1, MoveKind::LongCastle));
@@ -820,7 +820,7 @@ mod test {
 
     /// Helper function to assert that the `uci` move is parsed as `expected` on the position created from `fen`.
     fn test_move_parse(fen: &str, uci: &str, expected: Move) {
-        let pos = fen.parse::<Game>().unwrap();
+        let pos = fen.parse::<Game<Standard>>().unwrap();
 
         let mv = Move::from_uci(&pos, uci);
         assert!(mv.is_ok(), "{}", mv.unwrap_err());

@@ -6,8 +6,8 @@
 
 use std::str::FromStr;
 
-use crate::{Piece, Square};
-use clap::Parser;
+use crate::{GameVariant, Piece, Square};
+use clap::{builder::PossibleValue, Parser, ValueEnum};
 use uci_parser::UciCommand;
 
 /// A command to be sent to the engine.
@@ -34,6 +34,16 @@ pub enum EngineCommand {
         /// Override the default benchmark depth.
         #[arg(short, long, required = false)]
         depth: Option<u8>,
+    },
+
+    /// Change the variant of chess being played, or display the current variant.
+    ///
+    /// This is handled automatically when setting the UCI options like UCI_Chess960,
+    /// but exists here for convenience.
+    #[command(aliases = ["variant", "v"])]
+    ChangeVariant {
+        /// The chess variant to switch to.
+        variant: Option<GameVariant>,
     },
 
     /// Print a visual representation of the current board state.
@@ -136,5 +146,25 @@ impl FromStr for EngineCommand {
                 }
             }
         }
+    }
+}
+
+impl ValueEnum for GameVariant {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[GameVariant::Standard, GameVariant::Chess960]
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        // By default, possible values are the variant's name (case-insensitive)
+        let name = format!("{self:?}");
+        let mut value = PossibleValue::new(&name).alias(name.to_ascii_lowercase());
+
+        // Some variants have additional aliases
+        match self {
+            GameVariant::Standard => {}
+            GameVariant::Chess960 => value = value.aliases(["960", "frc"]),
+        }
+
+        Some(value)
     }
 }

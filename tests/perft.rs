@@ -4,11 +4,11 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use toad::{perft_generic, Game};
+use toad::{perft_generic, Game, Standard};
 
 fn test_perft_fen_nodes(depth: usize, fen: &str, expected: u64) {
     let position = Game::from_fen(fen).unwrap();
-    let res = perft_generic::<false, false>(&position, depth);
+    let res = perft_generic::<false, false, Standard>(&position, depth);
     assert_eq!(res, expected, "PERFT(depth) failed on {fen}");
 }
 
@@ -221,7 +221,7 @@ fn do_perft(fen: &str, results: &[u64]) {
     let pos = Game::from_fen(fen).unwrap();
     for (depth, result) in results.iter().enumerate() {
         // let nodes = pos.perft_generic::<false, false>(idx as u8);
-        let nodes = perft_generic::<false, false>(&pos, depth);
+        let nodes = perft_generic::<false, false, Standard>(&pos, depth);
         assert_eq!(nodes, *result, "PERFT({depth}) failed on {fen}");
     }
 }
