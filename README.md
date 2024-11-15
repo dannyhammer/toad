@@ -1,19 +1,24 @@
 # Toad - A UCI-compatible toy chess engine
 
 Toad is a work-in-progress [chess engine](https://en.wikipedia.org/wiki/Chess_engine), and serves as my personal excuse to write fun code in Rust.
-It was originally built upon my [`chessie`](https://crates.io/crates/chessie) crate, which is a chess library that handles board representation, move generation and all other rules of chess.
+It was [originally](https://github.com/dannyhammer/toad/pull/73) built upon my [`chessie`](https://crates.io/crates/chessie) crate, which is a chess library that handles board representation, move generation and all other rules of chess.
+Development progress is recorded automatically in the [changelog](./CHANGELOG.md).
+All progression/non-regression testing is done through [OpenBench](https://github.com/AndyGrant/OpenBench) instance hosted [here](https://pyronomy.pythonanywhere.com/index/).
+Strength of the latest version can be found on the [CCRL pages](https://computerchess.org.uk/ccrl/)- just search for `Toad`!
 
 Up for a game? Play against Toad on [Lichess](https://lichess.org/@/toad-bot)!
 
 ## Overview
 
-By default, running Toad will cause it to print its version and authors and await input via `stdin`.
+Being a chess engine, Toad is CLI application that, by default, will await commands via `stdin`.
+Toad does not have a GUI.
+There are some [commands](#custom-commands) you can use to view the board state and make moves, but Toad's primary use case is to be paired with a GUI or match runner like [en croissant](https://encroissant.org/) or [cutechess](https://github.com/cutechess/cutechess).
 For convenience, you can run any of Toad's commands on startup and Toad will exit immediately after that command's execution.
 To run multiple commands on startup, pass them in with the `-c "<command>"` flag.
 You can pass in the `--no-exit` flag to continue execution after the command(s) have finished executing.
 Run the engine and execute the `help` command to see a list of available commands, and `--help` to view all CLI flags and arguments.
 
-### UCI
+### UCI Commands
 
 Toad abides (mostly) by the [Universal Chess Interface](https://backscattering.de/chess/uci/) protocol, and communicates through `stdin` and `stdout`.
 The parsing of UCI commands and responses is handled by my [`uci-parser`](https://crates.io/crates/uci-parser) crate.
@@ -38,21 +43,23 @@ In addition to the above UCI commands, Toad also supports the following custom c
 
 ```
 Commands:
-  await       Await the current search, blocking until it completes
-  bench       Run a benchmark with the provided parameters
-  display     Print a visual representation of the current board state
-  eval        Print an evaluation of the current position
-  exit        Quit the engine
-  fen         Generate and print a FEN string for the current position
-  flip        Flips the side-to-move. Equivalent to playing a nullmove
-  hashinfo    Display information about the current hash table(s) in the engine
-  makemove    Apply the provided move to the game, if possible
-  moves       Shows all legal moves in the current position, or for a specific piece
-  option      Display the current value of the specified option
-  perft       Performs a perft on the current position at the supplied depth, printing total node count
-  psqt        Outputs the Piece-Square table value for the provided piece at the provided square, scaled with the endgame weight
-  splitperft  Performs a split perft on the current position at the supplied depth
-  help        Print this message or the help of the given subcommand(s)
+Commands:
+  await          Await the current search, blocking until it completes
+  bench          Run a benchmark with the provided parameters
+  changevariant  Change the variant of chess being played, or display the current variant
+  display        Print a visual representation of the current board state
+  eval           Print an evaluation of the current position
+  exit           Quit the engine
+  fen            Generate and print a FEN string for the current position
+  flip           Flips the side-to-move. Equivalent to playing a nullmove
+  hashinfo       Display information about the current hash table(s) in the engine
+  makemove       Apply the provided move to the game, if possible
+  moves          Shows all legal moves in the current position, or for a specific piece
+  option         Display the current value of the specified option
+  perft          Performs a perft on the current position at the supplied depth, printing total node count
+  psqt           Outputs the Piece-Square table value for the provided piece at the provided square, scaled with the endgame weight
+  splitperft     Performs a split perft on the current position at the supplied depth
+  help           Print this message or the help of the given subcommand(s)
 ```
 
 For specifics on how a command works, run `toad <COMMAND> --help`
@@ -95,6 +102,7 @@ If you are willing to test the installation and execution of Toad on other opera
     -   [Bitboard representation](https://www.chessprogramming.org/Bitboards).
     -   [Magic Bitboards](https://www.chessprogramming.org/Magic_Bitboards) for sliding piece attacks.
     -   [Repetition](https://www.chessprogramming.org/Repetitions) detection through [Zobrist Hashing](https://www.chessprogramming.org/Zobrist_Hashing).
+    -   [Chess960](https://en.wikipedia.org/wiki/Fischer_random_chess) support via the `UCI_Chess960` option or `changevariant` command.
 -   Search:
     -   Based on the [Negamax](https://www.chessprogramming.org/Negamax) algorithm.
     -   [Alpha-Beta Pruning](https://www.chessprogramming.org/Alpha-Beta#Negamax_Framework) in a fail soft framework.

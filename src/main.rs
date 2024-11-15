@@ -14,7 +14,7 @@ struct Cli {
     #[arg(short, long, required = false)]
     commands: Vec<EngineCommand>,
 
-    /// Do not exit the engine after the startup commands have executed.
+    /// Do not exit the engine after the startup commands (-c) have executed.
     #[arg(short, long, default_value = "false")]
     no_exit: bool,
 }
@@ -23,20 +23,6 @@ fn main() {
     // Instantiate the engine
     let mut toad = Engine::new();
 
-    // Parse CLI args, send startup command(s), etc.
-    handle_cli_args(&toad);
-
-    // Display metadata
-    println!("{} by {}", toad.name(), toad.authors());
-
-    // Run the engine's main event loop
-    if let Err(e) = toad.run() {
-        eprintln!("{} encountered a fatal error: {e}", toad.name());
-    }
-}
-
-/// Initialize the engine, including parsing CLI args and sending startup command(s).
-fn handle_cli_args(toad: &Engine) {
     // Attempt to parse command-line arguments, if applicable
     match Cli::try_parse() {
         // If successful, send any provided commands to the engine
@@ -87,4 +73,10 @@ fn handle_cli_args(toad: &Engine) {
             }
         }
     }
+
+    // Display metadata
+    println!("{} by {}", toad.name(), toad.authors());
+
+    // Run the engine's main event loop
+    toad.run();
 }
