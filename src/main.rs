@@ -74,8 +74,12 @@ fn main() {
         }
     }
 
-    // Display metadata
-    println!("{} by {}", toad.name(), toad.authors());
+    // Display banner and metadata
+    println!(
+        " (o)--(o)    {}\n/.______.\\   by {}\n\\________/",
+        toad.name(),
+        toad.authors()
+    );
 
     // Run the engine's main event loop
     toad.run();

@@ -25,6 +25,12 @@ use crate::{
 /// Maximum depth that can be searched
 pub const MAX_DEPTH: u8 = u8::MAX / 2;
 
+/// Minium depth at which null move pruning can be applied.
+const MIN_NMP_DEPTH: u8 = tune::min_nmp_depth!();
+
+/// Value to subtract from `depth` when applying null move pruning.
+const NMP_REDUCTION_VALUE: u8 = tune::nmp_reduction_value!();
+
 /// Represents a window around a search result to act as our a/b bounds.
 #[derive(Debug)]
 struct AspirationWindow {
@@ -537,6 +543,28 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             return score;
         }
 
+        /****************************************************************************************************
+         * Null Move Pruning: https://www.chessprogramming.org/Null_Move_Pruning
+         ****************************************************************************************************/
+        // Cannot prune a whole node if in a PV node
+        if !PV && self.can_perform_nmp(game, depth) {
+            let null_game = game.with_nullmove_made();
+            self.prev_positions.push(*null_game.position());
+
+            // Search at a reduced depth with a zero-window
+            let nmp_depth = depth - NMP_REDUCTION_VALUE;
+            let score = -self.negamax::<PV>(&null_game, nmp_depth, ply + 1, -beta, -beta + 1);
+
+            self.prev_positions.pop();
+
+            // If making the nullmove produces a cutoff, we can assume that a full-depth search would also produce a cutoff
+            if score >= beta {
+                return score;
+            }
+
+            // If no cutoff was found, we must perform a full-depth search.
+        }
+
         // Sort moves so that we look at "promising" ones first
         let tt_move = self.get_tt_bestmove(game.key());
         moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
@@ -600,6 +628,9 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
                 // Fail soft beta-cutoff.
                 if score >= beta {
+                    /****************************************************************************************************
+                     * History Heuristic
+                     ****************************************************************************************************/
                     // Simple bonus based on depth
                     let bonus = Score::HISTORY_MULTIPLIER * depth as i32 - Score::HISTORY_OFFSET;
 
@@ -779,6 +810,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     }
 
     /// Gets the bestmove for the provided position from the TTable, if it exists.
+    #[inline(always)]
     fn get_tt_bestmove(&mut self, key: ZobristKey) -> Option<Move> {
         let mv = self.ttable.get(&key).map(|entry| entry.bestmove);
 
@@ -818,6 +850,24 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         }
 
         -score // We're sorting, so a lower number is better
+    }
+
+    /// Returns `true` if null move pruning can be performed on the supplied `game`.
+    #[inline(always)]
+    fn can_perform_nmp(&self, game: &Game<V>, depth: u8) -> bool {
+        // If the last move did not increment the fullmove, but *did* increment the halfmove, it was a nullmove
+        let last_move_was_nullmove = self.prev_positions.last().is_some_and(|pos| {
+            pos.fullmove() == game.fullmove() && pos.halfmove() == game.halfmove() + 1
+        });
+
+        // All pieces that are not Kings or Pawns
+        let non_king_pawn_material =
+            game.occupied() ^ game.kind(PieceKind::Pawn) ^ game.kind(PieceKind::King);
+
+        depth >= MIN_NMP_DEPTH // Can't play nullmove under a certain depth
+        && !last_move_was_nullmove // Can't play two nullmoves in a row
+        && !game.is_in_check() // Can't play a nullmove if we're in check
+        && non_king_pawn_material.is_nonempty() // Can't play nullmove if insufficient material (only Kings and Pawns)
     }
 }
 

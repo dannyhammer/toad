@@ -421,6 +421,14 @@ impl<V: Variant> Game<V> {
         copied
     }
 
+    /// Copies `self` and returns a [`Game`] after having applied a nullmove
+    #[inline(always)]
+    pub fn with_nullmove_made(&self) -> Self {
+        let mut copied = *self;
+        copied.make_nullmove();
+        copied
+    }
+
     /*
     /// Returns `true` if the game is in a position that is identical to a position it has been in before.
     ///
@@ -634,7 +642,13 @@ impl<V: Variant> Game<V> {
             };
 
             // Safety: This is a capture; there *must* be a piece at the destination square.
-            let victim = self.take(victim_square).unwrap();
+            // let victim = self.take(victim_square).unwrap();
+            let Some(victim) = self.take(victim_square) else {
+                panic!(
+                    "No piece to capture at {victim_square} in move {mv} on {:?}",
+                    self.to_fen()
+                );
+            };
             // let victim = unsafe { self.take(victim_square).unwrap_unchecked() };
             let victim_color = victim.color();
 
@@ -711,6 +725,41 @@ impl<V: Variant> Game<V> {
 
         // Now update movegen metadata
         self.recompute_legal_masks();
+    }
+
+    /// Applies a nullmove to the board.
+    ///
+    ///
+    /// This toggles the side-to-move, recomputes legal movegen data,
+    /// and increments the halfmove (for draw detection).
+    /// It does **NOT** increment the fullmove counter.
+    #[inline(always)]
+    pub fn make_nullmove(&mut self) {
+        // Clear the EP square from the last move (and un-hash it)
+        if let Some(ep_square) = self.position.ep_square.take() {
+            self.position.key.hash_ep_square(ep_square);
+        }
+
+        // A nullmove just changes the side-to-move, that's all
+        self.position.key.hash_side_to_move(self.side_to_move());
+        self.toggle_side_to_move();
+        self.position.key.hash_side_to_move(self.side_to_move());
+
+        // Also increment the halfmove counter,
+        self.position.halfmove += 1;
+
+        // Now update movegen metadata
+        self.recompute_legal_masks();
+    }
+
+    /// Makes a move in UCI notation on the board, if possible.
+    ///
+    /// Will return `Err` if `mv_str` is not valid for the current position.
+    #[inline(always)]
+    pub fn make_move_uci(&mut self, mv_str: &str) -> Result<()> {
+        let mv = Move::from_uci(self, mv_str)?;
+        self.make_move(mv);
+        Ok(())
     }
 
     /// Returns the [`GameVariant`] of this game.
@@ -878,7 +927,7 @@ impl<V: Variant> Game<V> {
     /// ```
     /// use toad::*;
     /// let game = Game::<Standard>::default();
-    /// let mask = game.knights(Color::White);
+    /// let mask = game.knight(Color::White);
     /// let mut knight_moves = game.get_legal_moves_from(mask).into_iter();
     ///
     /// assert_eq!(knight_moves.next().unwrap(), "b1a3");
@@ -916,8 +965,8 @@ impl<V: Variant> Game<V> {
         self.checkmask = self.enemy_or_empty(color) ^ self.king(opponent);
 
         // Starting off, the easiest checkers to find are Knights and Pawns; just the overlap of their attacks from the King and themselves.
-        self.checkers = self.knights(opponent) & knight_attacks(self.king_square)
-            | self.pawns(opponent) & pawn_attacks(self.king_square, color);
+        self.checkers = self.knight(opponent) & knight_attacks(self.king_square)
+            | self.pawn(opponent) & pawn_attacks(self.king_square, color);
 
         // By pretending that there is a Rook/Bishop at our King that can attack without blockers,
         //  we can find all possible sliding attacks *to* the King,
@@ -985,7 +1034,7 @@ impl<V: Variant> Game<V> {
     /// Generates and serializes all legal Pawn moves.
     fn generate_pawn_moves<const IN_CHECK: bool>(&self, mask: Bitboard, moves: &mut MoveList) {
         let color = self.side_to_move();
-        for from in self.pawns(color) & mask {
+        for from in self.pawn(color) & mask {
             let mobility = self.generate_legal_pawn_mobility::<IN_CHECK>(color, from);
 
             for to in mobility {
@@ -1027,7 +1076,7 @@ impl<V: Variant> Game<V> {
     /// Generates and serializes all legal Knight moves.
     fn generate_knight_moves<const IN_CHECK: bool>(&self, mask: Bitboard, moves: &mut MoveList) {
         let color = self.side_to_move();
-        for from in self.knights(color) & mask {
+        for from in self.knight(color) & mask {
             let attacks = knight_attacks(from);
             let mobility = self.generate_legal_normal_piece_mobility::<IN_CHECK>(from, attacks);
 
@@ -1726,10 +1775,10 @@ impl Position {
         }
 
         // Get all of the minor pieces
-        let wb = self.bishops(Color::White);
-        let wn = self.knights(Color::White);
-        let bb = self.bishops(Color::Black);
-        let bn = self.knights(Color::Black);
+        let wb = self.bishop(Color::White);
+        let wn = self.knight(Color::White);
+        let bb = self.bishop(Color::Black);
+        let bn = self.knight(Color::Black);
 
         // Match on all possible combinations
         match (
@@ -1882,7 +1931,7 @@ impl Position {
         // Ensure the mask ONLY contains the side-to-move's pieces
         let mask = mask.into() & self.color(color);
 
-        let pawns = self.pawns(color) & mask;
+        let pawns = self.pawn(color) & mask;
         let king = self.king(color) & mask;
         let normal_pieces = (blockers ^ pawns ^ king) & mask;
 
@@ -2222,31 +2271,31 @@ impl Board {
 
     /// Fetches the [`Bitboard`] for the Pawns of the provided color.
     #[inline(always)]
-    pub const fn pawns(&self, color: Color) -> Bitboard {
+    pub const fn pawn(&self, color: Color) -> Bitboard {
         self.piece_parts(color, PieceKind::Pawn)
     }
 
     /// Fetches the [`Bitboard`] for the Knights of the provided color.
     #[inline(always)]
-    pub const fn knights(&self, color: Color) -> Bitboard {
+    pub const fn knight(&self, color: Color) -> Bitboard {
         self.piece_parts(color, PieceKind::Knight)
     }
 
     /// Fetches the [`Bitboard`] for the Bishops of the provided color.
     #[inline(always)]
-    pub const fn bishops(&self, color: Color) -> Bitboard {
+    pub const fn bishop(&self, color: Color) -> Bitboard {
         self.piece_parts(color, PieceKind::Bishop)
     }
 
     /// Fetches the [`Bitboard`] for the Rooks of the provided color.
     #[inline(always)]
-    pub const fn rooks(&self, color: Color) -> Bitboard {
+    pub const fn rook(&self, color: Color) -> Bitboard {
         self.piece_parts(color, PieceKind::Rook)
     }
 
     /// Fetches the [`Bitboard`] for the Queen(s) of the provided color.
     #[inline(always)]
-    pub const fn queens(&self, color: Color) -> Bitboard {
+    pub const fn queen(&self, color: Color) -> Bitboard {
         self.piece_parts(color, PieceKind::Queen)
     }
 
@@ -2297,7 +2346,7 @@ impl Board {
         let blockers = self.occupied();
 
         let mut attacks = self.pawn_attack_map(color);
-        for square in self.knights(color) {
+        for square in self.knight(color) {
             attacks |= knight_attacks(square);
         }
         for square in self.diagonal_sliders(color) {
@@ -2316,7 +2365,7 @@ impl Board {
     /// Computes a [`Bitboard`] of all squares attacked by `color` Pawns, excluding En Passant for convenience.
     #[inline(always)]
     pub fn pawn_attack_map(&self, color: Color) -> Bitboard {
-        let pushes = self.pawns(color).forward_by(color, 1);
+        let pushes = self.pawn(color).forward_by(color, 1);
         pushes.east() | pushes.west()
     }
 
@@ -2799,5 +2848,20 @@ mod tests {
         // Despite having a Rook back on H1, White should NOT be able to queenside/long castle
         assert_ne!(pos.key(), original_key);
         assert_ne!(pos.castling_rights(), &original_rights);
+    }
+
+    #[test]
+    fn test_nullmove_works() {
+        let mut game = Game::<Standard>::from_fen(FEN_KIWIPETE).unwrap();
+        assert_eq!(game.side_to_move(), Color::White);
+        game.make_move_uci("a2a4").unwrap();
+        assert_eq!(game.side_to_move(), Color::Black);
+        assert_eq!(game.ep_square(), Some(Square::A3));
+        let key_before_nullmove = game.key();
+
+        game.make_nullmove();
+        assert_eq!(game.side_to_move(), Color::White);
+        assert!(game.ep_square().is_none());
+        assert_ne!(game.key(), key_before_nullmove);
     }
 }
