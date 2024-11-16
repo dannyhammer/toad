@@ -25,6 +25,8 @@ use crate::{
 /// Maximum depth that can be searched
 pub const MAX_DEPTH: u8 = u8::MAX / 2;
 
+const MIN_NMP_DEPTH: u8 = 3;
+
 /// Represents a window around a search result to act as our a/b bounds.
 #[derive(Debug)]
 struct AspirationWindow {
@@ -523,10 +525,11 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             return self.quiescence(game, ply, alpha, beta);
         }
 
+        let in_check = game.is_in_check();
         // If there are no legal moves, it's either mate or a draw.
         let mut moves = game.get_legal_moves();
         if moves.is_empty() {
-            let score = if game.is_in_check() {
+            let score = if in_check {
                 // Offset by ply to prefer earlier mates
                 -Score::MATE + ply
             } else {
@@ -535,6 +538,24 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             };
 
             return score;
+        }
+
+        // Null move pruning
+        if self.can_perform_nmp(game, depth) {
+            let null_game = game.with_nullmove_made();
+            self.prev_positions.push(*null_game.position());
+
+            let nmp_depth = depth - MIN_NMP_DEPTH;
+            let score = -self.negamax::<PV>(&null_game, nmp_depth, ply + 1, -beta, -beta + 1);
+
+            self.prev_positions.pop();
+
+            // If making the nullmove produces a cutoff, we can assume that a full-depth search would also produce a cutoff
+            if score >= beta {
+                return score;
+            }
+
+            // If no cutoff was found, we must perform a full-depth search.
         }
 
         // Sort moves so that we look at "promising" ones first
@@ -779,6 +800,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     }
 
     /// Gets the bestmove for the provided position from the TTable, if it exists.
+    #[inline(always)]
     fn get_tt_bestmove(&mut self, key: ZobristKey) -> Option<Move> {
         let mv = self.ttable.get(&key).map(|entry| entry.bestmove);
 
@@ -818,6 +840,23 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         }
 
         -score // We're sorting, so a lower number is better
+    }
+
+    #[inline(always)]
+    fn can_perform_nmp(&self, game: &Game<V>, depth: u8) -> bool {
+        // If the last move did not increment the fullmove, but *did* increment the halfmove, it was a nullmove
+        let last_move_was_nullmove = self.prev_positions.last().is_some_and(|pos| {
+            pos.fullmove() == game.fullmove() && pos.halfmove() == game.halfmove() + 1
+        });
+
+        // All pieces that are not Kings or Pawns
+        let non_king_pawn_material =
+            game.occupied() ^ game.kind(PieceKind::Pawn) ^ game.kind(PieceKind::King);
+
+        !game.is_in_check() // Can't play a nullmove if we're in check
+        && depth >= MIN_NMP_DEPTH // Can't play nullmove under a certain depth
+        && !last_move_was_nullmove // Can't play two nullmoves in a row
+        && non_king_pawn_material.is_nonempty() // Can't play nullmove if insufficient material (only Kings and Pawns)
     }
 }
 
