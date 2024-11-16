@@ -25,7 +25,11 @@ use crate::{
 /// Maximum depth that can be searched
 pub const MAX_DEPTH: u8 = u8::MAX / 2;
 
-const MIN_NMP_DEPTH: u8 = 3;
+/// Minium depth at which null move pruning can be applied.
+const MIN_NMP_DEPTH: u8 = tune::min_nmp_depth!();
+
+/// Value to subtract from `depth` when applying null move pruning.
+const NMP_REDUCTION_VALUE: u8 = tune::nmp_reduction_value!();
 
 /// Represents a window around a search result to act as our a/b bounds.
 #[derive(Debug)]
@@ -525,11 +529,10 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             return self.quiescence(game, ply, alpha, beta);
         }
 
-        let in_check = game.is_in_check();
         // If there are no legal moves, it's either mate or a draw.
         let mut moves = game.get_legal_moves();
         if moves.is_empty() {
-            let score = if in_check {
+            let score = if game.is_in_check() {
                 // Offset by ply to prefer earlier mates
                 -Score::MATE + ply
             } else {
@@ -540,12 +543,16 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             return score;
         }
 
-        // Null move pruning
-        if self.can_perform_nmp(game, depth) {
+        /****************************************************************************************************
+         * Null Move Pruning: https://www.chessprogramming.org/Null_Move_Pruning
+         ****************************************************************************************************/
+        // Cannot prune a whole node if in a PV node
+        if !PV && self.can_perform_nmp(game, depth) {
             let null_game = game.with_nullmove_made();
             self.prev_positions.push(*null_game.position());
 
-            let nmp_depth = depth - MIN_NMP_DEPTH;
+            // Search at a reduced depth with a zero-window
+            let nmp_depth = depth - NMP_REDUCTION_VALUE;
             let score = -self.negamax::<PV>(&null_game, nmp_depth, ply + 1, -beta, -beta + 1);
 
             self.prev_positions.pop();

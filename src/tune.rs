@@ -94,3 +94,19 @@ macro_rules! history_offset {
     };
 }
 pub(crate) use history_offset;
+
+/// Minimum depth at which null move pruning can be applied.
+macro_rules! min_nmp_depth {
+    () => {
+        3
+    };
+}
+pub(crate) use min_nmp_depth;
+
+/// Value to subtract from `depth` when applying null move pruning.
+macro_rules! nmp_reduction_value {
+    () => {
+        3
+    };
+}
+pub(crate) use nmp_reduction_value;
