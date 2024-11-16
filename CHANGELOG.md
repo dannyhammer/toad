@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/dannyhammer/toad/compare/v1.2.0...v1.3.0) (2024-11-16)
+
+
+### Features
+
+* null move pruning ([#80](https://github.com/dannyhammer/toad/issues/80)) ([001500d](https://github.com/dannyhammer/toad/commit/001500d8e284619bf03dcdbf5b73a7ff9946f37f))
+
 ## [1.2.0](https://github.com/dannyhammer/toad/compare/v1.1.0...v1.2.0) (2024-11-10)
 
 
