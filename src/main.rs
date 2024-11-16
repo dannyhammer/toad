@@ -81,15 +81,6 @@ fn main() {
         toad.authors()
     );
 
-    //     println!(
-    //         "    o)__
-    //    (_  _`\\
-    //     z/z\\__)
-    // "
-    //     );
-
-    //     println!("   __(o\n /`_  _)\n(__/z/z");
-
     // Run the engine's main event loop
     toad.run();
 }

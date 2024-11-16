@@ -628,6 +628,9 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
                 // Fail soft beta-cutoff.
                 if score >= beta {
+                    /****************************************************************************************************
+                     * History Heuristic
+                     ****************************************************************************************************/
                     // Simple bonus based on depth
                     let bonus = Score::HISTORY_MULTIPLIER * depth as i32 - Score::HISTORY_OFFSET;
 
@@ -849,6 +852,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         -score // We're sorting, so a lower number is better
     }
 
+    /// Returns `true` if null move pruning can be performed on the supplied `game`.
     #[inline(always)]
     fn can_perform_nmp(&self, game: &Game<V>, depth: u8) -> bool {
         // If the last move did not increment the fullmove, but *did* increment the halfmove, it was a nullmove
@@ -860,9 +864,9 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         let non_king_pawn_material =
             game.occupied() ^ game.kind(PieceKind::Pawn) ^ game.kind(PieceKind::King);
 
-        !game.is_in_check() // Can't play a nullmove if we're in check
-        && depth >= MIN_NMP_DEPTH // Can't play nullmove under a certain depth
+        depth >= MIN_NMP_DEPTH // Can't play nullmove under a certain depth
         && !last_move_was_nullmove // Can't play two nullmoves in a row
+        && !game.is_in_check() // Can't play a nullmove if we're in check
         && non_king_pawn_material.is_nonempty() // Can't play nullmove if insufficient material (only Kings and Pawns)
     }
 }

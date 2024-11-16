@@ -1,4 +1,4 @@
-# Toad - A UCI-compatible toy chess engine
+# Toad 🐸 A UCI-compatible toy chess engine
 
 Toad is a work-in-progress [chess engine](https://en.wikipedia.org/wiki/Chess_engine), and serves as my personal excuse to write fun code in Rust.
 It was [originally](https://github.com/dannyhammer/toad/pull/73) built upon my [`chessie`](https://crates.io/crates/chessie) crate, which is a chess library that handles board representation, move generation and all other rules of chess.
@@ -42,7 +42,6 @@ The following UCI commands (and arguments) are supported:
 In addition to the above UCI commands, Toad also supports the following custom commands:
 
 ```
-Commands:
 Commands:
   await          Await the current search, blocking until it completes
   bench          Run a benchmark with the provided parameters
@@ -112,6 +111,7 @@ If you are willing to test the installation and execution of Toad on other opera
     -   [Transposition Table](https://www.chessprogramming.org/Transposition_Table).
     -   [Principal Variation Search](https://www.chessprogramming.org/Principal_Variation_Search).
     -   [Aspiration Windows](https://www.chessprogramming.org/Aspiration_Windows) with [gradual widening](https://www.chessprogramming.org/Aspiration_Windows#Gradual_Widening).
+    -   [Null Move Pruning](https://www.chessprogramming.org/Null_Move_Pruning).
     -   Move Ordering:
         -   [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) with relative piece values `K < P < N < B < R < Q`, so `KxR` is ordered before `PxR`.
         -   [Hash moves](https://www.chessprogramming.org/Hash_Move).
@@ -135,3 +135,5 @@ More people have helped me on this journey than I can track, but I'll name a few
 -   [Analog-Hors](https://github.com/analog-hors), for an excellent [article on magic bitboards](https://analog-hors.github.io/site/magic-bitboards/)
 -   The authors of [viridithas](https://github.com/cosmobobak/viridithas/) and [Stormphrax](https://github.com/Ciekce/Stormphrax), for allowing their engines to be open source and for answering all my silly questions.
 -   [Andrew Grant](https://github.com/AndyGrant/) for creating [OpenBench](https://github.com/AndyGrant/OpenBench) and being willing to help me with its setup and use.
+-   The authors of [Yukari](https://github.com/yukarichess/yukari) for motivation through friendly competition.
+-   [Paul T](https://github.com/DeveloperPaul123), for feedback on my [`uci-parser`](https://crates.io/crates/uci-parser) crate.
