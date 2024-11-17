@@ -856,7 +856,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         /****************************************************************************************************
          * Reverse Futility Pruning: https://www.chessprogramming.org/Reverse_Futility_Pruning
          ****************************************************************************************************/
-        let rfp_score = game.eval() - Score::RFP_MARGIN;
+        let rfp_score = game.eval() - Score::RFP_MARGIN * depth as i32;
         if depth <= MAX_RFP_DEPTH && rfp_score >= beta {
             return Some(rfp_score);
         }
