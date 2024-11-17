@@ -589,12 +589,14 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                     // Recurse on the principle variation
                     score = -self.negamax::<PV>(&new, depth - 1, ply + 1, -beta, -alpha);
                 } else {
+                    // By default, the next search will be conducted at a depth of 1 less
+                    let mut r = 1;
+
                     // If we can perform LMR, reduce the depth at which we perform the next search
-                    let r = if depth >= MIN_LMR_DEPTH && i >= MIN_LMR_MOVES {
-                        2
-                    } else {
-                        1
+                    if depth >= MIN_LMR_DEPTH && i >= MIN_LMR_MOVES {
+                        r += 2 // By default, LMR increases reduction by 2
                     };
+
                     // Search with a reduced, null window
                     score = -self.negamax::<false>(&new, depth - r, ply + 1, -alpha - 1, -alpha);
 
