@@ -618,11 +618,11 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                         score =
                             -self.negamax::<false>(&new, new_depth, ply + 1, -alpha - 1, -alpha);
                     }
-                } else if !PV || moves.len() > 1 {
+                } else if !PV || i > 0 {
                     score = -self.negamax::<false>(&new, new_depth, ply + 1, -alpha - 1, -alpha);
                 }
 
-                if PV && (moves.len() == 1 || score > alpha) {
+                if PV && (i == 0 || score > alpha) {
                     score = -self.negamax::<PV>(&new, new_depth, ply + 1, -beta, -alpha);
                 }
 
