@@ -34,6 +34,12 @@ const NMP_REDUCTION_VALUE: u8 = tune::nmp_reduction_value!();
 /// MAximum depth at which to apply reverse futility pruning.
 const MAX_RFP_DEPTH: u8 = tune::max_rfp_depth!();
 
+/// Minimum depth at which to apply late move reductions.
+const MIN_LMR_DEPTH: u8 = tune::min_lmr_depth!();
+
+/// Minimum moves that must be made before late move reductions can be applied.
+const MIN_LMR_MOVES: usize = tune::min_lmr_moves!();
+
 /// Represents a window around a search result to act as our a/b bounds.
 #[derive(Debug)]
 struct AspirationWindow {
@@ -583,8 +589,14 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                     // Recurse on the principle variation
                     score = -self.negamax::<PV>(&new, depth - 1, ply + 1, -beta, -alpha);
                 } else {
-                    // Search with a null window
-                    score = -self.negamax::<false>(&new, depth - 1, ply + 1, -alpha - 1, -alpha);
+                    // If we can perform LMR, reduce the depth at which we perform the next search
+                    let r = if depth >= MIN_LMR_DEPTH && i >= MIN_LMR_MOVES {
+                        2
+                    } else {
+                        1
+                    };
+                    // Search with a reduced, null window
+                    score = -self.negamax::<false>(&new, depth - r, ply + 1, -alpha - 1, -alpha);
 
                     // If it failed, perform a full re-search with the full a/b bounds
                     if alpha < score && score < beta {

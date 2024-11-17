@@ -111,7 +111,7 @@ macro_rules! nmp_reduction_value {
 }
 pub(crate) use nmp_reduction_value;
 
-/// MAximum depth at which to apply reverse futility pruning.
+/// Maximum depth at which to apply reverse futility pruning.
 macro_rules! max_rfp_depth {
     () => {
         5
@@ -126,3 +126,19 @@ macro_rules! rfp_margin {
     };
 }
 pub(crate) use rfp_margin;
+
+/// Minimum depth at which to apply late move reductions.
+macro_rules! min_lmr_depth {
+    () => {
+        3
+    };
+}
+pub(crate) use min_lmr_depth;
+
+/// Minimum moves that must be made before late move reductions can be applied.
+macro_rules! min_lmr_moves {
+    () => {
+        5
+    };
+}
+pub(crate) use min_lmr_moves;
