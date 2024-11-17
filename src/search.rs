@@ -591,7 +591,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                 } else {
                     // If we can perform LMR, reduce the depth at which we perform the next search
                     let r = if depth >= MIN_LMR_DEPTH && i >= MIN_LMR_MOVES {
-                        2
+                        2 - (new.is_in_check() as u8)
                     } else {
                         1
                     };
