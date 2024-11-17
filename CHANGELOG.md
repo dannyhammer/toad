@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/dannyhammer/toad/compare/v1.3.0...v1.4.0) (2024-11-17)
+
+
+### Features
+
+* reverse futility pruning ([#82](https://github.com/dannyhammer/toad/issues/82)) ([85abda0](https://github.com/dannyhammer/toad/commit/85abda00317639e9ff77bc48da662954f8d80af5))
+
 ## [1.3.0](https://github.com/dannyhammer/toad/compare/v1.2.0...v1.3.0) (2024-11-16)
 
 
