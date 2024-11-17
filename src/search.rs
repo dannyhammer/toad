@@ -573,8 +573,66 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         for (i, mv) in moves.iter().enumerate() {
             // Copy-make the new position
             let new = game.with_move_made(*mv);
-            let mut score;
+            let mut score = Score::DRAW;
 
+            /*
+            let new_depth = depth + extension - 1;
+
+            if can_reduce {
+                let mut lmr_reduction = base_lmr_reduction; // exercise to the reader
+
+                lmr_reduction += something;
+                lmr_reduction -= something_else;
+
+                let reduced_depth = (new_depth - lmr_reduction).max(1).min(new_depth);
+                score = -search::<NON_PV>(reduced_depth, ply + 1, -alpha - 1, -alpha);
+
+                if score > alpha && reduced_depth < new_depth {
+                    score = -search::<NON_PV>(new_depth, ply + 1, -alpha - 1, -alpha);
+                }
+            } else if !pv_node || legal_moves > 1 {
+                score = -search::<NON_PV>(new_depth, ply + 1, -alpha - 1, -alpha);
+            }
+
+            if pv_node && (legal_moves == 1 || score > alpha) {
+                score = -search::<PV>(new_depth, ply + 1, -beta, -alpha);
+            }
+                         */
+
+            if !self.is_draw(&new) {
+                // Append the move onto the history
+                self.prev_positions.push(*new.position());
+                let new_depth = depth - 1;
+
+                if depth >= MIN_LMR_DEPTH && i >= MIN_LMR_MOVES {
+                    let lmr_reduction = 1;
+
+                    // lmr_reduction += something;
+                    // lmr_reduction -= something_else;
+
+                    let reduced_depth = (new_depth - lmr_reduction).max(1).min(new_depth);
+                    score =
+                        -self.negamax::<false>(&new, reduced_depth, ply + 1, -alpha - 1, -alpha);
+
+                    if score > alpha && reduced_depth < new_depth {
+                        score =
+                            -self.negamax::<false>(&new, new_depth, ply + 1, -alpha - 1, -alpha);
+                    }
+                } else if !PV || moves.len() > 1 {
+                    score = -self.negamax::<false>(&new, new_depth, ply + 1, -alpha - 1, -alpha);
+                }
+
+                if PV && (moves.len() == 1 || score > alpha) {
+                    score = -self.negamax::<PV>(&new, new_depth, ply + 1, -beta, -alpha);
+                }
+
+                self.nodes += 1; // We've now searched this node
+
+                // Pop the move from the history
+                self.prev_positions.pop();
+            }
+
+            /*
             // Determine the score of making this move
             if self.is_draw(&new) {
                 score = Score::DRAW;
@@ -609,6 +667,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                 // Pop the move from the history
                 self.prev_positions.pop();
             };
+             */
 
             /****************************************************************************************************
              * Score evaluation & bounds adjustments
