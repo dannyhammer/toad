@@ -31,6 +31,9 @@ const MIN_NMP_DEPTH: u8 = tune::min_nmp_depth!();
 /// Value to subtract from `depth` when applying null move pruning.
 const NMP_REDUCTION_VALUE: u8 = tune::nmp_reduction_value!();
 
+/// MAximum depth at which to apply reverse futility pruning.
+const MAX_RFP_DEPTH: u8 = tune::max_rfp_depth!();
+
 /// Represents a window around a search result to act as our a/b bounds.
 #[derive(Debug)]
 struct AspirationWindow {
@@ -543,26 +546,9 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             return score;
         }
 
-        /****************************************************************************************************
-         * Null Move Pruning: https://www.chessprogramming.org/Null_Move_Pruning
-         ****************************************************************************************************/
-        // Cannot prune a whole node if in a PV node
-        if !PV && self.can_perform_nmp(game, depth) {
-            let null_game = game.with_nullmove_made();
-            self.prev_positions.push(*null_game.position());
-
-            // Search at a reduced depth with a zero-window
-            let nmp_depth = depth - NMP_REDUCTION_VALUE;
-            let score = -self.negamax::<PV>(&null_game, nmp_depth, ply + 1, -beta, -beta + 1);
-
-            self.prev_positions.pop();
-
-            // If making the nullmove produces a cutoff, we can assume that a full-depth search would also produce a cutoff
-            if score >= beta {
-                return score;
-            }
-
-            // If no cutoff was found, we must perform a full-depth search.
+        // If we CAN prune this node, do so
+        if let Some(score) = self.node_pruning_score::<PV>(game, depth, ply, beta) {
+            return score;
         }
 
         // Sort moves so that we look at "promising" ones first
@@ -852,9 +838,34 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         -score // We're sorting, so a lower number is better
     }
 
-    /// Returns `true` if null move pruning can be performed on the supplied `game`.
-    #[inline(always)]
-    fn can_perform_nmp(&self, game: &Game<V>, depth: u8) -> bool {
+    /// If we can prune the provided node, this function returns a score to return upon pruning.
+    ///
+    /// If we cannot prune the node, this function returns `None`.
+    fn node_pruning_score<const PV: bool>(
+        &mut self,
+        game: &Game<V>,
+        depth: u8,
+        ply: i32,
+        beta: Score,
+    ) -> Option<Score> {
+        // Cannot prune anything in a PV node or if we're in check
+        if PV || game.is_in_check() {
+            return None;
+        }
+
+        /****************************************************************************************************
+         * Reverse Futility Pruning: https://www.chessprogramming.org/Reverse_Futility_Pruning
+         ****************************************************************************************************/
+        // If our static eval is too good (better than beta), we can prune this branch.
+        // Multiplying our margin by depth makes this pruning process less risky for higher depths.
+        let rfp_score = game.eval() - Score::RFP_MARGIN * depth as i32;
+        if depth <= MAX_RFP_DEPTH && rfp_score >= beta {
+            return Some(rfp_score);
+        }
+
+        /****************************************************************************************************
+         * Null Move Pruning: https://www.chessprogramming.org/Null_Move_Pruning
+         ****************************************************************************************************/
         // If the last move did not increment the fullmove, but *did* increment the halfmove, it was a nullmove
         let last_move_was_nullmove = self.prev_positions.last().is_some_and(|pos| {
             pos.fullmove() == game.fullmove() && pos.halfmove() == game.halfmove() + 1
@@ -864,10 +875,28 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         let non_king_pawn_material =
             game.occupied() ^ game.kind(PieceKind::Pawn) ^ game.kind(PieceKind::King);
 
-        depth >= MIN_NMP_DEPTH // Can't play nullmove under a certain depth
+        let can_perform_nmp = depth >= MIN_NMP_DEPTH // Can't play nullmove under a certain depth
         && !last_move_was_nullmove // Can't play two nullmoves in a row
-        && !game.is_in_check() // Can't play a nullmove if we're in check
-        && non_king_pawn_material.is_nonempty() // Can't play nullmove if insufficient material (only Kings and Pawns)
+        && non_king_pawn_material.is_nonempty(); // Can't play nullmove if insufficient material (only Kings and Pawns)
+
+        if can_perform_nmp {
+            let null_game = game.with_nullmove_made();
+            self.prev_positions.push(*null_game.position());
+
+            // Search at a reduced depth with a zero-window
+            let nmp_depth = depth - NMP_REDUCTION_VALUE;
+            let score = -self.negamax::<PV>(&null_game, nmp_depth, ply + 1, -beta, -beta + 1);
+
+            self.prev_positions.pop();
+
+            // If making the nullmove produces a cutoff, we can assume that a full-depth search would also produce a cutoff
+            if score >= beta {
+                return Some(score);
+            }
+        }
+
+        // If no pruning technique was possible, return no score
+        None
     }
 }
 
