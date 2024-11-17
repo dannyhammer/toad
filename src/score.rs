@@ -44,6 +44,9 @@ impl Score {
     /// Value to subtract from a history score at a given depth.
     pub const HISTORY_OFFSET: Self = Self(tune::history_offset!());
 
+    /// Safety margin when applying reverse futility pruning.
+    pub const RFP_MARGIN: Self = Self(tune::rfp_margin!());
+
     /// Returns `true` if the score is a mate score.
     #[inline(always)]
     pub fn is_mate(&self) -> bool {

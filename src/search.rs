@@ -31,6 +31,9 @@ const MIN_NMP_DEPTH: u8 = tune::min_nmp_depth!();
 /// Value to subtract from `depth` when applying null move pruning.
 const NMP_REDUCTION_VALUE: u8 = tune::nmp_reduction_value!();
 
+/// MAximum depth at which to apply reverse futility pruning.
+const MAX_RFP_DEPTH: u8 = tune::max_rfp_depth!();
+
 /// Represents a window around a search result to act as our a/b bounds.
 #[derive(Debug)]
 struct AspirationWindow {
@@ -563,6 +566,15 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             }
 
             // If no cutoff was found, we must perform a full-depth search.
+        }
+
+        /****************************************************************************************************
+         * Reverse Futility Pruning: https://www.chessprogramming.org/Reverse_Futility_Pruning
+         ****************************************************************************************************/
+        let rfp_score = game.eval() - Score::RFP_MARGIN;
+        if !PV && !game.is_in_check() && depth <= MAX_RFP_DEPTH && rfp_score >= beta {
+            return rfp_score;
+            // Similarly to NMP, we must perform a full-depth search if no cutoff was found.
         }
 
         // Sort moves so that we look at "promising" ones first

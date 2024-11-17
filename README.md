@@ -112,6 +112,7 @@ If you are willing to test the installation and execution of Toad on other opera
     -   [Principal Variation Search](https://www.chessprogramming.org/Principal_Variation_Search).
     -   [Aspiration Windows](https://www.chessprogramming.org/Aspiration_Windows) with [gradual widening](https://www.chessprogramming.org/Aspiration_Windows#Gradual_Widening).
     -   [Null Move Pruning](https://www.chessprogramming.org/Null_Move_Pruning).
+    -   [Reverse Futility Pruning](https://www.chessprogramming.org/Reverse_Futility_Pruning).
     -   Move Ordering:
         -   [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) with relative piece values `K < P < N < B < R < Q`, so `KxR` is ordered before `PxR`.
         -   [Hash moves](https://www.chessprogramming.org/Hash_Move).
