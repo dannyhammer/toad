@@ -594,7 +594,8 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
                     // If we can perform LMR, reduce the depth at which we perform the next search
                     if depth >= MIN_LMR_DEPTH && i >= MIN_LMR_MOVES {
-                        r += 2 // By default, LMR increases reduction by 2
+                        r += 2; // By default, LMR increases reduction by 2
+                        r -= new.is_in_check() as u8 // If we're in check, we shouldn't reduce as much
                     };
 
                     // Search with a reduced, null window
