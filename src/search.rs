@@ -40,12 +40,6 @@ const MIN_LMR_DEPTH: u8 = tune::min_lmr_depth!();
 /// Minimum moves that must be made before late move reductions can be applied.
 const MIN_LMR_MOVES: usize = tune::min_lmr_moves!();
 
-/// Base value in the LMR formula.
-const LMR_OFFSET: f32 = tune::lmr_offset!();
-
-/// Divisor in the LMR formula.
-const LMR_DIVISOR: f32 = tune::lmr_divisor!();
-
 /// Represents a window around a search result to act as our a/b bounds.
 #[derive(Debug)]
 struct AspirationWindow {
@@ -591,9 +585,8 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                  * Late Move Reductions: https://www.chessprogramming.org/Late_Move_Reductions
                  ****************************************************************************************************/
                 if depth >= MIN_LMR_DEPTH && i >= MIN_LMR_MOVES {
-                    // Base LMR reduction increases as we go higher in depth and/or make more moves
-                    let mut lmr_reduction =
-                        (LMR_OFFSET + (depth as f32).ln() * (i as f32).ln() / LMR_DIVISOR) as u8;
+                    // By default, LMR reduces by a depth of 2 ply.
+                    let mut lmr_reduction = 2;
 
                     // Increase/decrease the reduction based on current conditions
                     // lmr_reduction += something;

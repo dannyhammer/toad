@@ -142,19 +142,3 @@ macro_rules! min_lmr_moves {
     };
 }
 pub(crate) use min_lmr_moves;
-
-/// Base value in the LMR formula.
-macro_rules! lmr_offset {
-    () => {
-        0.8
-    };
-}
-pub(crate) use lmr_offset;
-
-/// Divisor in the LMR formula.
-macro_rules! lmr_divisor {
-    () => {
-        2.35
-    };
-}
-pub(crate) use lmr_divisor;
