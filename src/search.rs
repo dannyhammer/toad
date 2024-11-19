@@ -534,11 +534,18 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     fn negamax<const PV: bool>(
         &mut self,
         game: &Game<V>,
-        depth: u8,
+        mut depth: u8,
         ply: i32,
         mut alpha: Score,
         beta: Score,
     ) -> Score {
+        /****************************************************************************************************
+         * Check Extensions: https://www.chessprogramming.org/Check_Extensions
+         ****************************************************************************************************/
+        if game.is_in_check() {
+            depth += 1;
+        }
+
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
             return self.quiescence(game, ply, alpha, beta);
