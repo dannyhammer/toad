@@ -4,9 +4,12 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use std::fmt;
+use std::{
+    fmt,
+    ops::{Index, IndexMut},
+};
 
-use crate::{Color, File, Piece, PieceKind, Rank, Score, Square};
+use crate::{Color, Piece, PieceKind, Score, SmallDisplayTable, Square, Table};
 
 /// Piece-Square tables copied from [PeSTO](https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function#Source_Code)
 #[rustfmt::skip]
@@ -154,8 +157,9 @@ const KING_EG: Psqt = Psqt::new(PieceKind::King, [
 ]);
 
 /// A [Piece-Square Table](https://www.chessprogramming.org/Piece-Square_Tables) for use in evaluation.
-#[derive(Debug)]
-pub struct Psqt([Score; Square::COUNT]);
+#[derive(Debug, Clone, Copy)]
+// pub struct Psqt([Score; Square::COUNT]);
+pub struct Psqt(Table<Score>);
 
 impl Psqt {
     /// Fetch the mid-game and end-game evaluations for a `piece` at `square`.
@@ -195,13 +199,13 @@ impl Psqt {
             i += 1;
         }
 
-        Self(flipped)
+        Self(Table::new(flipped))
     }
 
     /// Get the value of this PSQT at the provided square.
     #[inline(always)]
     pub const fn get(&self, square: Square) -> Score {
-        self.0[square.index()]
+        *self.0.get(square)
     }
 
     /// Get the value of this PSQT at the provided square, relative to `color`.
@@ -211,35 +215,27 @@ impl Psqt {
     }
 }
 
+impl Index<Square> for Psqt {
+    type Output = Score;
+    fn index(&self, index: Square) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl IndexMut<Square> for Psqt {
+    fn index_mut(&mut self, index: Square) -> &mut Self::Output {
+        &mut self.0[index]
+    }
+}
+
 impl fmt::Display for Psqt {
     /// Printing a [`Psqt`] will display it in the same way it is written in the code (White's perspective).
     ///
     /// If the alternate formatter is used (`#`), it will print as if from Black's perspective.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Format actual PSQ values
-        for rank in Rank::iter().rev() {
-            write!(f, "{rank}")?;
-            write!(f, "| ")?;
-            for file in File::iter() {
-                let color = Color::from_bool(f.alternate());
-                let value = self.get_relative(Square::new(file, rank), color);
-                write!(f, "{value:3} ")?;
-            }
-            writeln!(f)?;
-        }
-        // Format line at bottom of board
-        write!(f, " +")?;
-        for _ in File::iter() {
-            write!(f, "----")?;
-        }
-        write!(f, "\n    ")?;
-        // Format file characters
-        for file in File::iter() {
-            write!(f, "{file}")?;
-            write!(f, "   ")?;
-        }
-
-        Ok(())
+        let color = Color::from_bool(f.alternate());
+        let table = SmallDisplayTable::from_fn(|sq| [self.get_relative(sq, color)]);
+        write!(f, "{table:>3}")
     }
 }
 

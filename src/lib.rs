@@ -41,6 +41,8 @@ mod board {
     mod prng;
     /// Squares on a chessboard (including files and ranks).
     mod square;
+    /// Generic tables to represent 64 values- one per square on a chessboard.
+    mod table;
     /// Zobrist keys for hashing chess positions.
     mod zobrist;
 
@@ -52,6 +54,7 @@ mod board {
     pub use position::*;
     pub use prng::*;
     pub use square::*;
+    pub use table::*;
     pub use zobrist::*;
 }
 
