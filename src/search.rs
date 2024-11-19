@@ -34,6 +34,18 @@ const NMP_REDUCTION_VALUE: u8 = tune::nmp_reduction_value!();
 /// MAximum depth at which to apply reverse futility pruning.
 const MAX_RFP_DEPTH: u8 = tune::max_rfp_depth!();
 
+/// Minimum depth at which to apply late move reductions.
+const MIN_LMR_DEPTH: u8 = tune::min_lmr_depth!();
+
+/// Minimum moves that must be made before late move reductions can be applied.
+const MIN_LMR_MOVES: usize = tune::min_lmr_moves!();
+
+/// Base value in the LMR formula.
+const LMR_OFFSET: f32 = tune::lmr_offset!();
+
+/// Divisor in the LMR formula.
+const LMR_DIVISOR: f32 = tune::lmr_divisor!();
+
 /// Represents a window around a search result to act as our a/b bounds.
 #[derive(Debug)]
 struct AspirationWindow {
@@ -633,11 +645,18 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     fn negamax<const PV: bool>(
         &mut self,
         game: &Game<V>,
-        depth: u8,
+        mut depth: u8,
         ply: i32,
         mut alpha: Score,
         beta: Score,
     ) -> Score {
+        /****************************************************************************************************
+         * Check Extensions: https://www.chessprogramming.org/Check_Extensions
+         ****************************************************************************************************/
+        if game.is_in_check() {
+            depth += 1;
+        }
+
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
             return self.quiescence(game, ply, alpha, beta);
@@ -678,36 +697,57 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         for (i, mv) in moves.iter().enumerate() {
             // Copy-make the new position
             let new = game.with_move_made(*mv);
-            let mut score;
+            let mut score = Score::DRAW;
 
-            // Determine the score of making this move
-            if self.is_draw(&new) {
-                score = Score::DRAW;
-            } else {
+            if !self.is_draw(&new) {
                 // Append the move onto the history
                 self.prev_positions.push(*new.position());
+
+                let new_depth = depth - 1;
+
+                /****************************************************************************************************
+                 * Late Move Reductions: https://www.chessprogramming.org/Late_Move_Reductions
+                 ****************************************************************************************************/
+                if depth >= MIN_LMR_DEPTH && i >= MIN_LMR_MOVES {
+                    // Base LMR reduction increases as we go higher in depth and/or make more moves
+                    let mut lmr_reduction =
+                        (LMR_OFFSET + (depth as f32).ln() * (i as f32).ln() / LMR_DIVISOR) as u8;
+
+                    // Increase/decrease the reduction based on current conditions
+                    // lmr_reduction += something;
+                    lmr_reduction -= new.is_in_check() as u8;
+
+                    // Reduced depth should never exceed `new_depth` and should never be less than `1`.
+                    let reduced_depth = (new_depth - lmr_reduction).max(1).min(new_depth);
+
+                    // Search at a reduced depth with a null window
+                    score =
+                        -self.negamax::<false>(&new, reduced_depth, ply + 1, -alpha - 1, -alpha);
+
+                    // If that failed *high* (raised alpha), re-search at the full depth with the null window
+                    if score > alpha && reduced_depth < new_depth {
+                        score =
+                            -self.negamax::<false>(&new, new_depth, ply + 1, -alpha - 1, -alpha);
+                    }
+                } else if !PV || i > 0 {
+                    // All non-PV nodes get searched with a null window
+                    score = -self.negamax::<false>(&new, new_depth, ply + 1, -alpha - 1, -alpha);
+                }
 
                 /****************************************************************************************************
                  * Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
                  ****************************************************************************************************/
-                if i == 0 {
-                    // Recurse on the principle variation
-                    score = -self.negamax::<PV>(&new, depth - 1, ply + 1, -beta, -alpha);
-                } else {
-                    // Search with a null window
-                    score = -self.negamax::<false>(&new, depth - 1, ply + 1, -alpha - 1, -alpha);
+                // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
+                if PV && (i == 0 || score > alpha) {
+                    score = -self.negamax::<PV>(&new, new_depth, ply + 1, -beta, -alpha);
+                }
 
-                    // If it failed, perform a full re-search with the full a/b bounds
-                    if alpha < score && score < beta {
-                        score = -self.negamax::<PV>(&new, depth - 1, ply + 1, -beta, -alpha);
-                    }
-                };
-
-                self.nodes += 1; // We've now searched this node
+                // We've now searched this node
+                self.nodes += 1;
 
                 // Pop the move from the history
                 self.prev_positions.pop();
-            };
+            }
 
             /****************************************************************************************************
              * Score evaluation & bounds adjustments
