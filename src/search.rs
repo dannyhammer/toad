@@ -550,7 +550,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     fn negamax<const PV: bool>(
         &mut self,
         game: &Game<V>,
-        mut depth: u8,
+        depth: u8,
         ply: i32,
         mut bounds: SearchBounds,
     ) -> Score {
@@ -565,13 +565,6 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             if let Some(tt_score) = self.probe_tt(game.key(), depth, bounds) {
                 return tt_score;
             }
-        }
-
-        /****************************************************************************************************
-         * Check Extensions: https://www.chessprogramming.org/Check_Extensions
-         ****************************************************************************************************/
-        if game.is_in_check() {
-            depth += 1;
         }
 
         /****************************************************************************************************
@@ -620,7 +613,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                 // Append the move onto the history
                 self.prev_positions.push(*new.position());
 
-                let new_depth = depth - 1;
+                let new_depth = depth - 1 + self.extension_value(&new);
 
                 // If this node can be reduced, search it with a reduced window.
                 if let Some(lmr_reduction) = self.reduction_value::<PV>(depth, &new, i) {
@@ -1006,6 +999,14 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
             lmr_reduction
         })
+    }
+
+    #[inline(always)]
+    fn extension_value(&self, game: &Game<V>) -> u8 {
+        /****************************************************************************************************
+         * Check Extensions: https://www.chessprogramming.org/Check_Extensions
+         ****************************************************************************************************/
+        game.is_in_check() as u8
     }
 }
 
