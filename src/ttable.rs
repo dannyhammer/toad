@@ -4,7 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use crate::{Move, Score, ZobristKey, BYTES_IN_MB};
+use crate::{Move, Score, SearchBounds, ZobristKey, BYTES_IN_MB};
 
 /// Type of node encountered during search.
 ///
@@ -33,10 +33,10 @@ impl NodeType {
     ///     EXACT
     /// ```
     #[inline(always)]
-    pub fn new(score: Score, alpha: Score, beta: Score) -> Self {
-        if score <= alpha {
+    pub fn new(score: Score, bounds: SearchBounds) -> Self {
+        if score <= bounds.alpha {
             Self::All
-        } else if score >= beta {
+        } else if score >= bounds.beta {
             Self::Cut
         } else {
             Self::Pv
@@ -64,18 +64,21 @@ pub struct TTableEntry {
 }
 
 impl TTableEntry {
+    /// Creates a new [`TTableEntry`] from the provided parameters.
+    ///
+    /// This will generate a node type through [`NodeType::new`] and
+    /// will adjust `score` by `ply` if it was a mate score.
     #[inline(always)]
     pub fn new(
         key: ZobristKey,
         bestmove: Move,
         score: Score,
-        alpha: Score,
-        beta: Score,
+        bounds: SearchBounds,
         depth: u8,
         ply: i32,
     ) -> Self {
         // Determine what kind of node this is fist, before score adjustment
-        let node_type = NodeType::new(score, alpha, beta);
+        let node_type = NodeType::new(score, bounds);
 
         // Adjust the score (if it was mate) to the ply at which we found it
         let score = score.absolute(ply);
@@ -89,28 +92,25 @@ impl TTableEntry {
         }
     }
 
-    /*
     /// Determine whether the score in this entry can be used and, if so, return it.
-    // Credit: https://github.com/sroelants/simbelmyne/blob/main/simbelmyne/src/transpositions.rs#L178
+    ///
+    /// An entry's score can be used if and only if:
+    ///     1. The entry is exact ([`NodeType::Pv`]).
+    ///     2. The entry is an upper bound ([`NodeType::All`]) and its score is `<= alpha`.
+    ///     3. The entry is a lower bound ([`NodeType::Cut`]) and its score is `>= beta`.
     #[inline(always)]
-    pub fn try_score(&self, alpha: Score, beta: Score, depth: u8, ply: i32) -> Option<Score> {
-        // If this entry came from a shallower search, we can't use it's score.
-        if self.depth < depth {
-            return None;
-        }
-
-        let absolute_score = self.score.absolute(ply);
-        match self.node_type {
-            NodeType::Pv => Some(absolute_score),
-            NodeType::All if absolute_score <= alpha => Some(absolute_score),
-            NodeType::Cut if absolute_score >= beta => Some(absolute_score),
-            _ => None,
-        }
+    pub fn try_score(&self, bounds: SearchBounds) -> Option<Score> {
+        (self.node_type == NodeType::Pv
+            || (self.node_type == NodeType::All && self.score <= bounds.alpha)
+            || (self.node_type == NodeType::Cut && self.score >= bounds.beta))
+            .then_some(self.score)
     }
-     */
 }
 
-/// Transposition Table
+/// Transposition Table.
+///
+/// Used during a search to keep track of previous search results on positions,
+/// avoiding unnecessary re-computations.
 #[derive(Debug)]
 pub struct TTable {
     /// Internal cache of the TTable.

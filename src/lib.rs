@@ -8,6 +8,8 @@
 mod cli;
 /// Code related to the engine's functionality, such as user input handling.
 mod engine;
+/// Hash table for History Heuristic.
+mod history;
 /// Piece-Square tables.
 mod psqt;
 /// Types and utilities for rating how good/bad a position is.
@@ -61,6 +63,7 @@ mod board {
 pub use board::*;
 pub use cli::*;
 pub use engine::*;
+use history::*;
 use psqt::*;
 use score::*;
 use search::*;

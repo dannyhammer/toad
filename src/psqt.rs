@@ -6,7 +6,7 @@
 
 use std::{
     fmt,
-    ops::{Index, IndexMut},
+    ops::{Deref, DerefMut},
 };
 
 use crate::{Color, Piece, PieceKind, Score, SmallDisplayTable, Square, Table};
@@ -158,7 +158,6 @@ const KING_EG: Psqt = Psqt::new(PieceKind::King, [
 
 /// A [Piece-Square Table](https://www.chessprogramming.org/Piece-Square_Tables) for use in evaluation.
 #[derive(Debug, Clone, Copy)]
-// pub struct Psqt([Score; Square::COUNT]);
 pub struct Psqt(Table<Score>);
 
 impl Psqt {
@@ -215,16 +214,20 @@ impl Psqt {
     }
 }
 
-impl Index<Square> for Psqt {
-    type Output = Score;
-    fn index(&self, index: Square) -> &Self::Output {
-        &self.0[index]
+impl Deref for Psqt {
+    type Target = Table<Score>;
+    /// A [`Psqt`] dereferences to its inner [`Table`].
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
-impl IndexMut<Square> for Psqt {
-    fn index_mut(&mut self, index: Square) -> &mut Self::Output {
-        &mut self.0[index]
+impl DerefMut for Psqt {
+    /// A [`Psqt`] dereferences to its inner [`Table`].
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 

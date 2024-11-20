@@ -20,6 +20,8 @@ use crate::{
     ZobristKey,
 };
 
+use super::Table;
+
 /// FEN string for the starting position of chess.
 pub const FEN_STARTPOS: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -2067,7 +2069,7 @@ pub struct Board {
     pieces: [Bitboard; PieceKind::COUNT],
 
     /// Redundant mailbox to speed up the [`Board::piece_at`] functions.
-    mailbox: [Option<Piece>; Square::COUNT],
+    mailbox: Table<Option<Piece>>,
 }
 
 impl Board {
@@ -2077,7 +2079,7 @@ impl Board {
         Self {
             colors: [Bitboard::EMPTY_BOARD; Color::COUNT],
             pieces: [Bitboard::EMPTY_BOARD; PieceKind::COUNT],
-            mailbox: [None; Square::COUNT],
+            mailbox: Table::splat(None),
         }
     }
 
@@ -2091,7 +2093,7 @@ impl Board {
     /// ```
     #[inline(always)]
     pub const fn has(&self, square: Square) -> bool {
-        self.mailbox[square.index()].is_some()
+        self.mailbox.get(square).is_some()
     }
 
     /// Places the provided [`Piece`] and the supplied [`Square`].
@@ -2139,7 +2141,7 @@ impl Board {
     /// ```
     #[inline(always)]
     pub const fn piece_at(&self, square: Square) -> Option<Piece> {
-        self.mailbox[square.index()]
+        *self.mailbox.get(square)
     }
 
     /// Fetches the [`Bitboard`] corresponding to the supplied [`PieceKind`].
