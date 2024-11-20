@@ -648,23 +648,26 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         mut depth: u8,
         ply: i32,
         mut alpha: Score,
-        mut beta: Score,
+        beta: Score,
     ) -> Score {
         let original_alpha = alpha;
 
-        if let Some(tt_entry) = self.ttable.get(&game.key()) {
-            if tt_entry.depth >= depth {
-                match tt_entry.node_type {
-                    NodeType::Pv => return tt_entry.score,
-                    NodeType::Cut => alpha = alpha.max(tt_entry.score),
-                    NodeType::All => beta = beta.min(tt_entry.score),
+        /****************************************************************************************************
+         * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
+         ****************************************************************************************************/
+        // Do not prune in PV nodes
+        if !PV {
+            // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
+            if let Some(tt_entry) = self.ttable.get(&game.key()) {
+                if tt_entry.depth >= depth // Can only cut off if the existing entry came from a greater depth.
+                    && (tt_entry.node_type == NodeType::Pv
+                        || (tt_entry.node_type == NodeType::All && tt_entry.score <= alpha)
+                        || (tt_entry.node_type == NodeType::Cut && tt_entry.score >= beta))
+                {
+                    return tt_entry.score;
                 }
             }
-
-            if alpha >= beta {
-                return tt_entry.score;
-            }
-        };
+        }
 
         /****************************************************************************************************
          * Check Extensions: https://www.chessprogramming.org/Check_Extensions
