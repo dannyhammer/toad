@@ -1,3 +1,9 @@
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 use std::{
     fmt,
     ops::{Index, IndexMut},
@@ -62,6 +68,7 @@ where
     [T; Square::COUNT]: Index<Idx, Output = T>,
 {
     type Output = T;
+    #[inline(always)]
     fn index(&self, index: Idx) -> &Self::Output {
         &self.0[index]
     }
@@ -71,47 +78,19 @@ impl<T, Idx> IndexMut<Idx> for Table<T>
 where
     [T; Square::COUNT]: IndexMut<Idx, Output = T>,
 {
+    #[inline(always)]
     fn index_mut(&mut self, index: Idx) -> &mut Self::Output {
         &mut self.0[index]
     }
 }
+/// Used to display an arbitrary-sized [`Table`].
+pub type DisplayTable<T, const N: usize> = Table<[T; N]>;
 
 /// A [`Table`] that will be printed with each square is printed inside of 1 line of chars.
 pub type SmallDisplayTable<T> = DisplayTable<T, 1>;
 
 /// A [`Table`] that will be printed with each square is printed inside of 2 lines of chars.
 pub type MediumDisplayTable<T> = DisplayTable<T, 2>;
-
-/// Used to display an arbitrary-sized [`Table`].
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DisplayTable<T, const N: usize>([[T; N]; Square::COUNT]);
-
-impl<T, const N: usize> DisplayTable<T, N> {
-    /// Create a new [`DisplayTable`] by applying `f` to each [`Square`].
-    #[inline(always)]
-    pub fn from_fn(mut f: impl FnMut(Square) -> [T; N]) -> Self {
-        Self(std::array::from_fn(|i| f(Square(i as u8))))
-    }
-
-    /// Create a new [`DisplayTable`] with every value set to `value`.
-    #[inline(always)]
-    const fn splat(value: T) -> Self
-    where
-        T: Copy,
-    {
-        Self([[value; N]; Square::COUNT])
-    }
-}
-
-impl<T, const N: usize> Default for DisplayTable<T, N>
-where
-    T: Default + Copy,
-{
-    #[inline(always)]
-    fn default() -> Self {
-        Self::splat(T::default())
-    }
-}
 
 impl<T, const N: usize> fmt::Display for DisplayTable<T, N>
 where

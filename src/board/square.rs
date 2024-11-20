@@ -106,7 +106,6 @@ const IS_DIAGONAL: [[bool; Square::COUNT]; Square::COUNT] = {
     is_diagonal
 };
 
-
 /// Represents a single square on an `8x8` chess board.
 ///
 /// Internally encoded using the following bit pattern:
