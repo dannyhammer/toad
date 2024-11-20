@@ -659,12 +659,22 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         if !PV {
             // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
             if let Some(tt_entry) = self.ttable.get(&game.key()) {
-                if tt_entry.depth >= depth // Can only cut off if the existing entry came from a greater depth.
-                    && (tt_entry.node_type == NodeType::Pv
-                        || (tt_entry.node_type == NodeType::All && tt_entry.score <= alpha)
-                        || (tt_entry.node_type == NodeType::Cut && tt_entry.score >= beta))
-                {
-                    return tt_entry.score;
+                // Can only cut off if the existing entry came from a greater depth.
+                if tt_entry.depth >= depth {
+                    // Adjust mate scores to be relative to current ply
+                    let score = if tt_entry.score.is_mate() {
+                        tt_entry.score.relative(ply)
+                    } else {
+                        tt_entry.score
+                    };
+
+                    // If we can cutoff, do so
+                    if tt_entry.node_type == NodeType::Pv
+                        || (tt_entry.node_type == NodeType::All && score <= alpha)
+                        || (tt_entry.node_type == NodeType::Cut && score >= beta)
+                    {
+                        return score;
+                    }
                 }
             }
         }
