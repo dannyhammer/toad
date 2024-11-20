@@ -995,7 +995,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         /****************************************************************************************************
          * Late Move Reductions: https://www.chessprogramming.org/Late_Move_Reductions
          ****************************************************************************************************/
-        (depth >= MIN_LMR_DEPTH && moves_made >= MIN_LMR_MOVES).then(|| {
+        (depth >= MIN_LMR_DEPTH && moves_made >= MIN_LMR_MOVES + PV as usize).then(|| {
             // Base LMR reduction increases as we go higher in depth and/or make more moves
             let mut lmr_reduction =
                 (LMR_OFFSET + (depth as f32).ln() * (moves_made as f32).ln() / LMR_DIVISOR) as u8;
