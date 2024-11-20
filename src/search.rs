@@ -648,25 +648,21 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         mut depth: u8,
         ply: i32,
         mut alpha: Score,
-        beta: Score,
+        mut beta: Score,
     ) -> Score {
+        let original_alpha = alpha;
+
         if let Some(tt_entry) = self.ttable.get(&game.key()) {
             if tt_entry.depth >= depth {
                 match tt_entry.node_type {
-                    NodeType::All => {
-                        if tt_entry.score <= alpha {
-                            return alpha;
-                        }
-                    }
-                    NodeType::Cut => {
-                        if tt_entry.score >= beta {
-                            return beta;
-                        }
-                    }
-                    NodeType::Pv => {
-                        return tt_entry.score;
-                    }
+                    NodeType::Pv => return tt_entry.score,
+                    NodeType::Cut => alpha = alpha.max(tt_entry.score),
+                    NodeType::All => beta = beta.min(tt_entry.score),
                 }
+            }
+
+            if alpha >= beta {
+                return tt_entry.score;
             }
         };
 
@@ -708,7 +704,6 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         // Start with a *really bad* initial score
         let mut best = -Score::INF;
         let mut bestmove = moves[0]; // Safe because we guaranteed `moves` to be nonempty above
-        let original_alpha = alpha;
 
         /****************************************************************************************************
          * Primary move loop
