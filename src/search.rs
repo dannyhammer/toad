@@ -18,8 +18,8 @@ use std::{
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, Color, File, Game, LogLevel, LoggingLevel, Move, MoveList, Piece, PieceKind, Position,
-    Rank, Score, Square, TTable, TTableEntry, Table, Variant, ZobristKey,
+    tune, Color, File, Game, LogLevel, LoggingLevel, Move, MoveList, NodeType, Piece, PieceKind,
+    Position, Rank, Score, Square, TTable, TTableEntry, Table, Variant, ZobristKey,
 };
 
 /// Maximum depth that can be searched
@@ -650,6 +650,26 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         mut alpha: Score,
         beta: Score,
     ) -> Score {
+        if let Some(tt_entry) = self.ttable.get(&game.key()) {
+            if tt_entry.depth >= depth {
+                match tt_entry.node_type {
+                    NodeType::All => {
+                        if tt_entry.score <= alpha {
+                            return alpha;
+                        }
+                    }
+                    NodeType::Cut => {
+                        if tt_entry.score >= beta {
+                            return beta;
+                        }
+                    }
+                    NodeType::Pv => {
+                        return tt_entry.score;
+                    }
+                }
+            }
+        };
+
         /****************************************************************************************************
          * Check Extensions: https://www.chessprogramming.org/Check_Extensions
          ****************************************************************************************************/
