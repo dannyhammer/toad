@@ -562,7 +562,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         // Do not prune in PV nodes
         if !PV {
             // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
-            if let Some(tt_score) = self.probe_tt(game.key(), depth, bounds) {
+            if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
                 return tt_score;
             }
         }
@@ -966,12 +966,18 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     ///
     /// See [`TTableEntry::try_score`] for more.
     #[inline(always)]
-    fn probe_tt(&self, key: ZobristKey, depth: u8, bounds: SearchBounds) -> Option<Score> {
+    fn probe_tt(
+        &self,
+        key: ZobristKey,
+        depth: u8,
+        ply: i32,
+        bounds: SearchBounds,
+    ) -> Option<Score> {
         // if-let chains are set to be stabilized in Rust 2024 (1.85.0): https://rust-lang.github.io/rfcs/2497-if-let-chains.html
         if let Some(tt_entry) = self.ttable.get(&key) {
             // Can only cut off if the existing entry came from a greater depth.
             if tt_entry.depth >= depth {
-                return tt_entry.try_score(bounds);
+                return tt_entry.try_score(bounds, ply);
             }
         }
 

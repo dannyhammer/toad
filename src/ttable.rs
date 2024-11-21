@@ -99,11 +99,19 @@ impl TTableEntry {
     ///     2. The entry is an upper bound ([`NodeType::All`]) and its score is `<= alpha`.
     ///     3. The entry is a lower bound ([`NodeType::Cut`]) and its score is `>= beta`.
     #[inline(always)]
-    pub fn try_score(&self, bounds: SearchBounds) -> Option<Score> {
+    pub fn try_score(&self, bounds: SearchBounds, ply: i32) -> Option<Score> {
+        // Adjust mate scores to be relative to current ply
+        let score = if self.score.is_mate() {
+            self.score.relative(ply)
+        } else {
+            self.score
+        };
+
+        // If we can cutoff, do so
         (self.node_type == NodeType::Pv
-            || (self.node_type == NodeType::All && self.score <= bounds.alpha)
-            || (self.node_type == NodeType::Cut && self.score >= bounds.beta))
-            .then_some(self.score)
+            || ((self.node_type == NodeType::All && score <= bounds.alpha)
+                || (self.node_type == NodeType::Cut && score >= bounds.beta)))
+            .then_some(score)
     }
 }
 
