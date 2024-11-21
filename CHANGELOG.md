@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/dannyhammer/toad/compare/v1.3.0...v1.4.0) (2024-11-21)
+
+
+### Features
+
+* lmr, check extensions, tt cutoffs ([#85](https://github.com/dannyhammer/toad/issues/85)) ([8664bcf](https://github.com/dannyhammer/toad/commit/8664bcf77ed40696c5f26cf43790fe596c559d5a))
+* reverse futility pruning ([#82](https://github.com/dannyhammer/toad/issues/82)) ([85abda0](https://github.com/dannyhammer/toad/commit/85abda00317639e9ff77bc48da662954f8d80af5))
+
 ## [1.4.0](https://github.com/dannyhammer/toad/compare/v1.3.0...v1.4.0) (2024-11-17)
 
 
