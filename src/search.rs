@@ -575,6 +575,11 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             return self.quiescence(game, ply, bounds);
         }
 
+        // If we CAN prune this node by means other than the TT, do so
+        if let Some(score) = self.node_pruning_score::<PV>(game, depth, ply, bounds) {
+            return score;
+        }
+
         // If there are no legal moves, it's either mate or a draw.
         let mut moves = game.get_legal_moves();
         if moves.is_empty() {
@@ -585,11 +590,6 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                 // Drawing is better than losing
                 Score::DRAW
             };
-        }
-
-        // If we CAN prune this node by means other than the TT, do so
-        if let Some(score) = self.node_pruning_score::<PV>(game, depth, ply, bounds) {
-            return score;
         }
 
         // Sort moves so that we look at "promising" ones first
@@ -978,6 +978,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         None
     }
 
+    /// Compute a reduction value (`R`) to apply to a given node's search depth, if possible.
     #[inline(always)]
     fn reduction_value<const PV: bool>(
         &self,
@@ -1001,6 +1002,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         })
     }
 
+    /// Compute an extension value to apply to a given node's search depth.
     #[inline(always)]
     fn extension_value(&self, game: &Game<V>) -> u8 {
         /****************************************************************************************************
