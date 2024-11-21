@@ -21,12 +21,12 @@ use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
     perft, splitperft, Bitboard, Chess960, EngineCommand, Game, GameVariant, HistoryTable,
-    LogLevel, Move, Piece, Position, Psqt, Search, SearchConfig, SearchResult, Square, Standard,
-    TTable, Variant, BENCHMARK_FENS,
+    LogLevel, MediumDisplayTable, Move, Piece, Position, Psqt, Score, Search, SearchConfig,
+    SearchResult, Square, Standard, TTable, Variant, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
-const BENCH_DEPTH: u8 = 9;
+const BENCH_DEPTH: u8 = 11;
 
 /// The Toad chess engine.
 #[derive(Debug)]
@@ -339,8 +339,35 @@ impl Engine {
 
     /// Executes the `eval` command, printing an evaluation of the current position.
     fn eval<V: Variant>(&self, game: &Game<V>, pretty: bool) {
+        use std::cmp::Ordering::*;
         if pretty {
-            println!("{}", game.eval_pretty());
+            let color = game.side_to_move();
+            let endgame_weight = game.endgame_weight();
+
+            let table = MediumDisplayTable::from_fn(|sq| {
+                game.piece_at(sq)
+                    .map(|piece| {
+                        let (mg, eg) = Psqt::evals(piece, sq);
+                        let score = mg.lerp(eg, endgame_weight)
+                            * piece.color().negation_multiplier() as i32;
+
+                        [piece.to_string(), format!("{:+}", score.normalize())]
+                    })
+                    .unwrap_or_default()
+            });
+
+            let score = game.eval_for(color);
+
+            let winning = match score.cmp(&Score::DRAW) {
+                Greater => color.name(),
+                Less => color.opponent().name(),
+                Equal => "N/A",
+            };
+
+            println!("{table}");
+            println!("Endgame: {endgame_weight}%");
+            println!("Winning side: {winning}",);
+            println!("Score: {score}");
         } else {
             println!("{}", game.eval());
         }
@@ -355,6 +382,8 @@ impl Engine {
         let cap = ttable.capacity();
         let percent = num as f32 / cap as f32 * 100.0;
         println!("TT info: {size}mb @ {num}/{cap} entries ({percent:.2}% full)");
+
+        println!("History Tables:\n{}", self.history());
     }
 
     /// Clears all hash tables in the engine.
@@ -400,9 +429,9 @@ impl Engine {
                     .iter()
                     .map(|mv| {
                         if debug {
-                            V::fmt_move(*mv)
-                        } else {
                             V::dbg_move(*mv)
+                        } else {
+                            V::fmt_move(*mv)
                         }
                     })
                     .collect::<Vec<_>>();

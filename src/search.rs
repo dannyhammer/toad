@@ -7,7 +7,7 @@
 use std::{
     fmt::{self, Debug},
     marker::PhantomData,
-    ops::Deref,
+    ops::Neg,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -18,8 +18,8 @@ use std::{
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, Color, Game, LogLevel, LoggingLevel, Move, MoveList, Piece, PieceKind, Position, Score,
-    Square, TTable, TTableEntry, Variant, ZobristKey,
+    tune, Color, Game, HistoryTable, LogLevel, LoggingLevel, Move, MoveList, Piece, PieceKind,
+    Position, Score, TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Maximum depth that can be searched
@@ -34,14 +34,84 @@ const NMP_REDUCTION_VALUE: u8 = tune::nmp_reduction_value!();
 /// MAximum depth at which to apply reverse futility pruning.
 const MAX_RFP_DEPTH: u8 = tune::max_rfp_depth!();
 
+/// Minimum depth at which to apply late move reductions.
+const MIN_LMR_DEPTH: u8 = tune::min_lmr_depth!();
+
+/// Minimum moves that must be made before late move reductions can be applied.
+const MIN_LMR_MOVES: usize = tune::min_lmr_moves!();
+
+/// Base value in the LMR formula.
+const LMR_OFFSET: f32 = tune::lmr_offset!();
+
+/// Divisor in the LMR formula.
+const LMR_DIVISOR: f32 = tune::lmr_divisor!();
+
+/// Bounds within an alpha-beta search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchBounds {
+    /// Lower bound.
+    ///
+    /// We are guaranteed a score that is AT LEAST `alpha`.
+    /// During search, if no move can raise `alpha`, we are said to have "failed low."
+    ///
+    /// On a fail-low, we do not have a "best move."
+    pub alpha: Score,
+
+    /// Upper bound.
+    ///
+    /// Our opponent is guaranteed a score that is AT MOST `beta`.
+    /// During search, if a move scores higher than `beta`, we are said to have "failed high."
+    ///
+    /// On a fail-high, the branch is pruned, since our opponent has a better move to play earlier in the tree,
+    /// which would make this position unreachable for us.
+    pub beta: Score,
+}
+
+impl SearchBounds {
+    /// Create a new [`SearchBounds`] from the provided `alpha` and `beta` values.
+    #[inline(always)]
+    const fn new(alpha: Score, beta: Score) -> Self {
+        Self { alpha, beta }
+    }
+
+    /// Create a "null window" around `alpha`.
+    #[inline(always)]
+    fn null_alpha(self) -> Self {
+        Self::new(self.alpha, self.alpha + 1)
+    }
+
+    /// Create a "null window" around `beta`.
+    #[inline(always)]
+    fn null_beta(self) -> Self {
+        Self::new(self.beta - 1, self.beta)
+    }
+}
+
+impl Neg for SearchBounds {
+    type Output = Self;
+    /// Negating a [`SearchBounds`] swaps the `alpha` and `beta` fields and negates them both.
+    #[inline(always)]
+    fn neg(self) -> Self::Output {
+        Self {
+            alpha: -self.beta,
+            beta: -self.alpha,
+        }
+    }
+}
+
+impl Default for SearchBounds {
+    /// Default [`SearchBounds`] are a `(-infinity, infinity)`.
+    #[inline(always)]
+    fn default() -> Self {
+        Self::new(Score::ALPHA, Score::BETA)
+    }
+}
+
 /// Represents a window around a search result to act as our a/b bounds.
 #[derive(Debug)]
 struct AspirationWindow {
-    /// Lower bound of the window
-    alpha: Score,
-
-    /// Upper bound of the window
-    beta: Score,
+    /// Bounds of this search window
+    bounds: SearchBounds,
 
     /// Number of times that a score has been returned above beta.
     beta_fails: i32,
@@ -71,20 +141,19 @@ impl AspirationWindow {
     fn new(score: Score, depth: u8) -> Self {
         // If the score is mate, we expect search results to fluctuate, so set the windows to infinite.
         // Also, we only want to use aspiration windows after certain depths, so check that, too.
-        let (alpha, beta) = if depth < tune::min_aspiration_window_depth!() || score.is_mate() {
-            (-Score::INF, Score::INF)
+        let bounds = if depth < tune::min_aspiration_window_depth!() || score.is_mate() {
+            SearchBounds::default()
         } else {
             // Otherwise we build a window around the provided score.
             let delta = Self::delta(depth);
-            (
-                (score - delta).max(-Score::INF),
-                (score + delta).min(Score::INF),
+            SearchBounds::new(
+                (score - delta).max(Score::ALPHA),
+                (score + delta).min(Score::BETA),
             )
         };
 
         Self {
-            alpha,
-            beta,
+            bounds,
             alpha_fails: 0,
             beta_fails: 0,
         }
@@ -99,8 +168,8 @@ impl AspirationWindow {
         let delta = Self::delta(depth) * (1 << (self.alpha_fails + 1));
 
         // By convention, we widen both bounds on a fail low.
-        self.beta = ((self.alpha + self.beta) / 2).min(Score::INF);
-        self.alpha = (score - delta).max(-Score::INF);
+        self.bounds.beta = ((self.bounds.alpha + self.bounds.beta) / 2).min(Score::BETA);
+        self.bounds.alpha = (score - delta).max(Score::ALPHA);
 
         // Increase number of failures
         self.alpha_fails += 1;
@@ -113,7 +182,7 @@ impl AspirationWindow {
         let delta = Self::delta(depth) * (1 << (self.beta_fails + 1));
 
         // Widen the beta bound
-        self.beta = (score + delta).min(Score::INF);
+        self.bounds.beta = (score + delta).min(Score::BETA);
 
         // Increase number of failures
         self.beta_fails += 1;
@@ -122,13 +191,13 @@ impl AspirationWindow {
     /// Returns `true` if `score` fails low, meaning it is below `alpha` and the window must be expanded downwards.
     #[inline(always)]
     fn fails_low(&self, score: Score) -> bool {
-        self.alpha != -Score::INF && score <= self.alpha
+        self.bounds.alpha != Score::ALPHA && score <= self.bounds.alpha
     }
 
     /// Returns `true` if `score` fails high, meaning it is above `beta` and the window must be expanded upwards.
     #[inline(always)]
     fn fails_high(&self, score: Score) -> bool {
-        self.beta != Score::INF && score >= self.beta
+        self.bounds.beta != Score::BETA && score >= self.bounds.beta
     }
 }
 
@@ -156,7 +225,7 @@ impl Default for SearchResult {
         Self {
             nodes: 0,
             bestmove: None,
-            score: -Score::INF,
+            score: Score::ALPHA,
             depth: 1,
         }
     }
@@ -243,51 +312,6 @@ impl Default for SearchConfig {
             soft_timeout: Duration::MAX,
             hard_timeout: Duration::MAX,
         }
-    }
-}
-
-/// Stores bonuses and penalties for moving a piece to a square.
-///
-/// Used to keep track of good/bad moves found during search.
-#[derive(Debug)]
-pub struct HistoryTable([[Score; Square::COUNT]; Piece::COUNT]);
-
-impl HistoryTable {
-    /// Clear the history table, removing all scores.
-    #[inline(always)]
-    pub fn clear(&mut self) {
-        *self = Self::default();
-    }
-
-    /// Applies a bonus based on the history heuristic for the move.
-    ///
-    /// Uses the "history gravity" formula from <https://www.chessprogramming.org/History_Heuristic#History_Bonuses>
-    #[inline(always)]
-    fn update<V: Variant>(&mut self, game: &Game<V>, mv: &Move, bonus: Score) {
-        // Safety: This is a move. There *must* be a piece at `from`.
-        let piece = game.piece_at(mv.from()).unwrap();
-        let to = mv.to();
-        let current_score = self.0[piece][to];
-        let clamped_bonus = bonus.clamp(-Score::MAX_HISTORY, Score::MAX_HISTORY);
-
-        // History gravity formula
-        self.0[piece][to] +=
-            clamped_bonus - current_score * clamped_bonus.abs() / Score::MAX_HISTORY;
-    }
-}
-
-impl Default for HistoryTable {
-    #[inline(always)]
-    fn default() -> Self {
-        Self([[Score::BASE_MOVE_SCORE; Square::COUNT]; Piece::COUNT])
-    }
-}
-
-impl Deref for HistoryTable {
-    type Target = [[Score; Square::COUNT]; Piece::COUNT];
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }
 
@@ -442,7 +466,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         };
 
         /****************************************************************************************************
-         * Iterative Deepening loop
+         * Iterative Deepening: https://www.chessprogramming.org/Iterative_Deepening
          ****************************************************************************************************/
 
         // The actual Iterative Deepening loop
@@ -450,13 +474,17 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             && self.is_searching.load(Ordering::Relaxed)
             && result.depth <= self.config.max_depth
         {
+            /****************************************************************************************************
+             * Aspiration Windows: https://www.chessprogramming.org/Aspiration_Windows
+             ****************************************************************************************************/
+
             // Create a new aspiration window for this search
             let mut window = AspirationWindow::new(result.score, result.depth);
 
             // Get a score from the a/b search while using aspiration windows
             let score = 'aspiration_window: loop {
                 // Start a new search at the current depth
-                let score = self.negamax::<true>(game, result.depth, 0, window.alpha, window.beta);
+                let score = self.negamax::<true>(game, result.depth, 0, window.bounds);
 
                 // If the score fell outside of the aspiration window, widen it gradually
                 if window.fails_low(score) {
@@ -524,31 +552,44 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         game: &Game<V>,
         depth: u8,
         ply: i32,
-        mut alpha: Score,
-        beta: Score,
+        mut bounds: SearchBounds,
     ) -> Score {
+        let original_alpha = bounds.alpha;
+
+        /****************************************************************************************************
+         * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
+         ****************************************************************************************************/
+        // Do not prune in PV nodes
+        if !PV {
+            // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
+            if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
+                return tt_score;
+            }
+        }
+
+        /****************************************************************************************************
+         * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
+         ****************************************************************************************************/
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
-            return self.quiescence(game, ply, alpha, beta);
+            return self.quiescence(game, ply, bounds);
+        }
+
+        // If we CAN prune this node by means other than the TT, do so
+        if let Some(score) = self.node_pruning_score::<PV>(game, depth, ply, bounds) {
+            return score;
         }
 
         // If there are no legal moves, it's either mate or a draw.
         let mut moves = game.get_legal_moves();
         if moves.is_empty() {
-            let score = if game.is_in_check() {
+            return if game.is_in_check() {
                 // Offset by ply to prefer earlier mates
                 -Score::MATE + ply
             } else {
                 // Drawing is better than losing
                 Score::DRAW
             };
-
-            return score;
-        }
-
-        // If we CAN prune this node, do so
-        if let Some(score) = self.node_pruning_score::<PV>(game, depth, ply, beta) {
-            return score;
         }
 
         // Sort moves so that we look at "promising" ones first
@@ -556,9 +597,8 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         // Start with a *really bad* initial score
-        let mut best = -Score::INF;
+        let mut best = Score::ALPHA;
         let mut bestmove = moves[0]; // Safe because we guaranteed `moves` to be nonempty above
-        let original_alpha = alpha;
 
         /****************************************************************************************************
          * Primary move loop
@@ -567,36 +607,47 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         for (i, mv) in moves.iter().enumerate() {
             // Copy-make the new position
             let new = game.with_move_made(*mv);
-            let mut score;
+            let mut score = Score::DRAW;
 
-            // Determine the score of making this move
-            if self.is_draw(&new) {
-                score = Score::DRAW;
-            } else {
+            if !self.is_draw(&new) {
                 // Append the move onto the history
                 self.prev_positions.push(*new.position());
+
+                let new_depth = depth - 1 + self.extension_value(&new);
+
+                // If this node can be reduced, search it with a reduced window.
+                if let Some(lmr_reduction) = self.reduction_value::<PV>(depth, &new, i) {
+                    // Reduced depth should never exceed `new_depth` and should never be less than `1`.
+                    let reduced_depth = (new_depth - lmr_reduction).max(1).min(new_depth);
+
+                    // Search at a reduced depth with a null window
+                    score =
+                        -self.negamax::<false>(&new, reduced_depth, ply + 1, -bounds.null_alpha());
+
+                    // If that failed *high* (raised alpha), re-search at the full depth with the null window
+                    if score > bounds.alpha && reduced_depth < new_depth {
+                        score =
+                            -self.negamax::<false>(&new, new_depth, ply + 1, -bounds.null_alpha());
+                    }
+                } else if !PV || i > 0 {
+                    // All non-PV nodes get searched with a null window
+                    score = -self.negamax::<false>(&new, new_depth, ply + 1, -bounds.null_alpha());
+                }
 
                 /****************************************************************************************************
                  * Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
                  ****************************************************************************************************/
-                if i == 0 {
-                    // Recurse on the principle variation
-                    score = -self.negamax::<PV>(&new, depth - 1, ply + 1, -beta, -alpha);
-                } else {
-                    // Search with a null window
-                    score = -self.negamax::<false>(&new, depth - 1, ply + 1, -alpha - 1, -alpha);
+                // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
+                if PV && (i == 0 || score > bounds.alpha) {
+                    score = -self.negamax::<PV>(&new, new_depth, ply + 1, -bounds);
+                }
 
-                    // If it failed, perform a full re-search with the full a/b bounds
-                    if alpha < score && score < beta {
-                        score = -self.negamax::<PV>(&new, depth - 1, ply + 1, -beta, -alpha);
-                    }
-                };
-
-                self.nodes += 1; // We've now searched this node
+                // We've now searched this node
+                self.nodes += 1;
 
                 // Pop the move from the history
                 self.prev_positions.pop();
-            };
+            }
 
             /****************************************************************************************************
              * Score evaluation & bounds adjustments
@@ -606,14 +657,14 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             if score > best {
                 best = score;
 
-                if score > alpha {
-                    alpha = score;
+                if score > bounds.alpha {
+                    bounds.alpha = score;
                     // PV found
                     bestmove = *mv;
                 }
 
                 // Fail soft beta-cutoff.
-                if score >= beta {
+                if score >= bounds.beta {
                     /****************************************************************************************************
                      * History Heuristic
                      ****************************************************************************************************/
@@ -640,7 +691,14 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         }
 
         // Save this node to the TTable
-        self.save_to_tt(game.key(), bestmove, best, original_alpha, beta, depth, ply);
+        self.save_to_tt(
+            game.key(),
+            bestmove,
+            best,
+            SearchBounds::new(original_alpha, bounds.beta),
+            depth,
+            ply,
+        );
 
         best
     }
@@ -649,15 +707,15 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     ///
     /// A search that looks at only possible captures and capture-chains.
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
-    fn quiescence(&mut self, game: &Game<V>, _ply: i32, mut alpha: Score, beta: Score) -> Score {
+    fn quiescence(&mut self, game: &Game<V>, _ply: i32, mut bounds: SearchBounds) -> Score {
         // Evaluate the current position, to serve as our baseline
         let stand_pat = game.eval();
 
         // Beta cutoff; this position is "too good" and our opponent would never let us get here
-        if stand_pat >= beta {
-            return beta;
-        } else if stand_pat > alpha {
-            alpha = stand_pat;
+        if stand_pat >= bounds.beta {
+            return bounds.beta;
+        } else if stand_pat > bounds.alpha {
+            bounds.alpha = stand_pat;
         }
 
         // Generate only the legal captures
@@ -698,7 +756,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             } else {
                 self.prev_positions.push(*new.position());
 
-                score = -self.quiescence(&new, _ply + 1, -beta, -alpha);
+                score = -self.quiescence(&new, _ply + 1, -bounds);
                 self.nodes += 1; // We've now searched this node
 
                 self.prev_positions.pop();
@@ -711,15 +769,15 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             if score > best {
                 best = score;
 
-                if score > alpha {
-                    alpha = score;
+                if score > bounds.alpha {
+                    bounds.alpha = score;
 
                     // PV found
                     // bestmove = mv;
                 }
 
                 // Fail soft beta-cutoff.
-                if score >= beta {
+                if score >= bounds.beta {
                     break;
                 }
             }
@@ -773,18 +831,17 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     }
 
     /// Saves the provided data to an entry in the TTable.
-    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
     fn save_to_tt(
         &mut self,
         key: ZobristKey,
         bestmove: Move,
         score: Score,
-        alpha: Score,
-        beta: Score,
+        bounds: SearchBounds,
         depth: u8,
         ply: i32,
     ) {
-        let entry = TTableEntry::new(key, bestmove, score, alpha, beta, depth, ply);
+        let entry = TTableEntry::new(key, bestmove, score, bounds, depth, ply);
         let old = self.ttable.store(entry);
 
         if LOG.allows(LogLevel::Debug) {
@@ -841,12 +898,13 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     /// If we can prune the provided node, this function returns a score to return upon pruning.
     ///
     /// If we cannot prune the node, this function returns `None`.
+    #[inline]
     fn node_pruning_score<const PV: bool>(
         &mut self,
         game: &Game<V>,
         depth: u8,
         ply: i32,
-        beta: Score,
+        bounds: SearchBounds,
     ) -> Option<Score> {
         // Cannot prune anything in a PV node or if we're in check
         if PV || game.is_in_check() {
@@ -859,7 +917,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         // If our static eval is too good (better than beta), we can prune this branch.
         // Multiplying our margin by depth makes this pruning process less risky for higher depths.
         let rfp_score = game.eval() - Score::RFP_MARGIN * depth as i32;
-        if depth <= MAX_RFP_DEPTH && rfp_score >= beta {
+        if depth <= MAX_RFP_DEPTH && rfp_score >= bounds.beta {
             return Some(rfp_score);
         }
 
@@ -885,18 +943,78 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
             // Search at a reduced depth with a zero-window
             let nmp_depth = depth - NMP_REDUCTION_VALUE;
-            let score = -self.negamax::<PV>(&null_game, nmp_depth, ply + 1, -beta, -beta + 1);
+            let score = -self.negamax::<PV>(&null_game, nmp_depth, ply + 1, -bounds.null_beta());
 
             self.prev_positions.pop();
 
             // If making the nullmove produces a cutoff, we can assume that a full-depth search would also produce a cutoff
-            if score >= beta {
+            if score >= bounds.beta {
                 return Some(score);
             }
         }
 
         // If no pruning technique was possible, return no score
         None
+    }
+
+    /// Probes the [`TTable`] for an entry at the provided `key`, returning that entry's score, if appropriate.
+    ///
+    /// If an entry is found from a greater depth than `depth`, its score is returned if and only if:
+    ///     1. The entry is exact.
+    ///     2. The entry is an upper bound and its score is `<= alpha`.
+    ///     3. The entry is a lower bound and its score is `>= beta`.
+    ///
+    /// See [`TTableEntry::try_score`] for more.
+    #[inline(always)]
+    fn probe_tt(
+        &self,
+        key: ZobristKey,
+        depth: u8,
+        ply: i32,
+        bounds: SearchBounds,
+    ) -> Option<Score> {
+        // if-let chains are set to be stabilized in Rust 2024 (1.85.0): https://rust-lang.github.io/rfcs/2497-if-let-chains.html
+        if let Some(tt_entry) = self.ttable.get(&key) {
+            // Can only cut off if the existing entry came from a greater depth.
+            if tt_entry.depth >= depth {
+                return tt_entry.try_score(bounds, ply);
+            }
+        }
+
+        None
+    }
+
+    /// Compute a reduction value (`R`) to apply to a given node's search depth, if possible.
+    #[inline(always)]
+    fn reduction_value<const PV: bool>(
+        &self,
+        depth: u8,
+        game: &Game<V>,
+        moves_made: usize,
+    ) -> Option<u8> {
+        /****************************************************************************************************
+         * Late Move Reductions: https://www.chessprogramming.org/Late_Move_Reductions
+         ****************************************************************************************************/
+        (depth >= MIN_LMR_DEPTH && moves_made >= MIN_LMR_MOVES + PV as usize).then(|| {
+            // Base LMR reduction increases as we go higher in depth and/or make more moves
+            let mut lmr_reduction =
+                (LMR_OFFSET + (depth as f32).ln() * (moves_made as f32).ln() / LMR_DIVISOR) as u8;
+
+            // Increase/decrease the reduction based on current conditions
+            // lmr_reduction += something;
+            lmr_reduction -= game.is_in_check() as u8;
+
+            lmr_reduction
+        })
+    }
+
+    /// Compute an extension value to apply to a given node's search depth.
+    #[inline(always)]
+    fn extension_value(&self, game: &Game<V>) -> u8 {
+        /****************************************************************************************************
+         * Check Extensions: https://www.chessprogramming.org/Check_Extensions
+         ****************************************************************************************************/
+        game.is_in_check() as u8
     }
 }
 

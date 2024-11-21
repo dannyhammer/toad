@@ -931,7 +931,7 @@ impl<T> IndexMut<Square> for [[T; File::COUNT]; Rank::COUNT] {
 impl fmt::Display for Square {
     /// Calls [`Square::to_uci`].
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_uci())
+        self.to_uci().fmt(f)
     }
 }
 
@@ -1326,7 +1326,7 @@ impl AsRef<str> for Rank {
 
 impl fmt::Display for Rank {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.char())
+        self.char().fmt(f)
     }
 }
 
@@ -1588,7 +1588,7 @@ impl AsRef<str> for File {
 
 impl fmt::Display for File {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.char())
+        self.char().fmt(f)
     }
 }
 

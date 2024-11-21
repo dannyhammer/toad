@@ -5,7 +5,6 @@
  */
 
 use std::{
-    cmp::Ordering,
     fmt::{self, Debug, Write},
     marker::PhantomData,
     ops::{Deref, Index, IndexMut},
@@ -17,8 +16,11 @@ use anyhow::{anyhow, bail, Result};
 use crate::{
     bishop_attacks, bishop_rays, king_attacks, knight_attacks, pawn_attacks, pawn_pushes,
     queen_attacks, ray_between, ray_containing, rook_attacks, rook_rays, Bitboard, Color, File,
-    Move, MoveKind, MoveList, Piece, PieceKind, Psqt, Rank, Score, Square, ZobristKey,
+    Move, MoveKind, MoveList, Piece, PieceKind, Psqt, Rank, Score, SmallDisplayTable, Square,
+    ZobristKey,
 };
+
+use super::Table;
 
 /// FEN string for the starting position of chess.
 pub const FEN_STARTPOS: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -525,86 +527,6 @@ impl<V: Variant> Game<V> {
     #[inline(always)]
     pub fn eval_for(&self, color: Color) -> Score {
         self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color.negation_multiplier() as i32
-    }
-
-    /// Returns a string of a "pretty" evaluation of the current position, from the side-to-move's perspective.
-    pub fn eval_pretty(&self) -> String {
-        let mut s = String::new();
-        let color = self.side_to_move();
-        let endgame_weight = self.endgame_weight();
-
-        let ranks = Rank::iter().rev();
-
-        s += "  +";
-        for _ in File::iter() {
-            s += "-----+";
-        }
-        s += "\n";
-        for rank in ranks {
-            s += format!("{rank} |").as_str();
-
-            // Step 1: Write the piece char
-            for file in File::iter() {
-                let square = Square::new(file, rank);
-                let piece = self.piece_at(square);
-                let piece_char = piece.map(|p| p.char()).unwrap_or(' ');
-                s += format!("  {piece_char}  |").as_str();
-            }
-            s += "\n";
-            s += "  |";
-
-            // Step 2: Write the contribution of that piece
-            for file in File::iter() {
-                let square = Square::new(file, rank);
-
-                // let score = if let Some(val) = self.value_at(square) {
-                let score = if let Some(piece) = self.piece_at(square) {
-                    let (mg, eg) = Psqt::evals(piece, square);
-                    let val =
-                        mg.lerp(eg, endgame_weight) * piece.color().negation_multiplier() as i32;
-
-                    let score = if val > Score::DRAW {
-                        format!("+{}", val.normalize())
-                    } else {
-                        format!("{}", val.normalize())
-                    };
-
-                    format!("{score:^5}")
-                } else {
-                    String::from("     ")
-                };
-                s += format!("{score}|").as_str();
-            }
-
-            s += "\n";
-
-            s += "  +";
-            for _ in File::iter() {
-                s += "-----+";
-            }
-            s += "\n";
-        }
-        for file in File::iter() {
-            s += format!("     {file}").as_str();
-        }
-
-        let score = self.eval_for(color);
-
-        let winning_side = match score.cmp(&Score::DRAW) {
-            Ordering::Greater => Some(color),
-            Ordering::Less => Some(color.opponent()),
-            Ordering::Equal => None,
-        };
-
-        s += format!("\n\nEndgame: {endgame_weight}%").as_str();
-        s += format!(
-            "\nWinning side: {}",
-            winning_side.map(|c| c.name()).unwrap_or("N/A")
-        )
-        .as_str();
-        s += format!("\nScore: {score}").as_str();
-
-        s
     }
 
     /// Applies the provided [`Move`]. No enforcement of legality.
@@ -2147,7 +2069,7 @@ pub struct Board {
     pieces: [Bitboard; PieceKind::COUNT],
 
     /// Redundant mailbox to speed up the [`Board::piece_at`] functions.
-    mailbox: [Option<Piece>; Square::COUNT],
+    mailbox: Table<Option<Piece>>,
 }
 
 impl Board {
@@ -2157,7 +2079,7 @@ impl Board {
         Self {
             colors: [Bitboard::EMPTY_BOARD; Color::COUNT],
             pieces: [Bitboard::EMPTY_BOARD; PieceKind::COUNT],
-            mailbox: [None; Square::COUNT],
+            mailbox: Table::splat(None),
         }
     }
 
@@ -2171,13 +2093,13 @@ impl Board {
     /// ```
     #[inline(always)]
     pub const fn has(&self, square: Square) -> bool {
-        self.mailbox[square.index()].is_some()
+        self.mailbox.get(square).is_some()
     }
 
     /// Places the provided [`Piece`] and the supplied [`Square`].
     ///
     /// If another piece occupies this square, this does *not* remove that piece.
-    /// Use [`Board::clear`] first.
+    /// Use [`Board::take`] first.
     ///
     /// # Example
     /// ```
@@ -2219,7 +2141,7 @@ impl Board {
     /// ```
     #[inline(always)]
     pub const fn piece_at(&self, square: Square) -> Option<Piece> {
-        self.mailbox[square.index()]
+        *self.mailbox.get(square)
     }
 
     /// Fetches the [`Bitboard`] corresponding to the supplied [`PieceKind`].
@@ -2260,10 +2182,7 @@ impl Board {
         self.color(Color::White).or(self.color(Color::Black))
     }
 
-    /// Analogous to [`Board::piece`] with a [`Piece`]'s individual components.
-    ///
-    /// If you have a [`PieceKind`] and a [`Color`] already, this is likely to be *slightly*
-    /// faster that constructing a [`Piece`] and calling [`Board::piece`].
+    /// Fetch a [`Bitboard`] of all pieces of `kind` and `color`.
     #[inline(always)]
     pub const fn piece_parts(&self, color: Color, kind: PieceKind) -> Bitboard {
         self.color(color).and(self.kind(kind))
@@ -2429,36 +2348,15 @@ impl Default for Board {
 
 impl fmt::Display for Board {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Allocate just enough capacity
-        let mut board = String::with_capacity(198);
-
-        for rank in Rank::iter().rev() {
-            board += &format!("{rank}| ");
-
-            for file in File::iter() {
-                let square = Square::new(file, rank);
-                let occupant = if let Some(piece) = self.piece_at(square) {
-                    piece.to_string()
-                } else {
-                    // String::from(if square.is_light() { "#" } else { "-" })
-                    String::from(".")
-                };
-
-                board += &format!("{occupant} ");
-            }
-
-            board += "\n"
-        }
-        board += " +";
-        for _ in File::iter() {
-            board += "--";
-        }
-        board += "\n   ";
-        for file in File::iter() {
-            board += &format!("{file} ");
-        }
-
-        write!(f, "{board}")
+        fmt::Display::fmt(
+            &SmallDisplayTable::from_fn(|sq| {
+                [self
+                    .piece_at(sq)
+                    .map(|p| p.to_string())
+                    .unwrap_or(String::from("."))]
+            }),
+            f,
+        )
     }
 }
 

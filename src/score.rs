@@ -27,6 +27,12 @@ impl Score {
     /// Score of a draw.
     pub const DRAW: Self = Self(0);
 
+    /// Initial value of alpha in alpha-beta pruning.
+    pub const ALPHA: Self = Self(-Self::INF.0);
+
+    /// Initial value of beta in alpha-beta pruning.
+    pub const BETA: Self = Self::INF;
+
     /// Lowest possible score for mate.
     ///
     /// This is only obtainable if mate is possible in [`MAX_DEPTH`] moves.
@@ -207,12 +213,14 @@ impl std::ops::Neg for Score {
 }
 
 impl PartialEq<i32> for Score {
+    #[inline(always)]
     fn eq(&self, other: &i32) -> bool {
         self.0.eq(other)
     }
 }
 
 impl PartialOrd<i32> for Score {
+    #[inline(always)]
     fn partial_cmp(&self, other: &i32) -> Option<std::cmp::Ordering> {
         self.0.partial_cmp(other)
     }
