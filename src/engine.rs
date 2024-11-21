@@ -429,9 +429,9 @@ impl Engine {
                     .iter()
                     .map(|mv| {
                         if debug {
-                            V::fmt_move(*mv)
-                        } else {
                             V::dbg_move(*mv)
+                        } else {
+                            V::fmt_move(*mv)
                         }
                     })
                     .collect::<Vec<_>>();
