@@ -15,11 +15,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use arrayvec::ArrayVec;
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
     tune, Color, Game, HistoryTable, LogLevel, LoggingLevel, Move, MoveList, Piece, PieceKind,
-    Position, Score, TTable, TTableEntry, Variant, ZobristKey,
+    Position, Score, TTable, TTableEntry, Variant, ZobristKey, MAX_NUM_MOVES,
 };
 
 /// Maximum depth that can be searched
@@ -339,6 +340,9 @@ pub struct Search<'a, const LOG: u8, V> {
 
     /// Marker for what variant of Chess is being played
     variant: PhantomData<&'a V>,
+
+    /// Principle Variation line found during the search
+    pv: ArrayVec<ArrayVec<Move, { MAX_DEPTH as usize }>, MAX_NUM_MOVES>,
 }
 
 impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
@@ -351,6 +355,13 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         ttable: &'a mut TTable,
         history: &'a mut HistoryTable,
     ) -> Self {
+        // Initialize PV
+        let mut pv = ArrayVec::new();
+
+        for _ in 0..MAX_NUM_MOVES {
+            pv.push(ArrayVec::new());
+        }
+
         Self {
             nodes: 0,
             is_searching,
@@ -359,6 +370,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             ttable,
             history,
             variant: PhantomData,
+            pv,
         }
     }
 
@@ -440,7 +452,8 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                 .score(result.score)
                 .nps((self.nodes as f32 / elapsed.as_secs_f32()).trunc())
                 .time(elapsed.as_millis())
-                .pv(result.bestmove.map(V::fmt_move)),
+                // .pv(result.bestmove.map(V::fmt_move)),
+                .pv(self.pv[0].iter().filter(|mv| **mv != Move::illegal())),
         );
     }
 
@@ -659,8 +672,14 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
                 if score > bounds.alpha {
                     bounds.alpha = score;
-                    // PV found
                     bestmove = *mv;
+
+                    // PV found
+                    let i = ply as usize;
+                    self.pv[i].clear();
+                    self.pv[i].push(*mv);
+                    let pv = self.pv[i + 1].clone();
+                    self.pv[i].extend(pv);
                 }
 
                 // Fail soft beta-cutoff.
