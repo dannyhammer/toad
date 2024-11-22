@@ -532,6 +532,11 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                 self.send_end_of_search_info(&result);
             }
 
+            // Makes SPRT finish faster
+            if result.nodes + self.nodes > 5000 {
+                break;
+            }
+
             // Increase the depth for the next iteration
             result.depth += 1;
         }
