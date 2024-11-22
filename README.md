@@ -115,6 +115,7 @@ If you are willing to test the installation and execution of Toad on other opera
     -   [Reverse Futility Pruning](https://www.chessprogramming.org/Reverse_Futility_Pruning).
     -   [Late Move Reductions](https://www.chessprogramming.org/Late_Move_Reductions).
     -   [Check Extensions](https://www.chessprogramming.org/Check_Extensions).
+    -   [Transposition Table Cutoffs](https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs).
     -   Move Ordering:
         -   [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) with relative piece values `K < P < N < B < R < Q`, so `KxR` is ordered before `PxR`.
         -   [Hash moves](https://www.chessprogramming.org/Hash_Move).
