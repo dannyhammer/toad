@@ -1,6 +1,6 @@
 [package]
 name = "toad"
-version = "1.5.0"
+version = "1.4.0"
 edition = "2021"
 authors = ["Danny Hammer <hammerapi@gmail.com>"]
 license = "MPL-2.0"
