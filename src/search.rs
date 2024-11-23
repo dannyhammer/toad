@@ -599,6 +599,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         // Start with a *really bad* initial score
         let mut best = Score::ALPHA;
         let mut bestmove = moves[0]; // Safe because we guaranteed `moves` to be nonempty above
+        let mut alpha_raised = false;
 
         /****************************************************************************************************
          * Primary move loop
@@ -659,6 +660,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
                 if score > bounds.alpha {
                     bounds.alpha = score;
+                    alpha_raised = true;
                     // PV found
                     bestmove = *mv;
                 }
@@ -690,15 +692,17 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             }
         }
 
-        // Save this node to the TTable
-        self.save_to_tt(
-            game.key(),
-            bestmove,
-            best,
-            SearchBounds::new(original_alpha, bounds.beta),
-            depth,
-            ply,
-        );
+        if alpha_raised {
+            // Save this node to the TTable
+            self.save_to_tt(
+                game.key(),
+                bestmove,
+                best,
+                SearchBounds::new(original_alpha, bounds.beta),
+                depth,
+                ply,
+            );
+        }
 
         best
     }
