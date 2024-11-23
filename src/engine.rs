@@ -56,6 +56,8 @@ pub struct Engine {
 
     /// Whether to display extra information during execution.
     debug: bool,
+
+    soft_node_limit: u64,
 }
 
 impl Engine {
@@ -74,6 +76,7 @@ impl Engine {
             ttable: Arc::default(),
             history: Arc::default(),
             debug: false,
+            soft_node_limit: 5000,
         }
     }
 
@@ -562,6 +565,7 @@ impl Engine {
         prev_positions.push(*game.position());
         let ttable = Arc::clone(&self.ttable);
         let history = Arc::clone(&self.history);
+        let soft_node_limit = self.soft_node_limit;
 
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
@@ -576,6 +580,7 @@ impl Engine {
                 prev_positions,
                 &mut ttable,
                 &mut history,
+                soft_node_limit,
             )
             .start(&game)
         });
@@ -628,6 +633,7 @@ impl Engine {
             ),
             UciOption::spin("Threads", 1, 1, 1),
             UciOption::check("UCI_Chess960", false),
+            UciOption::spin("SoftNodeLimit", self.soft_node_limit as i32, 1, i32::MAX),
         ]
         .into_iter()
     }
@@ -680,6 +686,23 @@ impl Engine {
                 };
 
                 self.send_command(EngineCommand::ChangeVariant { variant: Some(v) });
+            }
+
+            "SoftNodeLimit" => {
+                let Some(value) = value.as_ref() else {
+                    bail!("usage: setoption name {name} value <value>");
+                };
+
+                let Ok(limit) = value.parse() else {
+                    bail!("expected integer. got {value:?}");
+                };
+
+                // Ensure the value is within bounds
+                if limit < 1 || limit > i32::MAX as u64 {
+                    bail!("Node limit must be within [1, {}]", i32::MAX);
+                }
+
+                self.soft_node_limit = limit;
             }
 
             _ => {

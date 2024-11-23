@@ -339,6 +339,8 @@ pub struct Search<'a, const LOG: u8, V> {
 
     /// Marker for what variant of Chess is being played
     variant: PhantomData<&'a V>,
+
+    soft_node_limit: u64,
 }
 
 impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
@@ -350,6 +352,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         prev_positions: Vec<Position>,
         ttable: &'a mut TTable,
         history: &'a mut HistoryTable,
+        soft_node_limit: u64,
     ) -> Self {
         Self {
             nodes: 0,
@@ -359,6 +362,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             ttable,
             history,
             variant: PhantomData,
+            soft_node_limit,
         }
     }
 
@@ -533,7 +537,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             }
 
             // Makes SPRT finish faster
-            if result.nodes + self.nodes > 5000 {
+            if result.nodes + self.nodes > self.soft_node_limit {
                 break;
             }
 
@@ -1116,6 +1120,7 @@ pub fn print_mvv_lva_table() {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::*;
 
@@ -1131,6 +1136,7 @@ mod tests {
             Default::default(),
             &mut ttable,
             &mut history,
+            u64::MAX,
         )
         .start(&game)
     }
