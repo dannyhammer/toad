@@ -342,7 +342,7 @@ pub struct Search<'a, const LOG: u8, V> {
     variant: PhantomData<&'a V>,
 
     /// Principle Variation line found during the search
-    pv: ArrayVec<ArrayVec<Move, { MAX_DEPTH as usize }>, MAX_NUM_MOVES>,
+    pv: ArrayVec<ArrayVec<Option<Move>, { MAX_DEPTH as usize }>, MAX_NUM_MOVES>,
 }
 
 impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
@@ -452,8 +452,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                 .score(result.score)
                 .nps((self.nodes as f32 / elapsed.as_secs_f32()).trunc())
                 .time(elapsed.as_millis())
-                // .pv(result.bestmove.map(V::fmt_move)),
-                .pv(self.pv[0].iter().filter(|mv| **mv != Move::illegal())),
+                .pv(self.pv[0].iter().filter(|mv| mv.is_some()).flatten()),
         );
     }
 
@@ -568,6 +567,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         mut bounds: SearchBounds,
     ) -> Score {
         let original_alpha = bounds.alpha;
+        self.pv[ply as usize].clear();
 
         /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
@@ -678,7 +678,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                     // PV found
                     let i = ply as usize;
                     self.pv[i].clear();
-                    self.pv[i].push(*mv);
+                    self.pv[i].push(Some(*mv));
                     let pv = self.pv[i + 1].clone();
                     self.pv[i].extend(pv);
                 }
