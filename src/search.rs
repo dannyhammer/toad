@@ -20,7 +20,7 @@ use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
     tune, Color, Game, HistoryTable, LogLevel, LoggingLevel, Move, MoveList, Piece, PieceKind,
-    Position, Score, TTable, TTableEntry, Variant, ZobristKey, MAX_NUM_MOVES,
+    Position, Score, TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Maximum depth that can be searched
@@ -46,6 +46,29 @@ const LMR_OFFSET: f32 = tune::lmr_offset!();
 
 /// Divisor in the LMR formula.
 const LMR_DIVISOR: f32 = tune::lmr_divisor!();
+
+/// Represents the best sequence of moves found during a search.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PrincipalVariation(ArrayVec<Move, { MAX_DEPTH as usize }>);
+
+impl PrincipalVariation {
+    /// An empty PV.
+    const EMPTY: Self = Self(ArrayVec::new_const());
+
+    /// Extend the contents of `self` with `mv` and the contents of `other`.
+    fn extend(&mut self, mv: Move, other: &Self) {
+        self.0.clear();
+        self.0.push(mv);
+        self.0
+            .try_extend_from_slice(&other.0)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "{err}: Attempted to exceed PV capacity of {MAX_DEPTH} pushing {mv:?} and {:?}",
+                    &other.0
+                );
+            });
+    }
+}
 
 /// Bounds within an alpha-beta search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,7 +226,7 @@ impl AspirationWindow {
 }
 
 /// The result of a search, containing the best move found, score, and total nodes searched.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SearchResult {
     /// Number of nodes searched.
     pub nodes: u64,
@@ -214,8 +237,11 @@ pub struct SearchResult {
     /// Evaluation of the position after `bestmove` is made.
     pub score: Score,
 
-    // The depth of the search that produced this result.
+    /// The depth of the search that produced this result.
     pub depth: u8,
+
+    /// Principal variation during this search.
+    pub pv: PrincipalVariation,
 }
 
 impl Default for SearchResult {
@@ -228,6 +254,7 @@ impl Default for SearchResult {
             bestmove: None,
             score: Score::ALPHA,
             depth: 1,
+            pv: PrincipalVariation::EMPTY,
         }
     }
 }
@@ -340,9 +367,6 @@ pub struct Search<'a, const LOG: u8, V> {
 
     /// Marker for what variant of Chess is being played
     variant: PhantomData<&'a V>,
-
-    /// Principle Variation line found during the search
-    pv: ArrayVec<ArrayVec<Option<Move>, { MAX_DEPTH as usize }>, MAX_NUM_MOVES>,
 }
 
 impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
@@ -355,13 +379,6 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         ttable: &'a mut TTable,
         history: &'a mut HistoryTable,
     ) -> Self {
-        // Initialize PV
-        let mut pv = ArrayVec::new();
-
-        for _ in 0..MAX_NUM_MOVES {
-            pv.push(ArrayVec::new());
-        }
-
         Self {
             nodes: 0,
             is_searching,
@@ -370,7 +387,6 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             ttable,
             history,
             variant: PhantomData,
-            pv,
         }
     }
 
@@ -452,7 +468,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                 .score(result.score)
                 .nps((self.nodes as f32 / elapsed.as_secs_f32()).trunc())
                 .time(elapsed.as_millis())
-                .pv(self.pv[0].iter().filter(|mv| mv.is_some()).flatten()),
+                .pv(result.pv.0.iter().map(|&mv| V::fmt_move(mv))),
         );
     }
 
@@ -496,7 +512,8 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             // Get a score from the a/b search while using aspiration windows
             let score = 'aspiration_window: loop {
                 // Start a new search at the current depth
-                let score = self.negamax::<true>(game, result.depth, 0, window.bounds);
+                let score =
+                    self.negamax::<true>(game, result.depth, 0, window.bounds, &mut result.pv);
 
                 // If the score fell outside of the aspiration window, widen it gradually
                 if window.fails_low(score) {
@@ -565,10 +582,8 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         depth: u8,
         ply: i32,
         mut bounds: SearchBounds,
+        pv: &mut PrincipalVariation,
     ) -> Score {
-        let original_alpha = bounds.alpha;
-        self.pv[ply as usize].clear();
-
         /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
          ****************************************************************************************************/
@@ -580,6 +595,9 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             }
         }
 
+        // Declare a local principal variation for nodes found in this search.
+        let mut local_pv = PrincipalVariation::EMPTY;
+
         /****************************************************************************************************
          * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
          ****************************************************************************************************/
@@ -589,7 +607,8 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         }
 
         // If we CAN prune this node by means other than the TT, do so
-        if let Some(score) = self.node_pruning_score::<PV>(game, depth, ply, bounds) {
+        if let Some(score) = self.node_pruning_score::<PV>(game, depth, ply, bounds, &mut local_pv)
+        {
             return score;
         }
 
@@ -612,6 +631,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         // Start with a *really bad* initial score
         let mut best = Score::ALPHA;
         let mut bestmove = moves[0]; // Safe because we guaranteed `moves` to be nonempty above
+        let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
          * Primary move loop
@@ -634,17 +654,33 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                     let reduced_depth = (new_depth - lmr_reduction).max(1).min(new_depth);
 
                     // Search at a reduced depth with a null window
-                    score =
-                        -self.negamax::<false>(&new, reduced_depth, ply + 1, -bounds.null_alpha());
+                    score = -self.negamax::<false>(
+                        &new,
+                        reduced_depth,
+                        ply + 1,
+                        -bounds.null_alpha(),
+                        &mut local_pv,
+                    );
 
                     // If that failed *high* (raised alpha), re-search at the full depth with the null window
                     if score > bounds.alpha && reduced_depth < new_depth {
-                        score =
-                            -self.negamax::<false>(&new, new_depth, ply + 1, -bounds.null_alpha());
+                        score = -self.negamax::<false>(
+                            &new,
+                            new_depth,
+                            ply + 1,
+                            -bounds.null_alpha(),
+                            &mut local_pv,
+                        );
                     }
                 } else if !PV || i > 0 {
                     // All non-PV nodes get searched with a null window
-                    score = -self.negamax::<false>(&new, new_depth, ply + 1, -bounds.null_alpha());
+                    score = -self.negamax::<false>(
+                        &new,
+                        new_depth,
+                        ply + 1,
+                        -bounds.null_alpha(),
+                        &mut local_pv,
+                    );
                 }
 
                 /****************************************************************************************************
@@ -652,7 +688,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                  ****************************************************************************************************/
                 // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
                 if PV && (i == 0 || score > bounds.alpha) {
-                    score = -self.negamax::<PV>(&new, new_depth, ply + 1, -bounds);
+                    score = -self.negamax::<PV>(&new, new_depth, ply + 1, -bounds, &mut local_pv);
                 }
 
                 // We've now searched this node
@@ -672,15 +708,10 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
                 if score > bounds.alpha {
                     bounds.alpha = score;
-                    // PV found
-                    bestmove = *mv;
 
-                    // PV found
-                    let i = ply as usize;
-                    self.pv[i].clear();
-                    self.pv[i].push(Some(*mv));
-                    let pv = self.pv[i + 1].clone();
-                    self.pv[i].extend(pv);
+                    // We've identified a new best move in this PV, so update our existing PV.
+                    bestmove = *mv;
+                    pv.extend(*mv, &local_pv);
                 }
 
                 // Fail soft beta-cutoff.
@@ -925,6 +956,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         depth: u8,
         ply: i32,
         bounds: SearchBounds,
+        local_pv: &mut PrincipalVariation,
     ) -> Option<Score> {
         // Cannot prune anything in a PV node or if we're in check
         if PV || game.is_in_check() {
@@ -963,7 +995,13 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
             // Search at a reduced depth with a zero-window
             let nmp_depth = depth - NMP_REDUCTION_VALUE;
-            let score = -self.negamax::<PV>(&null_game, nmp_depth, ply + 1, -bounds.null_beta());
+            let score = -self.negamax::<PV>(
+                &null_game,
+                nmp_depth,
+                ply + 1,
+                -bounds.null_beta(),
+                local_pv,
+            );
 
             self.prev_positions.pop();
 
