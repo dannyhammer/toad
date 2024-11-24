@@ -55,6 +55,11 @@ impl PrincipalVariation {
     /// An empty PV.
     const EMPTY: Self = Self(ArrayVec::new_const());
 
+    /// clears the moves of `self`.
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+
     /// Extend the contents of `self` with `mv` and the contents of `other`.
     fn extend(&mut self, mv: Move, other: &Self) {
         self.0.clear();
@@ -67,6 +72,12 @@ impl PrincipalVariation {
                     &other.0
                 );
             });
+    }
+}
+
+impl Default for PrincipalVariation {
+    fn default() -> Self {
+        Self::EMPTY
     }
 }
 
@@ -584,6 +595,11 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Score {
+        // Declare a local principal variation for nodes found in this search.
+        let mut local_pv = PrincipalVariation::EMPTY;
+        // Clear any nodes in this PV, since we're searching from a new position
+        pv.clear();
+
         /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
          ****************************************************************************************************/
@@ -594,9 +610,6 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                 return tt_score;
             }
         }
-
-        // Declare a local principal variation for nodes found in this search.
-        let mut local_pv = PrincipalVariation::EMPTY;
 
         /****************************************************************************************************
          * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
