@@ -672,6 +672,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
                 if score > bounds.alpha {
                     bounds.alpha = score;
+                    // PV found
                     bestmove = *mv;
 
                     // PV found
