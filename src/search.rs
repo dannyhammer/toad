@@ -708,10 +708,13 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
                 if score > bounds.alpha {
                     bounds.alpha = score;
-
-                    // We've identified a new best move in this PV, so update our existing PV.
+                    // New PV found
                     bestmove = *mv;
-                    pv.extend(*mv, &local_pv);
+
+                    // Only extend the PV if we're in a PV node
+                    if PV {
+                        pv.extend(*mv, &local_pv);
+                    }
                 }
 
                 // Fail soft beta-cutoff.
