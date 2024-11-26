@@ -554,7 +554,10 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         ply: i32,
         mut bounds: SearchBounds,
     ) -> Score {
-        let original_alpha = bounds.alpha;
+        // If this position is a draw, return immediately.
+        if self.is_draw(game) {
+            return Score::DRAW;
+        }
 
         /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
@@ -599,6 +602,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         // Start with a *really bad* initial score
         let mut best = Score::ALPHA;
         let mut bestmove = moves[0]; // Safe because we guaranteed `moves` to be nonempty above
+        let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
          * Primary move loop
@@ -609,45 +613,41 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             let new = game.with_move_made(*mv);
             let mut score = Score::DRAW;
 
-            if !self.is_draw(&new) {
-                // Append the move onto the history
-                self.prev_positions.push(*new.position());
+            // Append the move onto the history
+            self.prev_positions.push(*new.position());
 
-                let new_depth = depth - 1 + self.extension_value(&new);
+            let new_depth = depth - 1 + self.extension_value(&new);
 
-                // If this node can be reduced, search it with a reduced window.
-                if let Some(lmr_reduction) = self.reduction_value::<PV>(depth, &new, i) {
-                    // Reduced depth should never exceed `new_depth` and should never be less than `1`.
-                    let reduced_depth = (new_depth - lmr_reduction).max(1).min(new_depth);
+            // If this node can be reduced, search it with a reduced window.
+            if let Some(lmr_reduction) = self.reduction_value::<PV>(depth, &new, i) {
+                // Reduced depth should never exceed `new_depth` and should never be less than `1`.
+                let reduced_depth = (new_depth - lmr_reduction).max(1).min(new_depth);
 
-                    // Search at a reduced depth with a null window
-                    score =
-                        -self.negamax::<false>(&new, reduced_depth, ply + 1, -bounds.null_alpha());
+                // Search at a reduced depth with a null window
+                score = -self.negamax::<false>(&new, reduced_depth, ply + 1, -bounds.null_alpha());
 
-                    // If that failed *high* (raised alpha), re-search at the full depth with the null window
-                    if score > bounds.alpha && reduced_depth < new_depth {
-                        score =
-                            -self.negamax::<false>(&new, new_depth, ply + 1, -bounds.null_alpha());
-                    }
-                } else if !PV || i > 0 {
-                    // All non-PV nodes get searched with a null window
+                // If that failed *high* (raised alpha), re-search at the full depth with the null window
+                if score > bounds.alpha && reduced_depth < new_depth {
                     score = -self.negamax::<false>(&new, new_depth, ply + 1, -bounds.null_alpha());
                 }
-
-                /****************************************************************************************************
-                 * Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
-                 ****************************************************************************************************/
-                // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
-                if PV && (i == 0 || score > bounds.alpha) {
-                    score = -self.negamax::<PV>(&new, new_depth, ply + 1, -bounds);
-                }
-
-                // We've now searched this node
-                self.nodes += 1;
-
-                // Pop the move from the history
-                self.prev_positions.pop();
+            } else if !PV || i > 0 {
+                // All non-PV nodes get searched with a null window
+                score = -self.negamax::<false>(&new, new_depth, ply + 1, -bounds.null_alpha());
             }
+
+            /****************************************************************************************************
+             * Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
+             ****************************************************************************************************/
+            // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
+            if PV && (i == 0 || score > bounds.alpha) {
+                score = -self.negamax::<PV>(&new, new_depth, ply + 1, -bounds);
+            }
+
+            // We've now searched this node
+            self.nodes += 1;
+
+            // Pop the move from the history
+            self.prev_positions.pop();
 
             /****************************************************************************************************
              * Score evaluation & bounds adjustments
@@ -708,6 +708,11 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     /// A search that looks at only possible captures and capture-chains.
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
     fn quiescence(&mut self, game: &Game<V>, _ply: i32, mut bounds: SearchBounds) -> Score {
+        // If this position is a draw, return immediately.
+        if self.is_draw(game) {
+            return Score::DRAW;
+        }
+
         // Evaluate the current position, to serve as our baseline
         let stand_pat = game.eval();
 
@@ -747,20 +752,13 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         for mv in captures {
             // Copy-make the new position
             let new = game.with_move_made(mv);
-            let score;
 
-            // Normally, repetitions can't occur in QSearch, because captures are irreversible.
-            // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
-            if self.is_draw(&new) {
-                score = Score::DRAW;
-            } else {
-                self.prev_positions.push(*new.position());
+            self.prev_positions.push(*new.position());
 
-                score = -self.quiescence(&new, _ply + 1, -bounds);
-                self.nodes += 1; // We've now searched this node
+            let score = -self.quiescence(&new, _ply + 1, -bounds);
+            self.nodes += 1; // We've now searched this node
 
-                self.prev_positions.pop();
-            }
+            self.prev_positions.pop();
 
             /****************************************************************************************************
              * Score evaluation & bounds adjustments
