@@ -557,6 +557,14 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
+         * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
+         ****************************************************************************************************/
+        // If we've reached a terminal node, evaluate the current position
+        if depth == 0 {
+            return self.quiescence(game, ply, bounds);
+        }
+
+        /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
          ****************************************************************************************************/
         // Do not prune in PV nodes
@@ -565,14 +573,6 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
                 return tt_score;
             }
-        }
-
-        /****************************************************************************************************
-         * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
-         ****************************************************************************************************/
-        // If we've reached a terminal node, evaluate the current position
-        if depth == 0 {
-            return self.quiescence(game, ply, bounds);
         }
 
         // If we CAN prune this node by means other than the TT, do so
