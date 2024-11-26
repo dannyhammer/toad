@@ -713,7 +713,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
         // Beta cutoff; this position is "too good" and our opponent would never let us get here
         if stand_pat >= bounds.beta {
-            return bounds.beta;
+            return stand_pat;
         } else if stand_pat > bounds.alpha {
             bounds.alpha = stand_pat;
         }
