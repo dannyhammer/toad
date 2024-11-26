@@ -596,9 +596,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         pv: &mut PrincipalVariation,
     ) -> Score {
         // Declare a local principal variation for nodes found in this search.
-        let mut local_pv = PrincipalVariation::EMPTY;
-        // Clear any nodes in this PV, since we're searching from a new position
-        pv.clear();
+        let mut local_pv = PrincipalVariation::default();
 
         /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
@@ -616,8 +614,12 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
          ****************************************************************************************************/
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
-            return self.quiescence(game, ply, bounds);
+            return self.quiescence::<PV>(game, ply, bounds, pv);
+            // return game.eval();
         }
+
+        // Clear any nodes in this PV, since we're searching from a new position
+        pv.clear();
 
         // If we CAN prune this node by means other than the TT, do so
         if let Some(score) = self.node_pruning_score::<PV>(game, depth, ply, bounds, &mut local_pv)
@@ -655,7 +657,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             let new = game.with_move_made(*mv);
             let mut score = Score::DRAW;
 
-            if !self.is_draw(&new) {
+            if !self.is_draw(&new, ply) {
                 // Append the move onto the history
                 self.prev_positions.push(*new.position());
 
@@ -726,6 +728,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
                     // Only extend the PV if we're in a PV node
                     if PV {
+                        // eprintln!("Extending PV: {:?} with {mv:?} and {:?}", pv.0, local_pv.0);
                         pv.extend(*mv, &local_pv);
                     }
                 }
@@ -774,7 +777,13 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     ///
     /// A search that looks at only possible captures and capture-chains.
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
-    fn quiescence(&mut self, game: &Game<V>, _ply: i32, mut bounds: SearchBounds) -> Score {
+    fn quiescence<const PV: bool>(
+        &mut self,
+        game: &Game<V>,
+        ply: i32,
+        mut bounds: SearchBounds,
+        pv: &mut PrincipalVariation,
+    ) -> Score {
         // Evaluate the current position, to serve as our baseline
         let stand_pat = game.eval();
 
@@ -784,6 +793,11 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         } else if stand_pat > bounds.alpha {
             bounds.alpha = stand_pat;
         }
+
+        // Declare a local principal variation for nodes found in this search.
+        let mut local_pv = PrincipalVariation::default();
+        // Clear any nodes in this PV, since we're searching from a new position
+        pv.clear();
 
         // Generate only the legal captures
         // TODO: Is there a more concise way of doing this?
@@ -818,12 +832,12 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
-            if self.is_draw(&new) {
+            if self.is_draw(&new, ply) {
                 score = Score::DRAW;
             } else {
                 self.prev_positions.push(*new.position());
 
-                score = -self.quiescence(&new, _ply + 1, -bounds);
+                score = -self.quiescence::<PV>(&new, ply + 1, -bounds, &mut local_pv);
                 self.nodes += 1; // We've now searched this node
 
                 self.prev_positions.pop();
@@ -841,6 +855,12 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
                     // PV found
                     // bestmove = mv;
+
+                    // Only extend the PV if we're in a PV node
+                    // if PV {
+                    //     eprintln!("Extending PV: {:?} with {mv:?} and {:?}", pv.0, local_pv.0);
+                    //     pv.extend(mv, &local_pv);
+                    // }
                 }
 
                 // Fail soft beta-cutoff.
@@ -877,6 +897,8 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     fn is_repetition(&self, game: &Game<V>) -> bool {
         // We can skip the previous position, because there's no way it can be a repetition
         for prev in self.prev_positions.iter().rev().skip(1) {
+            // let n = game.halfmove() as usize;
+            // for prev in self.prev_positions.iter().take(n).rev().skip(1) {
             if prev.key() == game.key() {
                 return true;
             } else
@@ -891,10 +913,11 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
     /// Returns `true` if `game` can be claimed as a draw
     #[inline(always)]
-    fn is_draw(&self, game: &Game<V>) -> bool {
+    fn is_draw(&self, game: &Game<V>, _ply: i32) -> bool {
         self.is_repetition(game)
             || game.can_draw_by_fifty()
             || game.can_draw_by_insufficient_material()
+        // && _ply > 0 // Do not declare draws at root
     }
 
     /// Saves the provided data to an entry in the TTable.
