@@ -557,6 +557,14 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
+         * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
+         ****************************************************************************************************/
+        // If we've reached a terminal node, evaluate the current position
+        if depth == 0 {
+            return self.quiescence::<PV>(game, ply, bounds);
+        }
+
+        /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
          ****************************************************************************************************/
         // Do not prune in PV nodes
@@ -565,14 +573,6 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
                 return tt_score;
             }
-        }
-
-        /****************************************************************************************************
-         * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
-         ****************************************************************************************************/
-        // If we've reached a terminal node, evaluate the current position
-        if depth == 0 {
-            return self.quiescence(game, ply, bounds);
         }
 
         // If we CAN prune this node by means other than the TT, do so
@@ -707,7 +707,23 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     ///
     /// A search that looks at only possible captures and capture-chains.
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
-    fn quiescence(&mut self, game: &Game<V>, _ply: i32, mut bounds: SearchBounds) -> Score {
+    fn quiescence<const PV: bool>(
+        &mut self,
+        game: &Game<V>,
+        ply: i32,
+        mut bounds: SearchBounds,
+    ) -> Score {
+        /****************************************************************************************************
+         * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
+         ****************************************************************************************************/
+        // Do not prune in PV nodes
+        if !PV {
+            // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
+            if let Some(tt_score) = self.probe_tt(game.key(), 0, ply, bounds) {
+                return tt_score;
+            }
+        }
+
         // Evaluate the current position, to serve as our baseline
         let stand_pat = game.eval();
 
@@ -756,7 +772,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             } else {
                 self.prev_positions.push(*new.position());
 
-                score = -self.quiescence(&new, _ply + 1, -bounds);
+                score = -self.quiescence::<PV>(&new, ply + 1, -bounds);
                 self.nodes += 1; // We've now searched this node
 
                 self.prev_positions.pop();
