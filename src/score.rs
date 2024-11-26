@@ -53,6 +53,12 @@ impl Score {
     /// Safety margin when applying reverse futility pruning.
     pub const RFP_MARGIN: Self = Self(tune::rfp_margin!());
 
+    /// Value to multiply depth by when computing razoring margin.
+    pub const RAZORING_MULTIPLIER: Self = Self(tune::razoring_multiplier!());
+
+    /// Value to subtract from alpha bound when computing a razoring margin.
+    pub const RAZORING_OFFSET: Self = Self(tune::razoring_offset!());
+
     /// Returns `true` if the score is a mate score.
     #[inline(always)]
     pub fn is_mate(&self) -> bool {
