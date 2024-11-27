@@ -174,3 +174,11 @@ macro_rules! razoring_offset {
     };
 }
 pub(crate) use razoring_offset;
+
+/// Bonus to give to a side with a bishop pair
+macro_rules! bishop_pair_bonus {
+    () => {
+        30
+    };
+}
+pub(crate) use bishop_pair_bonus;

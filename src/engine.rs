@@ -341,9 +341,10 @@ impl Engine {
         use std::cmp::Ordering::*;
         if pretty {
             let color = game.side_to_move();
+            let opponent = color.opponent();
             let endgame_weight = game.endgame_weight();
 
-            let table = MediumDisplayTable::from_fn(|sq| {
+            let board = MediumDisplayTable::from_fn(|sq| {
                 game.piece_at(sq)
                     .map(|piece| {
                         let (mg, eg) = Psqt::evals(piece, sq);
@@ -358,11 +359,26 @@ impl Engine {
 
             let winning = match score.cmp(&Score::DRAW) {
                 Greater => color.name(),
-                Less => color.opponent().name(),
+                Less => opponent.name(),
                 Equal => "N/A",
             };
 
-            println!("{table}");
+            let bonuses = [(
+                "Bishop Pair",
+                game.bishop_pair_bonus(color),
+                game.bishop_pair_bonus(opponent),
+            )];
+
+            let width = bonuses.iter().map(|b| b.0.len()).max().unwrap() + 2;
+            let bar = "-".repeat(width) + "------------------------";
+            let mut factors = format!("{:^width$}| White | Black | Total\n{bar}\n", "Name");
+            for (name, white, black) in bonuses {
+                let total = white - black;
+                factors += format!("{name:^width$}|{white:^7}|{black:^7}|{total:^7}").as_str();
+            }
+
+            println!("Bonuses and Penalties:\n{factors}\n");
+            println!("{board}");
             println!("Endgame: {endgame_weight}%");
             println!("Winning side: {winning}",);
             println!("Score: {score}");

@@ -15,8 +15,8 @@ use anyhow::{anyhow, bail, Result};
 
 use crate::{
     bishop_attacks, bishop_rays, king_attacks, knight_attacks, pawn_attacks, pawn_pushes,
-    queen_attacks, ray_between, ray_containing, rook_attacks, rook_rays, Bitboard, Color, File,
-    Move, MoveKind, MoveList, Piece, PieceKind, Psqt, Rank, Score, SmallDisplayTable, Square,
+    queen_attacks, ray_between, ray_containing, rook_attacks, rook_rays, tune, Bitboard, Color,
+    File, Move, MoveKind, MoveList, Piece, PieceKind, Psqt, Rank, Score, SmallDisplayTable, Square,
     ZobristKey,
 };
 
@@ -526,7 +526,26 @@ impl<V: Variant> Game<V> {
     /// A score of 0 is considered equal.
     #[inline(always)]
     pub fn eval_for(&self, color: Color) -> Score {
-        self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color.multiplier()
+        // self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color.multiplier()
+        let opponent = color.opponent();
+
+        let psqt = self.evals.0.lerp(self.evals.1, self.endgame_weight());
+        let bishop_pair = self.bishop_pair_bonus(color) - self.bishop_pair_bonus(opponent);
+
+        (psqt + bishop_pair) * color.multiplier()
+    }
+
+    /// Provides a small bonus to `color` if they have two Bishops on opposite colored squares.
+    #[inline(always)]
+    pub fn bishop_pair_bonus(&self, color: Color) -> Score {
+        // Get the squares of both Bishops, returning early with a score of 0 if there aren't at least two.
+        let mut bishops = self.bishop(color).into_iter();
+        let (Some(a), Some(b)) = (bishops.next(), bishops.next()) else {
+            return Score::DRAW;
+        };
+        let is_pair = a.color() != b.color();
+
+        Score::new(tune::bishop_pair_bonus!() * is_pair as i32)
     }
 
     /// Applies the provided [`Move`]. No enforcement of legality.
