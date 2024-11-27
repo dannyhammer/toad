@@ -925,13 +925,14 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * If the static eval of our position is low enough, check if a qsearch can beat alpha.
          * If it can't, we can prune this node.
          ****************************************************************************************************/
-        let razoring_margin = bounds.alpha
+        let razoring_cutoff = bounds.alpha
             - Score::RAZORING_OFFSET
             - Score::RAZORING_MULTIPLIER * (depth as i32 * depth as i32);
-        if static_eval < razoring_margin {
-            let score = self.quiescence(game, ply, bounds);
-            if score < bounds.alpha {
-                return Some(score);
+        if depth <= 1 && static_eval < razoring_cutoff {
+            let score = self.quiescence(game, ply, bounds.null_alpha());
+            // If we can't beat alpha (without mating), we can prune.
+            if score < bounds.alpha && !score.is_mate() {
+                return Some(score); // fail-soft
             }
         }
 
