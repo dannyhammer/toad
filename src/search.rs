@@ -609,7 +609,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             let new = game.with_move_made(*mv);
             let mut score = Score::DRAW;
 
-            if !self.is_draw(&new) {
+            if !(ply > 0 && self.is_draw(&new)) {
                 // Append the move onto the history
                 self.prev_positions.push(*new.position());
 
@@ -707,7 +707,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     ///
     /// A search that looks at only possible captures and capture-chains.
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
-    fn quiescence(&mut self, game: &Game<V>, _ply: i32, mut bounds: SearchBounds) -> Score {
+    fn quiescence(&mut self, game: &Game<V>, ply: i32, mut bounds: SearchBounds) -> Score {
         // Evaluate the current position, to serve as our baseline
         let stand_pat = game.eval();
 
@@ -751,12 +751,12 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
-            if self.is_draw(&new) {
+            if ply > 0 && self.is_draw(&new) {
                 score = Score::DRAW;
             } else {
                 self.prev_positions.push(*new.position());
 
-                score = -self.quiescence(&new, _ply + 1, -bounds);
+                score = -self.quiescence(&new, ply + 1, -bounds);
                 self.nodes += 1; // We've now searched this node
 
                 self.prev_positions.pop();
