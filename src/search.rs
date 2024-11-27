@@ -554,8 +554,6 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         ply: i32,
         mut bounds: SearchBounds,
     ) -> Score {
-        let original_alpha = bounds.alpha;
-
         /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
          ****************************************************************************************************/
@@ -599,6 +597,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         // Start with a *really bad* initial score
         let mut best = Score::ALPHA;
         let mut bestmove = moves[0]; // Safe because we guaranteed `moves` to be nonempty above
+        let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
          * Primary move loop
