@@ -526,7 +526,7 @@ impl<V: Variant> Game<V> {
     /// A score of 0 is considered equal.
     #[inline(always)]
     pub fn eval_for(&self, color: Color) -> Score {
-        self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color.negation_multiplier() as i32
+        self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color.multiplier()
     }
 
     /// Applies the provided [`Move`]. No enforcement of legality.
@@ -1241,7 +1241,7 @@ impl<V: Variant> Game<V> {
     #[inline(always)]
     fn place(&mut self, piece: Piece, square: Square) {
         let color = piece.color();
-        let multiplier = color.negation_multiplier() as i32;
+        let multiplier = color.multiplier();
 
         self.position.board.place(piece, square);
         self.position.key.hash_piece(square, piece);
@@ -1258,7 +1258,7 @@ impl<V: Variant> Game<V> {
     fn take(&mut self, square: Square) -> Option<Piece> {
         let piece = self.position.board.take(square)?;
         let color = piece.color();
-        let multiplier = color.negation_multiplier() as i32;
+        let multiplier = color.multiplier();
 
         self.position.key.hash_piece(square, piece);
         self.material[piece.color()] -= piece.kind().value();

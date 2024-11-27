@@ -124,7 +124,7 @@ impl Color {
     /// assert_eq!(Color::Black.negation_multiplier(), -1);
     /// ```
     #[inline(always)]
-    pub const fn negation_multiplier(&self) -> i8 {
+    pub const fn multiplier(&self) -> i32 {
         // TODO: Which of these 3 is faster?
 
         // A: Match

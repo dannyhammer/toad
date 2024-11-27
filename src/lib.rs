@@ -27,6 +27,8 @@ mod utils;
 mod board {
     /// All things related to Bitboards.
     mod bitboard;
+    /// A chessboard, complete with piece placements, game state, legality checks, etc.
+    mod game;
     /// All code related to generating moves (legal and pseudo-legal) for pieces on a board, as well as magic bitboard generation.
     mod movegen;
     /// Enums and structs for modeling the movement of a piece on a chessboard.
@@ -35,8 +37,6 @@ mod board {
     mod perft;
     /// Enums for piece kinds, colors, and a struct for a chess piece.
     mod piece;
-    /// A chessboard, complete with piece placements, game state, legality checks, etc.
-    mod position;
     /// Pseudo-random number generation, written to be usable in `const` settings.
     ///
     /// Primarily for Zobrist hashing and magic generation.
@@ -49,11 +49,11 @@ mod board {
     mod zobrist;
 
     pub use bitboard::*;
+    pub use game::*;
     pub use movegen::*;
     pub use moves::*;
     pub use perft::*;
     pub use piece::*;
-    pub use position::*;
     pub use prng::*;
     pub use square::*;
     pub use table::*;
