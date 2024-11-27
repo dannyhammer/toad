@@ -19,33 +19,12 @@ use arrayvec::ArrayVec;
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, Color, Game, HistoryTable, LogLevel, LoggingLevel, Move, MoveList, Piece, PieceKind,
-    Position, Score, TTable, TTableEntry, Variant, ZobristKey,
+    tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Position, Score,
+    TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Maximum depth that can be searched
 pub const MAX_DEPTH: u8 = u8::MAX / 2;
-
-/// Minium depth at which null move pruning can be applied.
-const MIN_NMP_DEPTH: u8 = tune::min_nmp_depth!();
-
-/// Value to subtract from `depth` when applying null move pruning.
-const NMP_REDUCTION_VALUE: u8 = tune::nmp_reduction_value!();
-
-/// MAximum depth at which to apply reverse futility pruning.
-const MAX_RFP_DEPTH: u8 = tune::max_rfp_depth!();
-
-/// Minimum depth at which to apply late move reductions.
-const MIN_LMR_DEPTH: u8 = tune::min_lmr_depth!();
-
-/// Minimum moves that must be made before late move reductions can be applied.
-const MIN_LMR_MOVES: usize = tune::min_lmr_moves!();
-
-/// Base value in the LMR formula.
-const LMR_OFFSET: f32 = tune::lmr_offset!();
-
-/// Divisor in the LMR formula.
-const LMR_DIVISOR: f32 = tune::lmr_divisor!();
 
 /// Represents the best sequence of moves found during a search.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -166,9 +145,7 @@ impl AspirationWindow {
         let min_delta = tune::min_aspiration_window_delta!();
 
         // Gradually decrease the window size from `8*init` to `min`
-        let delta = ((initial_delta << 3) / depth as i32).max(min_delta);
-
-        Score(delta)
+        Score::new(((initial_delta << 3) / depth as i32).max(min_delta))
     }
 
     /// Creates a new [`AspirationWindow`] centered around `score`.
@@ -354,8 +331,59 @@ impl Default for SearchConfig {
     }
 }
 
-/// Executes a search on the provided game at a specified depth.
-pub struct Search<'a, const LOG: u8, V> {
+/// Parameters for the various features used to enhance the efficiency of a search.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SearchParameters {
+    /// Minium depth at which null move pruning can be applied.
+    min_nmp_depth: u8,
+
+    /// Value to subtract from `depth` when applying null move pruning.
+    nmp_reduction: u8,
+
+    /// MAximum depth at which to apply reverse futility pruning.
+    max_rfp_depth: u8,
+
+    /// Minimum depth at which to apply late move reductions.
+    min_lmr_depth: u8,
+
+    /// Minimum moves that must be made before late move reductions can be applied.
+    min_lmr_moves: usize,
+
+    /// Base value in the LMR formula.
+    lmr_offset: f32,
+
+    /// Divisor in the LMR formula.
+    lmr_divisor: f32,
+
+    /// Value to multiply depth by when computing history scores.
+    history_multiplier: Score,
+
+    /// Value to subtract from a history score at a given depth.
+    history_offset: Score,
+
+    /// Safety margin when applying reverse futility pruning.
+    rfp_margin: Score,
+}
+
+impl Default for SearchParameters {
+    fn default() -> Self {
+        Self {
+            min_nmp_depth: tune::min_nmp_depth!(),
+            nmp_reduction: tune::nmp_reduction!(),
+            max_rfp_depth: tune::max_rfp_depth!(),
+            min_lmr_depth: tune::min_lmr_depth!(),
+            min_lmr_moves: tune::min_lmr_moves!(),
+            lmr_offset: tune::lmr_offset!(),
+            lmr_divisor: tune::lmr_divisor!(),
+            history_multiplier: Score::new(tune::history_multiplier!()),
+            history_offset: Score::new(tune::history_offset!()),
+            rfp_margin: Score::new(tune::rfp_margin!()),
+        }
+    }
+}
+
+/// Executes a search on a game of chess.
+pub struct Search<'a, Log, V> {
     /// Number of nodes searched.
     nodes: u64,
 
@@ -376,11 +404,17 @@ pub struct Search<'a, const LOG: u8, V> {
     /// Storage for moves that cause a beta-cutoff during search.
     history: &'a mut HistoryTable,
 
-    /// Marker for what variant of Chess is being played
+    /// Parameters for search features like pruning, extensions, etc.
+    params: SearchParameters,
+
+    /// Marker for what variant of Chess is being played.
     variant: PhantomData<&'a V>,
+
+    /// Marker for the level of logging to print.
+    log: PhantomData<&'a Log>,
 }
 
-impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
+impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     /// Construct a new [`Search`] instance to execute.
     #[inline(always)]
     pub fn new(
@@ -397,7 +431,9 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             prev_positions,
             ttable,
             history,
+            params: SearchParameters::default(),
             variant: PhantomData,
+            log: PhantomData,
         }
     }
 
@@ -407,7 +443,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     /// and concluding by sending the `bestmove` message and exiting.
     #[inline(always)]
     pub fn start(mut self, game: &Game<V>) -> SearchResult {
-        if LOG.allows(LogLevel::Debug) {
+        if Log::DEBUG {
             self.send_string(format!("Starting search on {:?}", game.to_fen()));
 
             let soft = self.config.soft_timeout.as_millis();
@@ -431,7 +467,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
         let res = self.iterative_deepening(game);
 
-        if LOG.allows(LogLevel::Debug) {
+        if Log::DEBUG {
             let hits = self.ttable.hits;
             let accesses = self.ttable.accesses;
             let hit_rate = hits as f32 / accesses as f32 * 100.0;
@@ -441,7 +477,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         }
 
         // Search has ended; send bestmove
-        if LOG.allows(LogLevel::Info) {
+        if Log::INFO {
             self.send_response(UciResponse::BestMove {
                 bestmove: res.bestmove.map(V::fmt_move),
                 ponder: None,
@@ -539,7 +575,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                 // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
                 // Instead, we should break out of the ID loop, using the result from the previous iteration
                 if self.search_cancelled() {
-                    if LOG.allows(LogLevel::Debug) {
+                    if Log::DEBUG {
                         if let Some(bestmove) = self.get_tt_bestmove(game.key()) {
                             self.send_string(format!(
                                 "Search cancelled during depth {} while evaluating {} with score {score}",
@@ -568,7 +604,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             result.bestmove = self.ttable.get(&game.key()).map(|entry| entry.bestmove);
 
             // Send search info to the GUI
-            if LOG.allows(LogLevel::Info) {
+            if Log::INFO {
                 self.send_end_of_search_info(&result);
             }
 
@@ -600,6 +636,9 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
         /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
+         *
+         * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
+         * work by just returning the evaluation stored in the transposition table.
          ****************************************************************************************************/
         // Do not prune in PV nodes
         if !PV {
@@ -611,6 +650,9 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
         /****************************************************************************************************
          * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
+         *
+         * In order to avoid the horizon effect, we don't stop searching at a depth of 0. Instead, we look
+         * at all available moves until we reach a "quiet" (quiescent) position.
          ****************************************************************************************************/
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
@@ -632,7 +674,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         if moves.is_empty() {
             return if game.is_in_check() {
                 // Offset by ply to prefer earlier mates
-                -Score::MATE + ply
+                ply - Score::MATE
             } else {
                 // Drawing is better than losing
                 Score::DRAW
@@ -657,7 +699,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             let new = game.with_move_made(*mv);
             let mut score = Score::DRAW;
 
-            if !self.is_draw(&new, ply) {
+            if !(ply > 0 && self.is_draw(&new)) {
                 // Append the move onto the history
                 self.prev_positions.push(*new.position());
 
@@ -700,6 +742,11 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
                 /****************************************************************************************************
                  * Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
+                 *
+                 * We assume our move ordering is so good that the first move searched is then best available. So,
+                 * for every other move, we search with a null window and thus prune nodes easier. If we find
+                 * something that beats the null window, we have to do a costly re-search. However, this happens so
+                 * infrequently in practice that it ends up being an overall speedup.
                  ****************************************************************************************************/
                 // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
                 if PV && (i == 0 || score > bounds.alpha) {
@@ -721,9 +768,9 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             if score > best {
                 best = score;
 
+                // PV found
                 if score > bounds.alpha {
                     bounds.alpha = score;
-                    // New PV found
                     bestmove = *mv;
 
                     // Only extend the PV if we're in a PV node
@@ -733,13 +780,18 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                     }
                 }
 
-                // Fail soft beta-cutoff.
+                // Fail high
                 if score >= bounds.beta {
                     /****************************************************************************************************
                      * History Heuristic
+                     *
+                     * If a quiet move fails high, it is probably a good move. Therefore we want to look at it early on
+                     * in future searches. We also penalize previously-searched quiets, since they are clearly not as good
+                     * as this one (as they did not cause a beta cutoff).
                      ****************************************************************************************************/
                     // Simple bonus based on depth
-                    let bonus = Score::HISTORY_MULTIPLIER * depth as i32 - Score::HISTORY_OFFSET;
+                    let bonus =
+                        self.params.history_multiplier * depth as i32 - self.params.history_offset;
 
                     // Only update quiet moves
                     if mv.is_quiet() {
@@ -789,7 +841,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
         // Beta cutoff; this position is "too good" and our opponent would never let us get here
         if stand_pat >= bounds.beta {
-            return bounds.beta;
+            return stand_pat;
         } else if stand_pat > bounds.alpha {
             bounds.alpha = stand_pat;
         }
@@ -832,7 +884,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
-            if self.is_draw(&new, ply) {
+            if ply > 0 && self.is_draw(&new) {
                 score = Score::DRAW;
             } else {
                 self.prev_positions.push(*new.position());
@@ -850,10 +902,10 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             if score > best {
                 best = score;
 
+                // PV found
                 if score > bounds.alpha {
                     bounds.alpha = score;
 
-                    // PV found
                     // bestmove = mv;
 
                     // Only extend the PV if we're in a PV node
@@ -863,7 +915,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                     // }
                 }
 
-                // Fail soft beta-cutoff.
+                // Fail high
                 if score >= bounds.beta {
                     break;
                 }
@@ -895,10 +947,10 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     /// Checks if `game` is a repetition, comparing it to previous positions
     #[inline(always)]
     fn is_repetition(&self, game: &Game<V>) -> bool {
-        // We can skip the previous position, because there's no way it can be a repetition
-        for prev in self.prev_positions.iter().rev().skip(1) {
-            // let n = game.halfmove() as usize;
-            // for prev in self.prev_positions.iter().take(n).rev().skip(1) {
+        // We can skip the previous position, because there's no way it can be a repetition.
+        // We also only need to look check at most `halfmove` previous positions.
+        let n = game.halfmove() as usize;
+        for prev in self.prev_positions.iter().rev().take(n).skip(1).step_by(2) {
             if prev.key() == game.key() {
                 return true;
             } else
@@ -913,11 +965,10 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
     /// Returns `true` if `game` can be claimed as a draw
     #[inline(always)]
-    fn is_draw(&self, game: &Game<V>, _ply: i32) -> bool {
+    fn is_draw(&self, game: &Game<V>) -> bool {
         self.is_repetition(game)
             || game.can_draw_by_fifty()
             || game.can_draw_by_insufficient_material()
-        // && _ply > 0 // Do not declare draws at root
     }
 
     /// Saves the provided data to an entry in the TTable.
@@ -934,7 +985,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         let entry = TTableEntry::new(key, bestmove, score, bounds, depth, ply);
         let old = self.ttable.store(entry);
 
-        if LOG.allows(LogLevel::Debug) {
+        if Log::DEBUG {
             // If a previous entry existed and had a *different* key, this was a collision
             if old.is_some_and(|old| old.key != key) {
                 self.ttable.collisions += 1;
@@ -947,7 +998,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     fn get_tt_bestmove(&mut self, key: ZobristKey) -> Option<Move> {
         let mv = self.ttable.get(&key).map(|entry| entry.bestmove);
 
-        if LOG.allows(LogLevel::Debug) {
+        if Log::DEBUG {
             // Regardless whether this was a hit, it was still an access
             self.ttable.accesses += 1;
 
@@ -965,7 +1016,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> Score {
         // TT move should be looked at first, so assign it the best possible score and immediately exit.
         if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
-            return Score(i32::MIN);
+            return Score::new(i32::MIN);
         }
 
         // Safe unwrap because we can't move unless there's a piece at `from`
@@ -1002,18 +1053,40 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             return None;
         }
 
+        // Static evaluation of the current position is used in multiple pruning techniques.
+        let static_eval = game.eval();
+
+        /****************************************************************************************************
+         * Razoring: https://www.chessprogramming.org/Razoring
+         *
+         * If the static eval of our position is low enough, check if a qsearch can beat alpha.
+         * If it can't, we can prune this node.
+         ****************************************************************************************************/
+        let razoring_margin = Score::RAZORING_OFFSET + Score::RAZORING_MULTIPLIER * depth as i32;
+        if depth <= 2 && static_eval + razoring_margin < bounds.alpha {
+            let score = self.quiescence::<PV>(game, ply, bounds.null_alpha(), local_pv);
+            // If we can't beat alpha (without mating), we can prune.
+            if score < bounds.alpha && !score.is_mate() {
+                return Some(score); // fail-soft
+            }
+        }
+
         /****************************************************************************************************
          * Reverse Futility Pruning: https://www.chessprogramming.org/Reverse_Futility_Pruning
+         *
+         * If our static eval is too good (better than beta), we can prune this branch. Multiplying our
+         * margin by depth makes this pruning process less risky for higher depths.
          ****************************************************************************************************/
-        // If our static eval is too good (better than beta), we can prune this branch.
-        // Multiplying our margin by depth makes this pruning process less risky for higher depths.
-        let rfp_score = game.eval() - Score::RFP_MARGIN * depth as i32;
-        if depth <= MAX_RFP_DEPTH && rfp_score >= bounds.beta {
+        let rfp_score = static_eval - self.params.rfp_margin * depth as i32;
+        if depth <= self.params.max_rfp_depth && rfp_score >= bounds.beta {
             return Some(rfp_score);
         }
 
         /****************************************************************************************************
          * Null Move Pruning: https://www.chessprogramming.org/Null_Move_Pruning
+         *
+         * If we can afford to skip our turn and give our opponent two moves in a row while maintaining a high
+         * enough score, we can prune this branch as our opponent would likely never let us reach it anyway.
          ****************************************************************************************************/
         // If the last move did not increment the fullmove, but *did* increment the halfmove, it was a nullmove
         let last_move_was_nullmove = self.prev_positions.last().is_some_and(|pos| {
@@ -1024,7 +1097,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         let non_king_pawn_material =
             game.occupied() ^ game.kind(PieceKind::Pawn) ^ game.kind(PieceKind::King);
 
-        let can_perform_nmp = depth >= MIN_NMP_DEPTH // Can't play nullmove under a certain depth
+        let can_perform_nmp = depth >= self.params.min_nmp_depth // Can't play nullmove under a certain depth
         && !last_move_was_nullmove // Can't play two nullmoves in a row
         && non_king_pawn_material.is_nonempty(); // Can't play nullmove if insufficient material (only Kings and Pawns)
 
@@ -1033,7 +1106,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             self.prev_positions.push(*null_game.position());
 
             // Search at a reduced depth with a zero-window
-            let nmp_depth = depth - NMP_REDUCTION_VALUE;
+            let nmp_depth = depth - self.params.nmp_reduction;
             let score = -self.negamax::<PV>(
                 &null_game,
                 nmp_depth,
@@ -1091,18 +1164,25 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     ) -> Option<u8> {
         /****************************************************************************************************
          * Late Move Reductions: https://www.chessprogramming.org/Late_Move_Reductions
+         *
+         * We assume our move ordering will let us search the best moves first. Thus, the last moves are
+         * likely to be the worst moves. We can save some time by searching these at a lower depth and with
+         * a null window. If this fails, however, we must perform a costly re-search.
          ****************************************************************************************************/
-        (depth >= MIN_LMR_DEPTH && moves_made >= MIN_LMR_MOVES + PV as usize).then(|| {
-            // Base LMR reduction increases as we go higher in depth and/or make more moves
-            let mut lmr_reduction =
-                (LMR_OFFSET + (depth as f32).ln() * (moves_made as f32).ln() / LMR_DIVISOR) as u8;
+        (depth >= self.params.min_lmr_depth
+            && moves_made >= self.params.min_lmr_moves + PV as usize)
+            .then(|| {
+                // Base LMR reduction increases as we go higher in depth and/or make more moves
+                let mut lmr_reduction = (self.params.lmr_offset
+                    + (depth as f32).ln() * (moves_made as f32).ln() / self.params.lmr_divisor)
+                    as u8;
 
-            // Increase/decrease the reduction based on current conditions
-            // lmr_reduction += something;
-            lmr_reduction -= game.is_in_check() as u8;
+                // Increase/decrease the reduction based on current conditions
+                // lmr_reduction += something;
+                lmr_reduction -= game.is_in_check() as u8;
 
-            lmr_reduction
-        })
+                lmr_reduction
+            })
     }
 
     /// Compute an extension value to apply to a given node's search depth.
@@ -1110,6 +1190,8 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     fn extension_value(&self, game: &Game<V>) -> u8 {
         /****************************************************************************************************
          * Check Extensions: https://www.chessprogramming.org/Check_Extensions
+         *
+         * If we're in check, we should extend the search a bit, in hopes to find a good way to escape.
          ****************************************************************************************************/
         game.is_in_check() as u8
     }
@@ -1217,7 +1299,7 @@ mod tests {
 
         let mut ttable = Default::default();
         let mut history = Default::default();
-        Search::<{ LogLevel::None as u8 }, Standard>::new(
+        Search::<LogNone, Standard>::new(
             is_searching,
             config,
             Default::default(),

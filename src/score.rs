@@ -15,7 +15,7 @@ use crate::{tune, MAX_DEPTH};
 /// This value is internally capped at [`Self::INF`].
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct Score(pub i32);
+pub struct Score(i32);
 
 impl Score {
     /// Largest possible score ever achievable.
@@ -44,14 +44,17 @@ impl Score {
     /// The base value of a move, used when ordering moves during search.
     pub const BASE_MOVE_SCORE: Self = Self(tune::base_move_score!());
 
-    /// Value to multiply depth by when computing history scores.
-    pub const HISTORY_MULTIPLIER: Self = Self(tune::history_multiplier!());
+    /// Constructs a new [`Score`] instance.
+    #[inline(always)]
+    pub const fn new(score: i32) -> Self {
+        Self(score)
+    }
 
-    /// Value to subtract from a history score at a given depth.
-    pub const HISTORY_OFFSET: Self = Self(tune::history_offset!());
+    /// Value to multiply depth by when computing razoring margin.
+    pub const RAZORING_MULTIPLIER: Self = Self(tune::razoring_multiplier!());
 
-    /// Safety margin when applying reverse futility pruning.
-    pub const RFP_MARGIN: Self = Self(tune::rfp_margin!());
+    /// Value to subtract from alpha bound when computing a razoring margin.
+    pub const RAZORING_OFFSET: Self = Self(tune::razoring_offset!());
 
     /// Returns `true` if the score is a mate score.
     #[inline(always)]
@@ -172,6 +175,15 @@ macro_rules! impl_binary_op {
             #[inline(always)]
             fn $fn(self, rhs: i32) -> Self::Output {
                 Self(self.0.$fn(rhs))
+            }
+        }
+
+        impl std::ops::$trait<Score> for i32 {
+            type Output = Score;
+
+            #[inline(always)]
+            fn $fn(self, rhs: Score) -> Self::Output {
+                Score(self.$fn(rhs.0))
             }
         }
     };

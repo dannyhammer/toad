@@ -193,7 +193,7 @@ impl Psqt {
         while i < psqt.len() {
             // Flip the rank, not the file, so it can be used from White's perspective without modification
             // Also add in the value of this piece
-            flipped[i] = Score(psqt[i ^ 56] + kind.value());
+            flipped[i] = Score::new(psqt[i ^ 56] + kind.value());
             // flipped[i] = value_of(kind); // Functions like a material-only eval
             i += 1;
         }

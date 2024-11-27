@@ -21,8 +21,8 @@ use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
     perft, splitperft, Bitboard, Chess960, EngineCommand, Game, GameVariant, HistoryTable,
-    LogLevel, MediumDisplayTable, Move, Piece, Position, Psqt, Score, Search, SearchConfig,
-    SearchResult, Square, Standard, TTable, Variant, BENCHMARK_FENS,
+    LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Position, Psqt, Score,
+    Search, SearchConfig, SearchResult, Square, Standard, TTable, Variant, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -261,9 +261,9 @@ impl Engine {
 
                 let config = SearchConfig::new(options, game);
                 self.search_thread = if self.debug {
-                    self.start_search::<{ LogLevel::Debug as u8 }, V>(*game, config)
+                    self.start_search::<LogDebug, V>(*game, config)
                 } else {
-                    self.start_search::<{ LogLevel::Info as u8 }, V>(*game, config)
+                    self.start_search::<LogInfo, V>(*game, config)
                 };
             }
 
@@ -303,8 +303,7 @@ impl Engine {
 
             // Set up the game and start the search
             let game = self.position(Some(fen), []).unwrap();
-            self.search_thread =
-                self.start_search::<{ LogLevel::None as u8 }, Standard>(game, config);
+            self.search_thread = self.start_search::<LogNone, Standard>(game, config);
 
             // Await the search, appending the node count once concluded.
             let res = self.stop_search().unwrap();
@@ -542,7 +541,7 @@ impl Engine {
     }
 
     /// Starts a search on the current position, given the parameters in `config`.
-    fn start_search<const LOG: u8, V: Variant>(
+    fn start_search<Log: LogLevel, V: Variant>(
         &mut self,
         game: Game<V>,
         config: SearchConfig,
@@ -570,7 +569,7 @@ impl Engine {
             let mut history = history.lock().unwrap();
 
             // Start the search, returning the result when completed.
-            Search::<LOG, V>::new(
+            Search::<Log, V>::new(
                 is_searching,
                 config,
                 prev_positions,
