@@ -18,8 +18,8 @@ use std::{
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, Color, Game, HistoryTable, LogLevel, LoggingLevel, Move, MoveList, Piece, PieceKind,
-    Position, Score, TTable, TTableEntry, Variant, ZobristKey,
+    tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Position, Score,
+    TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Maximum depth that can be searched
@@ -316,7 +316,7 @@ impl Default for SearchConfig {
 }
 
 /// Executes a search on the provided game at a specified depth.
-pub struct Search<'a, const LOG: u8, V> {
+pub struct Search<'a, Log, V> {
     /// Number of nodes searched.
     nodes: u64,
 
@@ -337,11 +337,14 @@ pub struct Search<'a, const LOG: u8, V> {
     /// Storage for moves that cause a beta-cutoff during search.
     history: &'a mut HistoryTable,
 
-    /// Marker for what variant of Chess is being played
+    /// Marker for what variant of Chess is being played.
     variant: PhantomData<&'a V>,
+
+    /// Marker for the level of logging to print.
+    log: PhantomData<&'a Log>,
 }
 
-impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
+impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     /// Construct a new [`Search`] instance to execute.
     #[inline(always)]
     pub fn new(
@@ -359,6 +362,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             ttable,
             history,
             variant: PhantomData,
+            log: PhantomData,
         }
     }
 
@@ -368,7 +372,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     /// and concluding by sending the `bestmove` message and exiting.
     #[inline(always)]
     pub fn start(mut self, game: &Game<V>) -> SearchResult {
-        if LOG.allows(LogLevel::Debug) {
+        if Log::DEBUG {
             self.send_string(format!("Starting search on {:?}", game.to_fen()));
 
             let soft = self.config.soft_timeout.as_millis();
@@ -392,7 +396,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
 
         let res = self.iterative_deepening(game);
 
-        if LOG.allows(LogLevel::Debug) {
+        if Log::DEBUG {
             let hits = self.ttable.hits;
             let accesses = self.ttable.accesses;
             let hit_rate = hits as f32 / accesses as f32 * 100.0;
@@ -402,7 +406,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         }
 
         // Search has ended; send bestmove
-        if LOG.allows(LogLevel::Info) {
+        if Log::INFO {
             self.send_response(UciResponse::BestMove {
                 bestmove: res.bestmove.map(V::fmt_move),
                 ponder: None,
@@ -499,7 +503,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
                 // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
                 // Instead, we should break out of the ID loop, using the result from the previous iteration
                 if self.search_cancelled() {
-                    if LOG.allows(LogLevel::Debug) {
+                    if Log::DEBUG {
                         if let Some(bestmove) = self.get_tt_bestmove(game.key()) {
                             self.send_string(format!(
                                 "Search cancelled during depth {} while evaluating {} with score {score}",
@@ -528,7 +532,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
             result.bestmove = self.ttable.get(&game.key()).map(|entry| entry.bestmove);
 
             // Send search info to the GUI
-            if LOG.allows(LogLevel::Info) {
+            if Log::INFO {
                 self.send_end_of_search_info(&result);
             }
 
@@ -583,7 +587,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         if moves.is_empty() {
             return if game.is_in_check() {
                 // Offset by ply to prefer earlier mates
-                -Score::MATE + ply
+                ply - Score::MATE
             } else {
                 // Drawing is better than losing
                 Score::DRAW
@@ -845,7 +849,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
         let entry = TTableEntry::new(key, bestmove, score, bounds, depth, ply);
         let old = self.ttable.store(entry);
 
-        if LOG.allows(LogLevel::Debug) {
+        if Log::DEBUG {
             // If a previous entry existed and had a *different* key, this was a collision
             if old.is_some_and(|old| old.key != key) {
                 self.ttable.collisions += 1;
@@ -858,7 +862,7 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     fn get_tt_bestmove(&mut self, key: ZobristKey) -> Option<Move> {
         let mv = self.ttable.get(&key).map(|entry| entry.bestmove);
 
-        if LOG.allows(LogLevel::Debug) {
+        if Log::DEBUG {
             // Regardless whether this was a hit, it was still an access
             self.ttable.accesses += 1;
 
@@ -1121,7 +1125,7 @@ mod tests {
 
         let mut ttable = Default::default();
         let mut history = Default::default();
-        Search::<{ LogLevel::None as u8 }, Standard>::new(
+        Search::<LogNone, Standard>::new(
             is_searching,
             config,
             Default::default(),
