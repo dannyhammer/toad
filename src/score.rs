@@ -180,6 +180,15 @@ macro_rules! impl_binary_op {
                 Self(self.0.$fn(rhs))
             }
         }
+
+        impl std::ops::$trait<Score> for i32 {
+            type Output = Score;
+
+            #[inline(always)]
+            fn $fn(self, rhs: Score) -> Self::Output {
+                Score(self.$fn(rhs.0))
+            }
+        }
     };
 }
 

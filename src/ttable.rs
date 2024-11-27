@@ -4,7 +4,10 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use crate::{Move, Score, SearchBounds, ZobristKey, BYTES_IN_MB};
+use crate::{Move, Score, SearchBounds, ZobristKey};
+
+/// Number of bytes in a megabyte
+const BYTES_IN_MB: usize = 1024 * 1024;
 
 /// Type of node encountered during search.
 ///
