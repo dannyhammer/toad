@@ -808,8 +808,10 @@ impl<'a, const LOG: u8, V: Variant> Search<'a, LOG, V> {
     /// Checks if `game` is a repetition, comparing it to previous positions
     #[inline(always)]
     fn is_repetition(&self, game: &Game<V>) -> bool {
-        // We can skip the previous position, because there's no way it can be a repetition
-        for prev in self.prev_positions.iter().rev().skip(1) {
+        // We can skip the previous position, because there's no way it can be a repetition.
+        // We also only need to look check at most `halfmove` previous positions.
+        let n = game.halfmove() as usize;
+        for prev in self.prev_positions.iter().rev().take(n).skip(1).step_by(2) {
             if prev.key() == game.key() {
                 return true;
             } else
