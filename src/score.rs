@@ -15,7 +15,7 @@ use crate::{tune, MAX_DEPTH};
 /// This value is internally capped at [`Self::INF`].
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct Score(pub i32);
+pub struct Score(i32);
 
 impl Score {
     /// Largest possible score ever achievable.
@@ -44,14 +44,11 @@ impl Score {
     /// The base value of a move, used when ordering moves during search.
     pub const BASE_MOVE_SCORE: Self = Self(tune::base_move_score!());
 
-    /// Value to multiply depth by when computing history scores.
-    pub const HISTORY_MULTIPLIER: Self = Self(tune::history_multiplier!());
-
-    /// Value to subtract from a history score at a given depth.
-    pub const HISTORY_OFFSET: Self = Self(tune::history_offset!());
-
-    /// Safety margin when applying reverse futility pruning.
-    pub const RFP_MARGIN: Self = Self(tune::rfp_margin!());
+    /// Constructs a new [`Score`] instance.
+    #[inline(always)]
+    pub const fn new(score: i32) -> Self {
+        Self(score)
+    }
 
     /// Returns `true` if the score is a mate score.
     #[inline(always)]

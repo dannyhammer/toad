@@ -104,12 +104,12 @@ macro_rules! min_nmp_depth {
 pub(crate) use min_nmp_depth;
 
 /// Value to subtract from `depth` when applying null move pruning.
-macro_rules! nmp_reduction_value {
+macro_rules! nmp_reduction {
     () => {
         3
     };
 }
-pub(crate) use nmp_reduction_value;
+pub(crate) use nmp_reduction;
 
 /// Maximum depth at which to apply reverse futility pruning.
 macro_rules! max_rfp_depth {
