@@ -964,13 +964,31 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             return None;
         }
 
+        // Static evaluation of the current position is used in multiple pruning techniques.
+        let static_eval = game.eval();
+
+        /****************************************************************************************************
+         * Razoring: https://www.chessprogramming.org/Razoring
+         *
+         * If the static eval of our position is low enough, check if a qsearch can beat alpha.
+         * If it can't, we can prune this node.
+         ****************************************************************************************************/
+        let razoring_margin = Score::RAZORING_OFFSET + Score::RAZORING_MULTIPLIER * depth as i32;
+        if depth <= 2 && static_eval + razoring_margin < bounds.alpha {
+            let score = self.quiescence(game, ply, bounds.null_alpha());
+            // If we can't beat alpha (without mating), we can prune.
+            if score < bounds.alpha && !score.is_mate() {
+                return Some(score); // fail-soft
+            }
+        }
+
         /****************************************************************************************************
          * Reverse Futility Pruning: https://www.chessprogramming.org/Reverse_Futility_Pruning
          *
          * If our static eval is too good (better than beta), we can prune this branch. Multiplying our
          * margin by depth makes this pruning process less risky for higher depths.
          ****************************************************************************************************/
-        let rfp_score = game.eval() - self.params.rfp_margin * depth as i32;
+        let rfp_score = static_eval - self.params.rfp_margin * depth as i32;
         if depth <= self.params.max_rfp_depth && rfp_score >= bounds.beta {
             return Some(rfp_score);
         }

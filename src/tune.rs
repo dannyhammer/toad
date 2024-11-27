@@ -158,3 +158,19 @@ macro_rules! lmr_divisor {
     };
 }
 pub(crate) use lmr_divisor;
+
+/// Value to multiply depth by when computing razoring margin.
+macro_rules! razoring_multiplier {
+    () => {
+        128
+    };
+}
+pub(crate) use razoring_multiplier;
+
+/// Value to subtract from alpha bound when computing a razoring margin.
+macro_rules! razoring_offset {
+    () => {
+        256
+    };
+}
+pub(crate) use razoring_offset;
