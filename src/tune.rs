@@ -14,7 +14,7 @@
 /// Divisor for computing the soft timeout of a search.
 macro_rules! soft_timeout_divisor {
     () => {
-        20
+        30
         // super::tunable!(20, 1, 100, 1)
     };
 }
@@ -23,7 +23,7 @@ pub(crate) use soft_timeout_divisor;
 /// Divisor for computing the hard timeout of a search.
 macro_rules! hard_timeout_divisor {
     () => {
-        5
+        10
     };
 }
 pub(crate) use hard_timeout_divisor;
