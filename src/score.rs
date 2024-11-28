@@ -58,8 +58,8 @@ impl Score {
 
     /// Returns `true` if the score is a mate score.
     #[inline(always)]
-    pub fn is_mate(&self) -> bool {
-        self.abs() >= Self::LOWEST_MATE
+    pub const fn is_mate(&self) -> bool {
+        self.abs().0 >= Self::LOWEST_MATE.0
     }
 
     /// Converts this [`Score`] into a [`UciScore`],
@@ -67,7 +67,7 @@ impl Score {
     ///
     /// Used when sending the `info score` message.
     #[inline(always)]
-    pub fn into_uci(self) -> UciScore {
+    pub const fn into_uci(self) -> UciScore {
         if self.is_mate() {
             UciScore::mate(self.moves_to_mate())
         } else {
