@@ -14,7 +14,7 @@
 /// Divisor for computing the soft timeout of a search.
 macro_rules! soft_timeout_divisor {
     () => {
-        30
+        20
         // super::tunable!(20, 1, 100, 1)
     };
 }
