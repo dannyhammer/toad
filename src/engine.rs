@@ -342,13 +342,13 @@ impl Engine {
         if pretty {
             let color = game.side_to_move();
             let opponent = color.opponent();
-            let endgame_weight = game.endgame_weight();
+            let weight = game.endgame_weight();
 
             let board = MediumDisplayTable::from_fn(|sq| {
                 game.piece_at(sq)
                     .map(|piece| {
                         let (mg, eg) = Psqt::evals(piece, sq);
-                        let score = mg.lerp(eg, endgame_weight) * piece.color().multiplier();
+                        let score = mg.lerp(eg, weight) * piece.color().multiplier();
 
                         [piece.to_string(), format!("{:+}", score.normalize())]
                     })
@@ -365,8 +365,8 @@ impl Engine {
 
             let bonuses = [(
                 "Bishop Pair",
-                game.bishop_pair_bonus(color),
-                game.bishop_pair_bonus(opponent),
+                game.bishop_pair_bonus(color, weight),
+                game.bishop_pair_bonus(opponent, weight),
             )];
 
             let width = bonuses.iter().map(|b| b.0.len()).max().unwrap() + 2;
@@ -379,7 +379,7 @@ impl Engine {
 
             println!("Bonuses and Penalties:\n{factors}\n");
             println!("{board}");
-            println!("Endgame: {endgame_weight}%");
+            println!("Endgame: {weight}%");
             println!("Winning side: {winning}",);
             println!("Score: {score}");
         } else {

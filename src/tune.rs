@@ -175,10 +175,18 @@ macro_rules! razoring_offset {
 }
 pub(crate) use razoring_offset;
 
-/// Bonus to give to a side with a bishop pair
-macro_rules! bishop_pair_bonus {
+/// Bonus to give to a side with a bishop pair during midgame
+macro_rules! bishop_pair_mg_bonus {
     () => {
-        5
+        20
     };
 }
-pub(crate) use bishop_pair_bonus;
+pub(crate) use bishop_pair_mg_bonus;
+
+/// Bonus to give to a side with a bishop pair during endgame
+macro_rules! bishop_pair_eg_bonus {
+    () => {
+        60
+    };
+}
+pub(crate) use bishop_pair_eg_bonus;
