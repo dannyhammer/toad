@@ -4,7 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use super::{Game, Variant};
+use crate::{Game, Variant};
 
 /// Perform a perft at the specified depth, collecting only data about the number of possible positions (nodes).
 ///
