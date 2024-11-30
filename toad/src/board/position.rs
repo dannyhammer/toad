@@ -215,9 +215,6 @@ pub struct Game<V: Variant> {
     /// All squares (pseudo-legally) attacked by a specific color.
     attacks_by_color: [Bitboard; Color::COUNT],
 
-    /// Pseudo-legal moves (including Pawn pushes and castles) from every given square on the board.
-    // mobility_at: [Bitboard; Square::COUNT],
-
     /// The square where the side-to-move's King resides.
     king_square: Square,
 
@@ -286,7 +283,6 @@ impl<V: Variant> Game<V> {
     }
 
     /// Creates a new [`Game`] from the provided FEN string.
-    #[inline(always)]
     pub fn from_fen(fen: &str) -> Result<Self> {
         let mut game = Self::new();
 
@@ -2501,7 +2497,7 @@ pub struct BoardIter<'a> {
     occupancy: Bitboard,
 }
 
-impl<'a> Iterator for BoardIter<'a> {
+impl Iterator for BoardIter<'_> {
     type Item = (Square, Piece);
 
     #[inline(always)]
@@ -2520,7 +2516,7 @@ impl<'a> Iterator for BoardIter<'a> {
     }
 }
 
-impl<'a> ExactSizeIterator for BoardIter<'a> {}
+impl ExactSizeIterator for BoardIter<'_> {}
 
 #[cfg(test)]
 mod tests {

@@ -56,6 +56,12 @@ impl Score {
     /// Value to subtract from alpha bound when computing a razoring margin.
     pub const RAZORING_OFFSET: Self = Self(tune::razoring_offset!());
 
+    /// Returns the inner value of this [`Score`].
+    #[inline(always)]
+    pub fn inner(&self) -> i32 {
+        self.0
+    }
+
     /// Returns `true` if the score is a mate score.
     #[inline(always)]
     pub fn is_mate(&self) -> bool {
