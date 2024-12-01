@@ -8,7 +8,7 @@ use std::{fmt, str::FromStr};
 
 use anyhow::{anyhow, Result};
 
-use super::{File, Piece, PieceKind, Position, Rank, Square};
+use crate::{File, Piece, PieceKind, Position, Rank, Square};
 
 /// Maximum possible number of moves in a given chess position.
 ///

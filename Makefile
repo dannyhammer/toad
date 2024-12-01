@@ -6,12 +6,12 @@
 # If on Windows, add the .exe extension to the executable and use PowerShell instead of `sed`
 ifeq ($(OS),Windows_NT)
 	EXT := .exe
-	NAME := $(shell powershell -Command "(Get-Content Cargo.toml | Select-String '^name =').Line -replace '.*= ', '' -replace '\"', ''")
-	VERSION := $(shell powershell -Command "(Get-Content Cargo.toml | Select-String '^version =').Line -replace '.*= ', '' -replace '\"', ''")
+	NAME := $(shell powershell -Command "(Get-Content toad/Cargo.toml | Select-String '^name =').Line -replace '.*= ', '' -replace '\"', ''")
+	VERSION := $(shell powershell -Command "(Get-Content toad/Cargo.toml | Select-String '^version =').Line -replace '.*= ', '' -replace '\"', ''")
 else
 	EXT := 
-	NAME := $(shell sed -n 's/^name = "\(.*\)"/\1/p' Cargo.toml)
-	VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
+	NAME := $(shell sed -n 's/^name = "\(.*\)"/\1/p' toad/Cargo.toml)
+	VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' toad/Cargo.toml)
 endif
 
 # OpenBench specifies that the binary name should be changeable with the EXE parameter
@@ -26,7 +26,7 @@ endif
 # Compile an executable for use with OpenBench
 openbench:
 	@echo Compiling $(EXE) for OpenBench
-	cargo rustc --release --bin toad -- -C target-cpu=native --emit link=$(EXE)
+	cargo rustc --manifest-path ./toad/Cargo.toml --release --bin toad -- -C target-cpu=native --emit link=$(EXE)
 
 # Remove the EXE created
 clean:

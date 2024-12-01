@@ -341,7 +341,7 @@ impl Engine {
         use std::cmp::Ordering::*;
         if pretty {
             let color = game.side_to_move();
-            let endgame_weight = game.endgame_weight();
+            let endgame_weight = game.evaluator().endgame_weight();
 
             let table = MediumDisplayTable::from_fn(|sq| {
                 game.piece_at(sq)
@@ -355,7 +355,7 @@ impl Engine {
                     .unwrap_or_default()
             });
 
-            let score = game.eval_for(color);
+            let score = game.evaluator().eval_for(color);
 
             let winning = match score.cmp(&Score::DRAW) {
                 Greater => color.name(),
@@ -500,7 +500,7 @@ impl Engine {
         endgame_weight: Option<i32>,
     ) {
         // Compute the current endgame weight, if it wasn't provided
-        let weight = endgame_weight.unwrap_or(game.endgame_weight());
+        let weight = endgame_weight.unwrap_or(game.evaluator().endgame_weight());
         // Fetch the middle-game and end-game tables
         let (mg, eg) = Psqt::get_tables_for(piece.kind());
 
