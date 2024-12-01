@@ -12,7 +12,7 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 
-use super::{Bitboard, Color};
+use crate::{Bitboard, Color};
 
 /// Manhattan and Chebyshev distance between any two squares
 #[rustfmt::skip]
