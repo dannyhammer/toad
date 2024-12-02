@@ -104,8 +104,9 @@ fn sigmoid(e: Float, k: Float) -> Float {
 }
 
 fn main() {
-    let inputs = parse_tuning_inputs::<Standard>("./croak/datasets/sample.txt", Some(2)).unwrap();
-    for (game, res) in inputs.iter() {
+    let mut tuner: Tuner<Standard> =
+        Tuner::new("./croak/datasets/sample.txt", vec![1, 2, 3]).unwrap();
+    for (game, res) in tuner.inputs.iter() {
         println!(
             "{:<width$} {res:?}",
             game.to_fen(),
@@ -113,18 +114,33 @@ fn main() {
         );
     }
 
-    let mut tuner = Tuner {
-        weights: vec![1, 2, 3],
-    };
-
-    tuner.tune(K, &inputs).unwrap();
+    tuner.tune(K).unwrap();
 }
 
-struct Tuner {
+struct Tuner<V: Variant> {
+    inputs: Vec<(Game<V>, GameResult)>,
     weights: Vec<i32>,
 }
 
-impl Tuner {
+impl<V: Variant> Tuner<V> {
+    /// Parses the file at `path` into a list of positions and game results.
+    fn new(path: impl AsRef<Path>, weights: Vec<i32>) -> Result<Self> {
+        let mut inputs = vec![];
+        let reader = BufReader::new(File::open(path)?);
+
+        for line in reader.lines() {
+            let line = line?;
+
+            let (fen, result) = line
+                .split_once('[')
+                .expect("Did not find '[' while parsing position");
+
+            inputs.push((fen.parse()?, result.parse()?));
+        }
+
+        Ok(Self { inputs, weights })
+    }
+
     fn weights(&self) -> &[i32] {
         &self.weights
     }
@@ -142,13 +158,13 @@ impl Tuner {
         Ok(())
     }
 
-    fn tune<V: Variant>(&mut self, k: Float, inputs: &[(Game<V>, GameResult)]) -> Result<()> {
+    fn tune(&mut self, k: Float) -> Result<()> {
         // Get the evaluation parameters
         let mut best_params = self.weights().to_vec();
         let n = best_params.len();
 
         // Initial mean squared error
-        let mut best_mse = self.mean_squared_error(k, inputs);
+        let mut best_mse = self.mean_squared_error(k);
 
         // Loop until MSE is minimized
         'improving: loop {
@@ -165,7 +181,7 @@ impl Tuner {
                     self.update_weights(&new_params);
 
                     // Recalculate MSE with update params
-                    let new_mse = self.mean_squared_error(k, inputs);
+                    let new_mse = self.mean_squared_error(k);
                     let sign = if adjust > 0 { '+' } else { '-' };
                     println!("Tuning params({sign}) {i}/{n} with MSE := {new_mse}");
 
@@ -187,10 +203,11 @@ impl Tuner {
         self.store_weights("final_weights.txt")
     }
 
-    fn mean_squared_error<V: Variant>(&self, k: Float, inputs: &[(Game<V>, GameResult)]) -> Float {
-        let n = inputs.len() as Float;
+    fn mean_squared_error(&self, k: Float) -> Float {
+        let n = self.inputs.len() as Float;
 
-        let sum: Float = inputs
+        let sum: Float = self
+            .inputs
             .iter()
             .map(|(game, result)| {
                 let r_i = (game.eval().inner() as f64) / 100.0;
@@ -201,25 +218,4 @@ impl Tuner {
 
         sum / n
     }
-}
-
-/// Parses the file at `path` into a list of positions and game results.
-fn parse_tuning_inputs<V: Variant>(
-    path: impl AsRef<Path>,
-    max_inputs: Option<usize>,
-) -> Result<Vec<(Game<V>, GameResult)>> {
-    let mut inputs = vec![];
-    let reader = BufReader::new(File::open(path)?);
-
-    for line in reader.lines().take(max_inputs.unwrap_or(usize::MAX)) {
-        let line = line?;
-
-        let (fen, result) = line
-            .split_once('[')
-            .expect("Did not find '[' while parsing position");
-
-        inputs.push((fen.parse()?, result.parse()?));
-    }
-
-    Ok(inputs)
 }
