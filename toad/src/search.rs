@@ -741,15 +741,17 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        // Save this node to the TTable
-        self.save_to_tt(
-            game.key(),
-            bestmove,
-            best,
-            SearchBounds::new(original_alpha, bounds.beta),
-            depth,
-            ply,
-        );
+        // Save this node to the TTable if and only if alpha was raised
+        if original_alpha != bounds.alpha {
+            self.save_to_tt(
+                game.key(),
+                bestmove,
+                best,
+                SearchBounds::new(original_alpha, bounds.beta),
+                depth,
+                ply,
+            );
+        }
 
         best
     }
