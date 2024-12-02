@@ -1,11 +1,12 @@
 use std::{
-    fs::File,
+    fs::{self, File},
     io::{BufRead, BufReader},
     path::Path,
     str::FromStr,
 };
 
 use anyhow::{bail, Result};
+use chrono::Utc;
 use toad::*;
 
 type Float = f64;
@@ -112,24 +113,94 @@ fn main() {
         );
     }
 
-    let mse = mean_squared_error(&inputs);
+    let mut tuner = Tuner {
+        weights: vec![1, 2, 3],
+    };
 
-    println!("{mse}");
+    tuner.tune(K, &inputs).unwrap();
 }
 
-fn mean_squared_error<V: Variant>(inputs: &[(Game<V>, GameResult)]) -> Float {
-    let n = inputs.len() as Float;
+struct Tuner {
+    weights: Vec<i32>,
+}
 
-    let sum: Float = inputs
-        .iter()
-        .map(|(game, result)| {
-            let r_i = (game.eval().inner() as f64) / 100.0;
-            let q_i = result.value();
-            (r_i - sigmoid(q_i, K)).powi(2)
-        })
-        .sum();
+impl Tuner {
+    fn weights(&self) -> &[i32] {
+        &self.weights
+    }
+    fn weights_mut(&mut self) -> &mut [i32] {
+        &mut self.weights
+    }
 
-    sum / n
+    fn update_weights(&mut self, weights: &[i32]) {
+        self.weights_mut()[..weights.len()].copy_from_slice(&weights[..]);
+    }
+    fn store_weights(&self, path: impl AsRef<Path>) -> Result<()> {
+        println!("Writing weights to {:?}", path.as_ref());
+        let path = Path::new("tune-outputs").join(path);
+        fs::write(path, format!("{:?}", self.weights()))?;
+        Ok(())
+    }
+
+    fn tune<V: Variant>(&mut self, k: Float, inputs: &[(Game<V>, GameResult)]) -> Result<()> {
+        // Get the evaluation parameters
+        let mut best_params = self.weights().to_vec();
+        let n = best_params.len();
+
+        // Initial mean squared error
+        let mut best_mse = self.mean_squared_error(k, inputs);
+
+        // Loop until MSE is minimized
+        'improving: loop {
+            for i in 0..n {
+                // Copy params
+                let mut new_params = best_params.to_vec();
+
+                // First try incrementing, then try decrementing.
+                for adjust in [1, -2] {
+                    // Adjust current parameter
+                    new_params[i] += adjust;
+
+                    // Update evaluation parameters
+                    self.update_weights(&new_params);
+
+                    // Recalculate MSE with update params
+                    let new_mse = self.mean_squared_error(k, inputs);
+                    let sign = if adjust > 0 { '+' } else { '-' };
+                    println!("Tuning params({sign}) {i}/{n} with MSE := {new_mse}");
+
+                    // If param adjustment reduced the error, record that.
+                    if new_mse < best_mse {
+                        best_mse = new_mse;
+                        best_params = new_params;
+                        println!("Found better params({sign})");
+                        self.store_weights("tuning_weights.txt")?;
+                        break 'improving;
+                    }
+                }
+            }
+            let now = Utc::now().format("%Y-%m-%d_%H-%M-%S");
+            self.store_weights(format!("session_weights_{now}"))?;
+            break;
+        }
+
+        self.store_weights("final_weights.txt")
+    }
+
+    fn mean_squared_error<V: Variant>(&self, k: Float, inputs: &[(Game<V>, GameResult)]) -> Float {
+        let n = inputs.len() as Float;
+
+        let sum: Float = inputs
+            .iter()
+            .map(|(game, result)| {
+                let r_i = (game.eval().inner() as f64) / 100.0;
+                let q_i = result.value();
+                (r_i - sigmoid(q_i, k)).powi(2)
+            })
+            .sum();
+
+        sum / n
+    }
 }
 
 /// Parses the file at `path` into a list of positions and game results.
