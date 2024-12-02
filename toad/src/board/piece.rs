@@ -120,11 +120,11 @@ impl Color {
     /// # Example
     /// ```
     /// # use toad::Color;
-    /// assert_eq!(Color::White.negation_multiplier(), 1);
-    /// assert_eq!(Color::Black.negation_multiplier(), -1);
+    /// assert_eq!(Color::White.multiplier(), 1);
+    /// assert_eq!(Color::Black.multiplier(), -1);
     /// ```
     #[inline(always)]
-    pub const fn negation_multiplier(&self) -> i8 {
+    pub const fn multiplier(&self) -> i8 {
         // TODO: Which of these 3 is faster?
 
         // A: Match

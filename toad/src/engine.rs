@@ -22,7 +22,8 @@ use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 use crate::{
     perft, splitperft, Bitboard, Chess960, EngineCommand, Game, GameVariant, HistoryTable,
     LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Position, Psqt, Score,
-    Search, SearchConfig, SearchResult, Square, Standard, TTable, Variant, BENCHMARK_FENS,
+    ScoreInternal, Search, SearchConfig, SearchResult, Square, Standard, TTable, Variant,
+    BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -341,14 +342,14 @@ impl Engine {
         use std::cmp::Ordering::*;
         if pretty {
             let color = game.side_to_move();
-            let endgame_weight = game.evaluator().endgame_weight();
+            let endgame_weight = game.evaluator().endgame_weight() as ScoreInternal;
 
             let table = MediumDisplayTable::from_fn(|sq| {
                 game.piece_at(sq)
                     .map(|piece| {
                         let (mg, eg) = Psqt::evals(piece, sq);
                         let score = mg.lerp(eg, endgame_weight)
-                            * piece.color().negation_multiplier() as i32;
+                            * piece.color().multiplier() as ScoreInternal;
 
                         [piece.to_string(), format!("{:+}", score.normalize())]
                     })
@@ -497,7 +498,7 @@ impl Engine {
         game: &Game<V>,
         piece: Piece,
         square: Option<Square>,
-        endgame_weight: Option<i32>,
+        endgame_weight: Option<i8>,
     ) {
         // Compute the current endgame weight, if it wasn't provided
         let weight = endgame_weight.unwrap_or(game.evaluator().endgame_weight());
@@ -507,7 +508,7 @@ impl Engine {
         // If there was a square provided, print the eval for that square
         if let Some(square) = square {
             let (mg_value, eg_value) = Psqt::evals(piece, square);
-            let value = mg_value.lerp(eg_value, weight);
+            let value = mg_value.lerp(eg_value, weight as ScoreInternal);
             println!("[{mg_value}, {eg_value}] := {value}");
         } else {
             // Otherwise, print both the middle-game and end-game tables

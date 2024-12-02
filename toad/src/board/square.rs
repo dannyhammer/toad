@@ -800,7 +800,7 @@ impl Square {
     /// ```
     #[inline(always)]
     pub fn forward_by(&self, color: Color, n: u8) -> Option<Self> {
-        self.offset(0, n as i8 * color.negation_multiplier())
+        self.offset(0, n as i8 * color.multiplier())
     }
 
     /// Decrements (if `color` is [`Color::White`]) or increments (if `color` is [`Color::Black`]) the [`Rank`] of this [`Square`] by `n`, if possible.
@@ -815,7 +815,7 @@ impl Square {
     /// ```
     #[inline(always)]
     pub fn backward_by(&self, color: Color, n: u8) -> Option<Self> {
-        self.offset(0, n as i8 * color.opponent().negation_multiplier())
+        self.offset(0, n as i8 * color.opponent().multiplier())
     }
 
     /// Increments (if `color` is [`Color::White`]) or decrements (if `color` is [`Color::Black`]) the [`File`] of this [`Square`] by `n`, if possible.
@@ -830,7 +830,7 @@ impl Square {
     /// ```
     #[inline(always)]
     pub fn right_by(&self, color: Color, n: u8) -> Option<Self> {
-        self.offset(n as i8 * color.negation_multiplier(), 0)
+        self.offset(n as i8 * color.multiplier(), 0)
     }
 
     /// Decrements (if `color` is [`Color::White`]) or increments (if `color` is [`Color::Black`]) the [`File`] of this [`Square`] by `n`, if possible.
@@ -845,7 +845,7 @@ impl Square {
     /// ```
     #[inline(always)]
     pub fn left_by(&self, color: Color, n: u8) -> Option<Self> {
-        self.offset(n as i8 * color.opponent().negation_multiplier(), 0)
+        self.offset(n as i8 * color.opponent().multiplier(), 0)
     }
 }
 

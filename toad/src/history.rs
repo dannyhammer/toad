@@ -6,12 +6,12 @@
 
 use std::{fmt, ops::Deref};
 
-use crate::{Color, File, Game, Move, Piece, PieceKind, Rank, Score, Square, Table, Variant};
+use crate::{tune, Color, File, Game, Move, Piece, PieceKind, Rank, Square, Table, Variant};
 /// Stores bonuses and penalties for moving a piece to a square.
 ///
 /// Used to keep track of good/bad moves found during search.
 #[derive(Debug)]
-pub struct HistoryTable([Table<Score>; Piece::COUNT]);
+pub struct HistoryTable([Table<i32>; Piece::COUNT]);
 
 impl HistoryTable {
     /// Clear the history table, removing all scores.
@@ -24,15 +24,15 @@ impl HistoryTable {
     ///
     /// Uses the "history gravity" formula from <https://www.chessprogramming.org/History_Heuristic#History_Bonuses>
     #[inline(always)]
-    pub fn update<V: Variant>(&mut self, game: &Game<V>, mv: &Move, bonus: Score) {
+    pub fn update<V: Variant>(&mut self, game: &Game<V>, mv: &Move, bonus: i32, max: i32) {
         // Safety: This is a move. There *must* be a piece at `from`.
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
         let current = self[piece][to];
-        let clamped = bonus.clamp(-Score::MAX_HISTORY, Score::MAX_HISTORY);
+        let clamped = bonus.clamp(-max, max);
 
         // History gravity formula
-        let new = current + clamped - current * clamped.abs() / Score::MAX_HISTORY;
+        let new = current + clamped - current * clamped.abs() / max;
 
         self.0[piece].set(to, new);
     }
@@ -41,12 +41,12 @@ impl HistoryTable {
 impl Default for HistoryTable {
     #[inline(always)]
     fn default() -> Self {
-        Self([Table::splat(Score::BASE_MOVE_SCORE); Piece::COUNT])
+        Self([Table::splat(tune::base_move_score!()); Piece::COUNT])
     }
 }
 
 impl Deref for HistoryTable {
-    type Target = [Table<Score>; Piece::COUNT];
+    type Target = [Table<i32>; Piece::COUNT];
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -85,7 +85,7 @@ impl fmt::Display for HistoryTable {
                 // Step 1: Write the sign of the score
                 for file in File::iter() {
                     let square = Square::new(file, rank);
-                    let sign = match self[white_piece][square].cmp(&Score::DRAW) {
+                    let sign = match self[white_piece][square].cmp(&0) {
                         Equal => ' ',
                         Greater => '+',
                         Less => '-',
@@ -97,7 +97,7 @@ impl fmt::Display for HistoryTable {
                 // Same for Black
                 for file in File::iter() {
                     let square = Square::new(file, rank);
-                    let sign = match self[black_piece][square].cmp(&Score::DRAW) {
+                    let sign = match self[black_piece][square].cmp(&0) {
                         Equal => ' ',
                         Greater => '+',
                         Less => '-',
@@ -111,7 +111,7 @@ impl fmt::Display for HistoryTable {
                 for file in File::iter() {
                     let square = Square::new(file, rank);
                     let score = self[white_piece][square].abs();
-                    let score = if score == Score::DRAW {
+                    let score = if score == 0 {
                         String::from("     ")
                     } else {
                         score.to_string()
@@ -124,7 +124,7 @@ impl fmt::Display for HistoryTable {
                 for file in File::iter() {
                     let square = Square::new(file, rank);
                     let score = self[black_piece][square].abs();
-                    let score = if score == Score::DRAW {
+                    let score = if score == 0 {
                         String::from("     ")
                     } else {
                         score.to_string()

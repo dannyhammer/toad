@@ -107,10 +107,10 @@ impl AspirationWindow {
     fn delta(depth: u8) -> Score {
         let initial_delta = tune::initial_aspiration_window_delta!();
 
-        let min_delta = tune::min_aspiration_window_delta!();
+        let min_delta = Score::from(tune::min_aspiration_window_delta!());
 
         // Gradually decrease the window size from `8*init` to `min`
-        Score::new(((initial_delta << 3) / depth as i32).max(min_delta))
+        ((initial_delta << 3) / Score::from(depth)).max(min_delta)
     }
 
     /// Creates a new [`AspirationWindow`] centered around `score`.
@@ -317,10 +317,16 @@ struct SearchParameters {
     lmr_divisor: f32,
 
     /// Value to multiply depth by when computing history scores.
-    history_multiplier: Score,
+    history_multiplier: i32,
 
     /// Value to subtract from a history score at a given depth.
-    history_offset: Score,
+    history_offset: i32,
+
+    /// The base value of a move, used when ordering moves during search.
+    base_move_score: i32,
+
+    /// Maximum bonus to apply to moves via history heuristic.
+    max_history_bonus: i32,
 
     /// Safety margin when applying reverse futility pruning.
     rfp_margin: Score,
@@ -336,8 +342,10 @@ impl Default for SearchParameters {
             min_lmr_moves: tune::min_lmr_moves!(),
             lmr_offset: tune::lmr_offset!(),
             lmr_divisor: tune::lmr_divisor!(),
-            history_multiplier: Score::new(tune::history_multiplier!()),
-            history_offset: Score::new(tune::history_offset!()),
+            history_multiplier: tune::history_multiplier!(),
+            history_offset: tune::history_offset!(),
+            base_move_score: tune::base_move_score!(),
+            max_history_bonus: tune::max_history_bonus!(),
             rfp_margin: Score::new(tune::rfp_margin!()),
         }
     }
@@ -587,7 +595,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         &mut self,
         game: &Game<V>,
         depth: u8,
-        ply: i32,
+        ply: i8,
         mut bounds: SearchBounds,
     ) -> Score {
         /****************************************************************************************************
@@ -625,7 +633,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         if moves.is_empty() {
             return if game.is_in_check() {
                 // Offset by ply to prefer earlier mates
-                ply - Score::MATE
+                Score::from(ply) - Score::MATE
             } else {
                 // Drawing is better than losing
                 Score::DRAW
@@ -721,15 +729,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     // Simple bonus based on depth
                     let bonus =
                         self.params.history_multiplier * depth as i32 - self.params.history_offset;
+                    let max = self.params.max_history_bonus;
 
                     // Only update quiet moves
                     if mv.is_quiet() {
-                        self.history.update(game, mv, bonus);
+                        self.history.update(game, mv, bonus, max);
                     }
 
                     // Apply a penalty to all quiets searched so far
                     for mv in moves[..i].iter().filter(|mv| mv.is_quiet()) {
-                        self.history.update(game, mv, -bonus);
+                        self.history.update(game, mv, -bonus, max);
                     }
                     break;
                 }
@@ -758,7 +767,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     ///
     /// A search that looks at only possible captures and capture-chains.
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
-    fn quiescence(&mut self, game: &Game<V>, ply: i32, mut bounds: SearchBounds) -> Score {
+    fn quiescence(&mut self, game: &Game<V>, ply: i8, mut bounds: SearchBounds) -> Score {
         // Evaluate the current position, to serve as our baseline
         let stand_pat = game.eval();
 
@@ -892,7 +901,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         score: Score,
         bounds: SearchBounds,
         depth: u8,
-        ply: i32,
+        ply: i8,
     ) {
         let entry = TTableEntry::new(key, bestmove, score, bounds, depth, ply);
         let old = self.ttable.store(entry);
@@ -925,16 +934,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
     /// Applies a score to the provided move, intended to be used when ordering moves during search.
     #[inline(always)]
-    fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> Score {
+    fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> i32 {
         // TT move should be looked at first, so assign it the best possible score and immediately exit.
         if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
-            return Score::new(i32::MIN);
+            return i32::MIN;
         }
 
         // Safe unwrap because we can't move unless there's a piece at `from`
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
-        let mut score = Score::BASE_MOVE_SCORE;
+        let mut score = self.params.base_move_score;
 
         // Apply history bonus to quiets
         if mv.is_quiet() {
@@ -956,7 +965,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         &mut self,
         game: &Game<V>,
         depth: u8,
-        ply: i32,
+        ply: i8,
         bounds: SearchBounds,
     ) -> Option<Score> {
         // Cannot prune anything in a PV node or if we're in check
@@ -973,7 +982,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * If the static eval of our position is low enough, check if a qsearch can beat alpha.
          * If it can't, we can prune this node.
          ****************************************************************************************************/
-        let razoring_margin = Score::RAZORING_OFFSET + Score::RAZORING_MULTIPLIER * depth as i32;
+        let razoring_margin =
+            Score::RAZORING_OFFSET + Score::RAZORING_MULTIPLIER * Score::from(depth);
         if depth <= 2 && static_eval + razoring_margin < bounds.alpha {
             let score = self.quiescence(game, ply, bounds.null_alpha());
             // If we can't beat alpha (without mating), we can prune.
@@ -988,7 +998,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * If our static eval is too good (better than beta), we can prune this branch. Multiplying our
          * margin by depth makes this pruning process less risky for higher depths.
          ****************************************************************************************************/
-        let rfp_score = static_eval - self.params.rfp_margin * depth as i32;
+        let rfp_score = static_eval - self.params.rfp_margin * Score::from(depth);
         if depth <= self.params.max_rfp_depth && rfp_score >= bounds.beta {
             return Some(rfp_score);
         }
@@ -1041,13 +1051,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     ///
     /// See [`TTableEntry::try_score`] for more.
     #[inline(always)]
-    fn probe_tt(
-        &self,
-        key: ZobristKey,
-        depth: u8,
-        ply: i32,
-        bounds: SearchBounds,
-    ) -> Option<Score> {
+    fn probe_tt(&self, key: ZobristKey, depth: u8, ply: i8, bounds: SearchBounds) -> Option<Score> {
         // if-let chains are set to be stabilized in Rust 2024 (1.85.0): https://rust-lang.github.io/rfcs/2497-if-let-chains.html
         if let Some(tt_entry) = self.ttable.get(&key) {
             // Can only cut off if the existing entry came from a greater depth.
@@ -1214,7 +1218,7 @@ mod tests {
         .start(&game)
     }
 
-    fn ensure_is_mate_in(fen: &str, config: SearchConfig, moves: i32) -> SearchResult {
+    fn ensure_is_mate_in(fen: &str, config: SearchConfig, moves: i8) -> SearchResult {
         let res = run_search(fen, config);
         assert!(
             res.score.is_mate(),

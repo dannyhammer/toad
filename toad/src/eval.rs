@@ -10,7 +10,9 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::{Color, Piece, PieceKind, Score, SmallDisplayTable, Square, Table, Variant};
+use crate::{
+    Color, Piece, PieceKind, Score, ScoreInternal, SmallDisplayTable, Square, Table, Variant,
+};
 
 /// Piece-Square tables copied from [PeSTO](https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function#Source_Code)
 #[rustfmt::skip]
@@ -160,7 +162,7 @@ const KING_EG: Psqt = Psqt::new(PieceKind::King, [
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 pub struct Evaluator<V> {
     /// Material remaining on the board, for each side.
-    pub(crate) material: [i32; Color::COUNT],
+    pub(crate) material: [i16; Color::COUNT],
 
     /// Mid-game and end-game evaluations of the board.
     pub(crate) evals: (Score, Score),
@@ -186,7 +188,10 @@ impl<V: Variant> Evaluator<V> {
     /// A score of 0 is considered equal.
     #[inline(always)]
     pub fn eval_for(&self, color: Color) -> Score {
-        self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color.negation_multiplier() as i32
+        self.evals
+            .0
+            .lerp(self.evals.1, self.endgame_weight() as ScoreInternal)
+            * color.multiplier() as ScoreInternal
     }
 
     /// Divides the original material value of the board by the current material value, yielding an `i32` in the range `[0, 100]`
@@ -195,9 +200,10 @@ impl<V: Variant> Evaluator<V> {
     ///
     /// The King is ignored when performing this calculation.
     #[inline(always)]
-    pub fn endgame_weight(&self) -> i32 {
-        let remaining = V::INITIAL_MATERIAL_VALUE - self.material_remaining();
-        (remaining * 100 / V::INITIAL_MATERIAL_VALUE * 100) / 100
+    pub fn endgame_weight(&self) -> i8 {
+        let init = V::INITIAL_MATERIAL_VALUE as i16;
+        let remaining = init - self.material_remaining();
+        ((remaining * 100 / init * 100) / 100) as i8
     }
 
     /// Returns the current mid-game and end-game evaluations.
@@ -210,9 +216,9 @@ impl<V: Variant> Evaluator<V> {
     #[inline(always)]
     pub(crate) fn piece_placed(&mut self, piece: Piece, square: Square) {
         let color = piece.color();
-        let multiplier = color.negation_multiplier() as i32;
+        let multiplier = color.multiplier() as ScoreInternal;
 
-        self.material[color] += piece.kind().value();
+        self.material[color] += piece.kind().value() as i16;
 
         // Update PSQT contributions
         let (mg, eg) = Psqt::evals(piece, square);
@@ -224,9 +230,9 @@ impl<V: Variant> Evaluator<V> {
     #[inline(always)]
     pub(crate) fn piece_taken(&mut self, piece: Piece, square: Square) {
         let color = piece.color();
-        let multiplier = color.negation_multiplier() as i32;
+        let multiplier = color.multiplier() as ScoreInternal;
 
-        self.material[piece.color()] -= piece.kind().value();
+        self.material[piece.color()] -= piece.kind().value() as i16;
 
         // Update PSQT contributions
         let (mg, eg) = Psqt::evals(piece, square);
@@ -238,7 +244,7 @@ impl<V: Variant> Evaluator<V> {
     ///
     /// The King is not included in this count
     #[inline(always)]
-    fn material_remaining(&self) -> i32 {
+    fn material_remaining(&self) -> i16 {
         self.material[Color::White.index()] + self.material[Color::Black.index()]
     }
 }
@@ -273,14 +279,14 @@ impl Psqt {
     }
 
     /// Creates a new [`Psqt`] for the provided [`PieceKind`] and array of values.
-    const fn new(kind: PieceKind, psqt: [i32; Square::COUNT]) -> Self {
+    const fn new(kind: PieceKind, psqt: [ScoreInternal; Square::COUNT]) -> Self {
         let mut flipped = [Score::DRAW; Square::COUNT];
 
         let mut i = 0;
         while i < psqt.len() {
             // Flip the rank, not the file, so it can be used from White's perspective without modification
             // Also add in the value of this piece
-            flipped[i] = Score::new(psqt[i ^ 56] + kind.value());
+            flipped[i] = Score::new(psqt[i ^ 56] + kind.value() as ScoreInternal);
             // flipped[i] = value_of(kind); // Functions like a material-only eval
             i += 1;
         }
