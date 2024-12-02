@@ -95,6 +95,12 @@ impl TTableEntry {
         }
     }
 
+    /// Returns this node's [`NodeType`].
+    #[inline(always)]
+    pub fn node_type(&self) -> NodeType {
+        self.node_type
+    }
+
     /// Determine whether the score in this entry can be used and, if so, return it.
     ///
     /// An entry's score can be used if and only if:
@@ -110,10 +116,12 @@ impl TTableEntry {
             self.score
         };
 
+        let node_type = self.node_type();
+
         // If we can cutoff, do so
-        (self.node_type == NodeType::Pv
-            || ((self.node_type == NodeType::All && score <= bounds.alpha)
-                || (self.node_type == NodeType::Cut && score >= bounds.beta)))
+        (node_type == NodeType::Pv
+            || ((node_type == NodeType::All && score <= bounds.alpha)
+                || (node_type == NodeType::Cut && score >= bounds.beta)))
             .then_some(score)
     }
 }

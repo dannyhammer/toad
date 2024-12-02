@@ -22,8 +22,7 @@ use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 use crate::{
     perft, splitperft, Bitboard, Chess960, EngineCommand, Game, GameVariant, HistoryTable,
     LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Position, Psqt, Score,
-    ScoreInternal, Search, SearchConfig, SearchResult, Square, Standard, TTable, Variant,
-    BENCHMARK_FENS,
+    Search, SearchConfig, SearchResult, Square, Standard, TTable, Variant, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -342,14 +341,13 @@ impl Engine {
         use std::cmp::Ordering::*;
         if pretty {
             let color = game.side_to_move();
-            let endgame_weight = game.evaluator().endgame_weight() as ScoreInternal;
+            let endgame_weight = game.evaluator().endgame_weight();
 
             let table = MediumDisplayTable::from_fn(|sq| {
                 game.piece_at(sq)
                     .map(|piece| {
                         let (mg, eg) = Psqt::evals(piece, sq);
-                        let score = mg.lerp(eg, endgame_weight)
-                            * piece.color().multiplier() as ScoreInternal;
+                        let score = mg.lerp(eg, endgame_weight) * piece.color().multiplier() as i16;
 
                         [piece.to_string(), format!("{:+}", score.normalize())]
                     })
@@ -508,7 +506,7 @@ impl Engine {
         // If there was a square provided, print the eval for that square
         if let Some(square) = square {
             let (mg_value, eg_value) = Psqt::evals(piece, square);
-            let value = mg_value.lerp(eg_value, weight as ScoreInternal);
+            let value = mg_value.lerp(eg_value, weight);
             println!("[{mg_value}, {eg_value}] := {value}");
         } else {
             // Otherwise, print both the middle-game and end-game tables

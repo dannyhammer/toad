@@ -10,7 +10,7 @@ use uci_parser::UciScore;
 
 use crate::{tune, MAX_DEPTH};
 
-pub type ScoreInternal = i16;
+type ScoreInternal = i16;
 
 /// A numerical representation of the evaluation of a position / move, in units of ["centipawns"](https://www.chessprogramming.org/Score).
 ///
@@ -21,7 +21,8 @@ pub struct Score(ScoreInternal);
 
 impl Score {
     /// Largest possible score ever achievable.
-    pub const INF: Self = Self(ScoreInternal::MAX / 2);
+    // I don't actually know why `76` is the magic number here. Any lower and bench changes...
+    pub const INF: Self = Self(ScoreInternal::MAX - 76);
 
     /// Score of mate in the current position.
     pub const MATE: Self = Self(Self::INF.0 - 1);
@@ -51,6 +52,12 @@ impl Score {
 
     /// Value to subtract from alpha bound when computing a razoring margin.
     pub const RAZORING_OFFSET: Self = Self(tune::razoring_offset!());
+
+    /// Returns the inner value of this [`Score`].
+    #[inline(always)]
+    pub fn inner(&self) -> ScoreInternal {
+        self.0
+    }
 
     /// Returns `true` if the score is a mate score.
     #[inline(always)]
@@ -142,8 +149,8 @@ impl Score {
 
     /// Performs linear interpolation between `self` and `other` by `t` where `t` is `[0, 100]`.
     #[inline(always)]
-    pub const fn lerp(self, other: Self, t: ScoreInternal) -> Self {
-        Self(self.0 + (other.0 - self.0) * t / 100)
+    pub const fn lerp(self, other: Self, t: i8) -> Self {
+        Self(self.0 + (other.0 - self.0) * t as ScoreInternal / 100)
     }
 }
 
@@ -234,14 +241,15 @@ impl PartialOrd<ScoreInternal> for Score {
     }
 }
 
-// impl<T> From<T> for Score
-// where
-//     T: Into<ScoreInternal>,
-// {
-//     fn from(value: T) -> Self {
-//         Self(value.into())
-//     }
-// }
+impl<T> From<T> for Score
+where
+    T: Into<ScoreInternal>,
+{
+    #[inline(always)]
+    fn from(value: T) -> Self {
+        Self(value.into())
+    }
+}
 
 impl fmt::Display for Score {
     #[inline(always)]

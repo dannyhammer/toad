@@ -10,9 +10,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::{
-    Color, Piece, PieceKind, Score, ScoreInternal, SmallDisplayTable, Square, Table, Variant,
-};
+use crate::{Color, Piece, PieceKind, Score, SmallDisplayTable, Square, Table, Variant};
 
 /// Piece-Square tables copied from [PeSTO](https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function#Source_Code)
 #[rustfmt::skip]
@@ -188,10 +186,7 @@ impl<V: Variant> Evaluator<V> {
     /// A score of 0 is considered equal.
     #[inline(always)]
     pub fn eval_for(&self, color: Color) -> Score {
-        self.evals
-            .0
-            .lerp(self.evals.1, self.endgame_weight() as ScoreInternal)
-            * color.multiplier() as ScoreInternal
+        self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color.multiplier() as i16
     }
 
     /// Divides the original material value of the board by the current material value, yielding an `i32` in the range `[0, 100]`
@@ -216,7 +211,7 @@ impl<V: Variant> Evaluator<V> {
     #[inline(always)]
     pub(crate) fn piece_placed(&mut self, piece: Piece, square: Square) {
         let color = piece.color();
-        let multiplier = color.multiplier() as ScoreInternal;
+        let multiplier = color.multiplier() as i16;
 
         self.material[color] += piece.kind().value();
 
@@ -230,7 +225,7 @@ impl<V: Variant> Evaluator<V> {
     #[inline(always)]
     pub(crate) fn piece_taken(&mut self, piece: Piece, square: Square) {
         let color = piece.color();
-        let multiplier = color.multiplier() as ScoreInternal;
+        let multiplier = color.multiplier() as i16;
 
         self.material[piece.color()] -= piece.kind().value();
 
@@ -279,14 +274,14 @@ impl Psqt {
     }
 
     /// Creates a new [`Psqt`] for the provided [`PieceKind`] and array of values.
-    const fn new(kind: PieceKind, psqt: [ScoreInternal; Square::COUNT]) -> Self {
+    const fn new(kind: PieceKind, psqt: [i16; Square::COUNT]) -> Self {
         let mut flipped = [Score::DRAW; Square::COUNT];
 
         let mut i = 0;
         while i < psqt.len() {
             // Flip the rank, not the file, so it can be used from White's perspective without modification
             // Also add in the value of this piece
-            flipped[i] = Score::new(psqt[i ^ 56] + kind.value() as ScoreInternal);
+            flipped[i] = Score::new(psqt[i ^ 56] + kind.value() as i16);
             // flipped[i] = value_of(kind); // Functions like a material-only eval
             i += 1;
         }

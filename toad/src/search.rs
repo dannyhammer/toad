@@ -19,7 +19,7 @@ use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
     tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Position, Score,
-    ScoreInternal, TTable, TTableEntry, Variant, ZobristKey,
+    TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Maximum depth that can be searched
@@ -93,10 +93,10 @@ struct AspirationWindow {
     bounds: SearchBounds,
 
     /// Number of times that a score has been returned above beta.
-    beta_fails: i32,
+    beta_fails: i8,
 
     /// Number of times that a score has been returned below alpha.
-    alpha_fails: i32,
+    alpha_fails: i8,
 }
 
 impl AspirationWindow {
@@ -106,11 +106,10 @@ impl AspirationWindow {
     #[inline(always)]
     fn delta(depth: u8) -> Score {
         let initial_delta = tune::initial_aspiration_window_delta!();
+        let min_delta = tune::min_aspiration_window_delta!();
 
-        let min_delta = tune::min_aspiration_window_delta!() as ScoreInternal;
-
-        // Gradually decrease the window size from `8*init` to `min`
-        Score::new(((initial_delta << 3) / depth as ScoreInternal).max(min_delta))
+        // Gradually decrease the window size from `8*init` to `min_delta`
+        Score::from(((initial_delta << 3) / depth).max(min_delta))
     }
 
     /// Creates a new [`AspirationWindow`] centered around `score`.
@@ -633,7 +632,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         if moves.is_empty() {
             return if game.is_in_check() {
                 // Offset by ply to prefer earlier mates
-                ply as ScoreInternal - Score::MATE
+                ply as i16 - Score::MATE
             } else {
                 // Drawing is better than losing
                 Score::DRAW
@@ -982,8 +981,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * If the static eval of our position is low enough, check if a qsearch can beat alpha.
          * If it can't, we can prune this node.
          ****************************************************************************************************/
-        let razoring_margin =
-            Score::RAZORING_OFFSET + Score::RAZORING_MULTIPLIER * depth as ScoreInternal;
+        let razoring_margin = Score::RAZORING_OFFSET + Score::RAZORING_MULTIPLIER * depth as i16;
         if depth <= 2 && static_eval + razoring_margin < bounds.alpha {
             let score = self.quiescence(game, ply, bounds.null_alpha());
             // If we can't beat alpha (without mating), we can prune.
@@ -998,7 +996,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * If our static eval is too good (better than beta), we can prune this branch. Multiplying our
          * margin by depth makes this pruning process less risky for higher depths.
          ****************************************************************************************************/
-        let rfp_score = static_eval - self.params.rfp_margin * depth as ScoreInternal;
+        let rfp_score = static_eval - self.params.rfp_margin * depth as i16;
         if depth <= self.params.max_rfp_depth && rfp_score >= bounds.beta {
             return Some(rfp_score);
         }
