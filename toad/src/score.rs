@@ -21,7 +21,7 @@ pub struct Score(ScoreInternal);
 
 impl Score {
     /// Largest possible score ever achievable.
-    pub const INF: Self = Self(i8::MAX as ScoreInternal);
+    pub const INF: Self = Self(ScoreInternal::MAX / 2);
 
     /// Score of mate in the current position.
     pub const MATE: Self = Self(Self::INF.0 - 1);
@@ -234,29 +234,14 @@ impl PartialOrd<ScoreInternal> for Score {
     }
 }
 
-impl From<u8> for Score {
-    fn from(value: u8) -> Self {
-        Self(value as ScoreInternal)
-    }
-}
-
-impl From<i8> for Score {
-    fn from(value: i8) -> Self {
-        Self(value as ScoreInternal)
-    }
-}
-
-impl From<i16> for Score {
-    fn from(value: i16) -> Self {
-        Self(value as ScoreInternal)
-    }
-}
-
-impl From<i32> for Score {
-    fn from(value: i32) -> Self {
-        Self(value as ScoreInternal)
-    }
-}
+// impl<T> From<T> for Score
+// where
+//     T: Into<ScoreInternal>,
+// {
+//     fn from(value: T) -> Self {
+//         Self(value.into())
+//     }
+// }
 
 impl fmt::Display for Score {
     #[inline(always)]
@@ -311,13 +296,13 @@ mod tests {
 
     #[test]
     fn test_relative_absolute() {
-        let plies: i8 = 3;
+        let plies = 3;
 
         // Plies to mate
-        let our_mate = Score::MATE - Score::from(plies);
+        let our_mate = Score::MATE - plies as ScoreInternal;
         assert_eq!(our_mate.plies_to_mate(), plies);
 
-        let their_mate = -(Score::MATE - Score::from(plies));
+        let their_mate = -(Score::MATE - plies as ScoreInternal);
         assert_eq!(their_mate.plies_to_mate(), plies);
 
         // Relative scores

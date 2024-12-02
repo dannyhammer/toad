@@ -162,7 +162,7 @@ const KING_EG: Psqt = Psqt::new(PieceKind::King, [
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 pub struct Evaluator<V> {
     /// Material remaining on the board, for each side.
-    pub(crate) material: [i16; Color::COUNT],
+    pub(crate) material: [i32; Color::COUNT],
 
     /// Mid-game and end-game evaluations of the board.
     pub(crate) evals: (Score, Score),
@@ -201,7 +201,7 @@ impl<V: Variant> Evaluator<V> {
     /// The King is ignored when performing this calculation.
     #[inline(always)]
     pub fn endgame_weight(&self) -> i8 {
-        let init = V::INITIAL_MATERIAL_VALUE as i16;
+        let init = V::INITIAL_MATERIAL_VALUE;
         let remaining = init - self.material_remaining();
         ((remaining * 100 / init * 100) / 100) as i8
     }
@@ -218,7 +218,7 @@ impl<V: Variant> Evaluator<V> {
         let color = piece.color();
         let multiplier = color.multiplier() as ScoreInternal;
 
-        self.material[color] += piece.kind().value() as i16;
+        self.material[color] += piece.kind().value();
 
         // Update PSQT contributions
         let (mg, eg) = Psqt::evals(piece, square);
@@ -232,7 +232,7 @@ impl<V: Variant> Evaluator<V> {
         let color = piece.color();
         let multiplier = color.multiplier() as ScoreInternal;
 
-        self.material[piece.color()] -= piece.kind().value() as i16;
+        self.material[piece.color()] -= piece.kind().value();
 
         // Update PSQT contributions
         let (mg, eg) = Psqt::evals(piece, square);
@@ -244,7 +244,7 @@ impl<V: Variant> Evaluator<V> {
     ///
     /// The King is not included in this count
     #[inline(always)]
-    fn material_remaining(&self) -> i16 {
+    fn material_remaining(&self) -> i32 {
         self.material[Color::White.index()] + self.material[Color::Black.index()]
     }
 }
