@@ -697,12 +697,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         for (i, mv) in moves.iter().enumerate() {
             // Copy-make the new position
             let new = game.with_move_made(*mv);
+            // Append the move onto the history
+            self.prev_positions.push(*new.position());
             let mut score = Score::DRAW;
 
             if !(ply > 0 && self.is_draw(&new)) {
-                // Append the move onto the history
-                self.prev_positions.push(*new.position());
-
                 let new_depth = depth - 1 + self.extension_value(&new);
 
                 // If this node can be reduced, search it with a reduced window.
@@ -755,10 +754,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                 // We've now searched this node
                 self.nodes += 1;
-
-                // Pop the move from the history
-                self.prev_positions.pop();
             }
+            // Pop the move from the history
+            self.prev_positions.pop();
 
             /****************************************************************************************************
              * Score evaluation & bounds adjustments
@@ -776,6 +774,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     // Only extend the PV if we're in a PV node
                     if PV {
                         // eprintln!("Extending PV: {:?} with {mv:?} and {:?}", pv.0, local_pv.0);
+                        assert_pv_is_legal(game, *mv, &local_pv);
                         pv.extend(*mv, &local_pv);
                     }
                 }
@@ -881,19 +880,17 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             // Copy-make the new position
             let new = game.with_move_made(mv);
             let score;
+            self.prev_positions.push(*new.position());
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
             if ply > 0 && self.is_draw(&new) {
                 score = Score::DRAW;
             } else {
-                self.prev_positions.push(*new.position());
-
                 score = -self.quiescence::<PV>(&new, ply + 1, -bounds, &mut local_pv);
                 self.nodes += 1; // We've now searched this node
-
-                self.prev_positions.pop();
             }
+            self.prev_positions.pop();
 
             /****************************************************************************************************
              * Score evaluation & bounds adjustments
@@ -1194,6 +1191,20 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * If we're in check, we should extend the search a bit, in hopes to find a good way to escape.
          ****************************************************************************************************/
         game.is_in_check() as u8
+    }
+}
+
+fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &PrincipalVariation) {
+    let mut game = game.with_move_made(mv);
+
+    for local_pv_mv in &local_pv.0 {
+        assert!(
+            game.is_legal(*local_pv_mv),
+            "Illegal PV move {local_pv_mv} found on {}\nFull PV: {mv}, {:?}",
+            game.to_fen(),
+            local_pv.0,
+        );
+        game.make_move(*local_pv_mv);
     }
 }
 

@@ -4,9 +4,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use core::fmt;
 use std::{
-    io,
+    fmt, io,
     ops::ControlFlow,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -306,7 +305,9 @@ impl Engine {
             self.search_thread = self.start_search::<LogNone, Standard>(game, config);
 
             // Await the search, appending the node count once concluded.
-            let res = self.stop_search().unwrap();
+            let Some(res) = self.stop_search() else {
+                panic!("Search thread panicked during bench");
+            };
             nodes += res.nodes;
 
             // Bench is on different positions, so hash tables are not likely to contain useful info.
