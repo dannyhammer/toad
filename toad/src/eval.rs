@@ -6,10 +6,11 @@
 
 use std::{
     fmt,
+    marker::PhantomData,
     ops::{Deref, DerefMut},
 };
 
-use crate::{Color, Piece, PieceKind, Score, SmallDisplayTable, Square, Table};
+use crate::{Color, Piece, PieceKind, Score, SmallDisplayTable, Square, Table, Variant};
 
 /// Piece-Square tables copied from [PeSTO](https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function#Source_Code)
 #[rustfmt::skip]
@@ -155,6 +156,92 @@ const KING_EG: Psqt = Psqt::new(PieceKind::King, [
     -27, -11,   4,  13,  14,   4,  -5, -17,
     -53, -34, -21, -11, -28, -14, -24, -43
 ]);
+
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+pub struct Evaluator<V> {
+    /// Material remaining on the board, for each side.
+    pub(crate) material: [i32; Color::COUNT],
+
+    /// Mid-game and end-game evaluations of the board.
+    pub(crate) evals: (Score, Score),
+
+    /// Variant of chess being played.
+    variant: PhantomData<V>,
+}
+
+impl<V: Variant> Evaluator<V> {
+    /// Construct a new [`Evaluator`] instance.
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self {
+            material: [0; Color::COUNT],
+            evals: (Score::DRAW, Score::DRAW),
+            variant: PhantomData,
+        }
+    }
+
+    /// Evaluate this position from `color`'s perspective.
+    ///
+    /// A positive/high number is good for the `color`, while a negative number is better for the opponent.
+    /// A score of 0 is considered equal.
+    #[inline(always)]
+    pub fn eval_for(&self, color: Color) -> Score {
+        self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color.negation_multiplier() as i32
+    }
+
+    /// Divides the original material value of the board by the current material value, yielding an `i32` in the range `[0, 100]`
+    ///
+    /// Lower numbers are closer to the beginning of the game. Higher numbers are closer to the end of the game.
+    ///
+    /// The King is ignored when performing this calculation.
+    #[inline(always)]
+    pub fn endgame_weight(&self) -> i32 {
+        let remaining = V::INITIAL_MATERIAL_VALUE - self.material_remaining();
+        (remaining * 100 / V::INITIAL_MATERIAL_VALUE * 100) / 100
+    }
+
+    /// Returns the current mid-game and end-game evaluations.
+    #[inline(always)]
+    pub fn evals(&self) -> (Score, Score) {
+        self.evals
+    }
+
+    /// Called when a piece is placed on a square to update the eval of the board.
+    #[inline(always)]
+    pub(crate) fn piece_placed(&mut self, piece: Piece, square: Square) {
+        let color = piece.color();
+        let multiplier = color.negation_multiplier() as i32;
+
+        self.material[color] += piece.kind().value();
+
+        // Update PSQT contributions
+        let (mg, eg) = Psqt::evals(piece, square);
+        self.evals.0 += mg * multiplier;
+        self.evals.1 += eg * multiplier;
+    }
+
+    /// Called when a piece is removed from a square to update the eval of the board.
+    #[inline(always)]
+    pub(crate) fn piece_taken(&mut self, piece: Piece, square: Square) {
+        let color = piece.color();
+        let multiplier = color.negation_multiplier() as i32;
+
+        self.material[piece.color()] -= piece.kind().value();
+
+        // Update PSQT contributions
+        let (mg, eg) = Psqt::evals(piece, square);
+        self.evals.0 -= mg * multiplier;
+        self.evals.1 -= eg * multiplier;
+    }
+
+    /// Counts the material value of all pieces on the board
+    ///
+    /// The King is not included in this count
+    #[inline(always)]
+    fn material_remaining(&self) -> i32 {
+        self.material[Color::White.index()] + self.material[Color::Black.index()]
+    }
+}
 
 /// A [Piece-Square Table](https://www.chessprogramming.org/Piece-Square_Tables) for use in evaluation.
 #[derive(Debug, Clone, Copy)]

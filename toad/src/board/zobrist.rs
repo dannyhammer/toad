@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use super::{Board, CastlingRights, Color, Piece, Position, Rank, Square, XoShiRo};
+use crate::{Board, CastlingRights, Color, Piece, Position, Rank, Square, XoShiRo};
 
 /// Stores Zobrist hash keys, for hashing [`Position`]s.
 ///

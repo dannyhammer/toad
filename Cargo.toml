@@ -1,18 +1,6 @@
-[package]
-name = "toad"
-version = "2.0.0"
-edition = "2021"
-authors = ["Danny Hammer <hammerapi@gmail.com>"]
-license = "MPL-2.0"
-description = "A toy chess engine"
-repository = "https://github.com/dannyhammer/toad"
-homepage = "https://github.com/dannyhammer/toad"
-keywords = ["chess", "chess-engine", "uci"]
+[workspace]
+resolver = "2"
+members = ["toad"]
 
-[dependencies]
-anyhow = "1.0.89"
-arrayvec = "0.7.6"
-clap = { version = "4.5.18", features = ["derive", "string"] }
-#uci-parser = { path = "../uci-parser", features = ["parse-go-perft", "parse-position-kiwipete", "clamp-negatives", "err-on-unused-input"] }
-uci-parser = { git = "https://github.com/dannyhammer/uci-parser.git", features = ["parse-go-perft", "parse-position-kiwipete", "clamp-negatives", "err-on-unused-input"] }
-#uci-parser = { version = "0.2.0", features = ["parse-go-perft", "parse-position-kiwipete", "clamp-negatives", "err-on-unused-input"] }
+[profile.release]
+lto = true

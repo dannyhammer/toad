@@ -6,7 +6,6 @@
 
 use std::{
     fmt::{self, Debug, Write},
-    marker::PhantomData,
     ops::{Deref, Index, IndexMut},
     str::FromStr,
 };
@@ -15,9 +14,9 @@ use anyhow::{anyhow, bail, Result};
 
 use crate::{
     bishop_attacks, bishop_rays, king_attacks, knight_attacks, pawn_attacks, pawn_pushes,
-    queen_attacks, ray_between, ray_containing, rook_attacks, rook_rays, Bitboard, Color, File,
-    Move, MoveKind, MoveList, Piece, PieceKind, Psqt, Rank, Score, SmallDisplayTable, Square,
-    ZobristKey,
+    queen_attacks, ray_between, ray_containing, rook_attacks, rook_rays, Bitboard, Color,
+    Evaluator, File, Move, MoveKind, MoveList, Piece, PieceKind, Rank, Score, SmallDisplayTable,
+    Square, ZobristKey,
 };
 
 use super::Table;
@@ -58,6 +57,9 @@ pub trait Variant
 where
     Self: Copy + Send + 'static,
 {
+    /// Initial material value of all pieces in a standard setup.
+    const INITIAL_MATERIAL_VALUE: i32;
+
     /// Formats a [`Move`] according to this variant's notation semantics.
     ///
     /// Calls the [`fmt::Display`] implementation.
@@ -109,6 +111,12 @@ where
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct Standard;
 impl Variant for Standard {
+    const INITIAL_MATERIAL_VALUE: i32 = PieceKind::Pawn.value() * 16
+        + PieceKind::Knight.value() * 4
+        + PieceKind::Bishop.value() * 4
+        + PieceKind::Rook.value() * 4
+        + PieceKind::Queen.value() * 2;
+
     #[inline(always)]
     fn variant() -> GameVariant {
         GameVariant::Standard
@@ -124,6 +132,12 @@ impl Variant for Standard {
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct Chess960;
 impl Variant for Chess960 {
+    const INITIAL_MATERIAL_VALUE: i32 = PieceKind::Pawn.value() * 16
+        + PieceKind::Knight.value() * 4
+        + PieceKind::Bishop.value() * 4
+        + PieceKind::Rook.value() * 4
+        + PieceKind::Queen.value() * 2;
+
     #[inline(always)]
     fn fmt_move(mv: Move) -> String {
         format!("{mv:#}")
@@ -178,6 +192,14 @@ impl Variant for Chess960 {
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct Horde;
 impl Variant for Horde {
+    const INITIAL_MATERIAL_VALUE: [i32; Color::COUNT] = [PieceKind::Pawn.value() * 32,
+        PieceKind::Pawn.value() * 8
+        + PieceKind::Knight.value() * 2
+        + PieceKind::Bishop.value() * 2
+        + PieceKind::Rook.value() * 2
+        + PieceKind::Queen.value() * 1;
+    ];
+
     #[inline(always)]
     fn variant() -> GameVariant {
         GameVariant::Horde
@@ -215,20 +237,15 @@ pub struct Game<V: Variant> {
     /// All squares (pseudo-legally) attacked by a specific color.
     attacks_by_color: [Bitboard; Color::COUNT],
 
+    /*
     /// Pseudo-legal moves (including Pawn pushes and castles) from every given square on the board.
     // mobility_at: [Bitboard; Square::COUNT],
-
+     */
     /// The square where the side-to-move's King resides.
     king_square: Square,
 
-    /// Value of remaining material for each side.
-    material: [i32; Color::COUNT],
-
-    /// Current evaluations for the midgame and endgame, respectively
-    evals: (Score, Score),
-
-    /// The variant of Chess this game represents.
-    variant: PhantomData<V>,
+    /// Responsible for evaluating the current position into a [`Score`].
+    evaluator: Evaluator<V>,
 }
 
 /// Implementation details specific to standard chess.
@@ -249,13 +266,6 @@ impl Game<Horde> {
  */
 
 impl<V: Variant> Game<V> {
-    /// Initial material value of all pieces in a standard setup.
-    const INITIAL_MATERIAL_VALUE: i32 = PieceKind::Pawn.value() * 16
-        + PieceKind::Knight.value() * 4
-        + PieceKind::Bishop.value() * 4
-        + PieceKind::Rook.value() * 4
-        + PieceKind::Queen.value() * 2;
-
     /// Creates a new, empty [`Game`] with the following properties:
     /// * No pieces on the board
     /// * White moves first
@@ -279,9 +289,7 @@ impl<V: Variant> Game<V> {
             checkmask: Bitboard::EMPTY_BOARD,
             pinned: Bitboard::EMPTY_BOARD,
             attacks_by_color: [Bitboard::EMPTY_BOARD; Color::COUNT],
-            material: [0; Color::COUNT],
-            evals: (Score::DRAW, Score::DRAW),
-            variant: PhantomData,
+            evaluator: Evaluator::new(),
         }
     }
 
@@ -491,25 +499,6 @@ impl<V: Variant> Game<V> {
         self.attacks_by_color[color.index()]
     }
 
-    /// Counts the material value of all pieces on the board
-    ///
-    /// The King is not included in this count
-    #[inline(always)]
-    pub fn material_remaining(&self) -> i32 {
-        self.material[Color::White.index()] + self.material[Color::Black.index()]
-    }
-
-    /// Divides the original material value of the board by the current material value, yielding an `i32` in the range `[0, 100]`
-    ///
-    /// Lower numbers are closer to the beginning of the game. Higher numbers are closer to the end of the game.
-    ///
-    /// The King is ignored when performing this calculation.
-    #[inline(always)]
-    pub fn endgame_weight(&self) -> i32 {
-        let remaining = Self::INITIAL_MATERIAL_VALUE - self.material_remaining();
-        (remaining * 100 / Self::INITIAL_MATERIAL_VALUE * 100) / 100
-    }
-
     /// Evaluate this position from the side-to-move's perspective.
     ///
     /// A positive/high number is good for the side-to-move, while a negative number is better for the opponent.
@@ -517,16 +506,7 @@ impl<V: Variant> Game<V> {
     #[inline(always)]
     pub fn eval(self) -> Score {
         let stm = self.side_to_move();
-        self.eval_for(stm)
-    }
-
-    /// Evaluate this position from `color`'s perspective.
-    ///
-    /// A positive/high number is good for the `color`, while a negative number is better for the opponent.
-    /// A score of 0 is considered equal.
-    #[inline(always)]
-    pub fn eval_for(&self, color: Color) -> Score {
-        self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color.negation_multiplier() as i32
+        self.evaluator().eval_for(stm)
     }
 
     /// Applies the provided [`Move`]. No enforcement of legality.
@@ -684,12 +664,6 @@ impl<V: Variant> Game<V> {
         Ok(())
     }
 
-    /// Returns the [`GameVariant`] of this game.
-    #[inline(always)]
-    pub fn variant(&self) -> GameVariant {
-        V::variant()
-    }
-
     /// Fetch the internal [`Position`] of this [`Game`].
     #[inline(always)]
     pub const fn position(&self) -> &Position {
@@ -712,6 +686,12 @@ impl<V: Variant> Game<V> {
     #[inline(always)]
     pub const fn pinned(&self) -> Bitboard {
         self.pinned
+    }
+
+    /// Fetch a reference to this game's [`Evaluator`].
+    #[inline(always)]
+    pub fn evaluator(&self) -> &Evaluator<V> {
+        &self.evaluator
     }
 
     /// Checks if playing the provided [`Move`] is legal on the current position.
@@ -1240,33 +1220,18 @@ impl<V: Variant> Game<V> {
     /// Places a piece at the provided square, updating Zobrist hash information.
     #[inline(always)]
     fn place(&mut self, piece: Piece, square: Square) {
-        let color = piece.color();
-        let multiplier = color.negation_multiplier() as i32;
-
         self.position.board.place(piece, square);
         self.position.key.hash_piece(square, piece);
-        self.material[color] += piece.kind().value();
-
-        // Update PSQT contributions
-        let (mg, eg) = Psqt::evals(piece, square);
-        self.evals.0 += mg * multiplier;
-        self.evals.1 += eg * multiplier;
+        self.evaluator.piece_placed(piece, square);
     }
 
     /// Removes and returns a piece on the provided square, updating Zobrist hash information.
     #[inline(always)]
     fn take(&mut self, square: Square) -> Option<Piece> {
         let piece = self.position.board.take(square)?;
-        let color = piece.color();
-        let multiplier = color.negation_multiplier() as i32;
 
         self.position.key.hash_piece(square, piece);
-        self.material[piece.color()] -= piece.kind().value();
-
-        // Update PSQT contributions
-        let (mg, eg) = Psqt::evals(piece, square);
-        self.evals.0 -= mg * multiplier;
-        self.evals.1 -= eg * multiplier;
+        self.evaluator.piece_taken(piece, square);
 
         Some(piece)
     }
@@ -1334,17 +1299,16 @@ impl<V: Variant> fmt::Display for Game<V> {
                 write!(
                     f,
                     "   Material: {} (white) {} (black)",
-                    self.material[Color::White],
-                    self.material[Color::Black]
+                    self.evaluator().material[Color::White],
+                    self.evaluator().material[Color::Black]
                 )?;
             } else if rank == Rank::TWO {
+                let (mg, eg) = self.evaluator().evals();
                 write!(
                     f,
-                    "       Eval: {} (mg={}, eg={}, %={})",
+                    "       Eval: {} (mg={mg}, eg={eg}, %={})",
                     self.eval(),
-                    self.evals.0,
-                    self.evals.1,
-                    self.endgame_weight(),
+                    self.evaluator().endgame_weight(),
                 )?;
                 // } else if rank == Rank::ONE {
             }
@@ -2501,7 +2465,7 @@ pub struct BoardIter<'a> {
     occupancy: Bitboard,
 }
 
-impl<'a> Iterator for BoardIter<'a> {
+impl Iterator for BoardIter<'_> {
     type Item = (Square, Piece);
 
     #[inline(always)]
@@ -2520,7 +2484,7 @@ impl<'a> Iterator for BoardIter<'a> {
     }
 }
 
-impl<'a> ExactSizeIterator for BoardIter<'a> {}
+impl ExactSizeIterator for BoardIter<'_> {}
 
 #[cfg(test)]
 mod tests {
