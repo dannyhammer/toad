@@ -20,8 +20,8 @@ use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
     perft, splitperft, Bitboard, Chess960, EngineCommand, Game, GameVariant, HistoryTable,
-    LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Position, Psqt, Score,
-    Search, SearchConfig, SearchResult, Square, Standard, TTable, Variant, BENCHMARK_FENS,
+    LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Psqt, Score, Search,
+    SearchConfig, SearchResult, Square, Standard, TTable, Variant, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -30,11 +30,6 @@ const BENCH_DEPTH: u8 = 11;
 /// The Toad chess engine.
 #[derive(Debug)]
 pub struct Engine {
-    /// All previous positions of `self.game`, including the current position.
-    ///
-    /// Updated when the engine makes a move or receives `position ... moves [move list]`.
-    prev_positions: Vec<Position>,
-
     /// One half of a channel, responsible for sending commands to the engine to execute.
     sender: Sender<EngineCommand>,
 
@@ -65,7 +60,6 @@ impl Engine {
         let (sender, receiver) = channel();
 
         Self {
-            prev_positions: Vec::with_capacity(512),
             sender,
             receiver,
             is_searching: Arc::default(),
@@ -185,6 +179,8 @@ impl Engine {
 
                 EngineCommand::Flip => game.toggle_side_to_move(),
 
+                EngineCommand::HashInfo => self.hash_info(),
+
                 EngineCommand::MakeMove { mv_string } => match Move::from_uci(&game, &mv_string) {
                     Ok(mv) => self.make_move(&mut game, mv),
                     Err(e) => eprintln!("{e:#}"),
@@ -207,6 +203,13 @@ impl Engine {
 
                 EngineCommand::Perft { depth } => println!("{}", perft(&game, depth)),
 
+                EngineCommand::Place { piece, square } => {
+                    game.place(piece, square);
+                    if self.debug {
+                        println!("Placed {piece} at {square}");
+                    }
+                }
+
                 EngineCommand::Psqt {
                     piece,
                     square,
@@ -217,7 +220,13 @@ impl Engine {
                     println!("{}", splitperft(&game, depth))
                 }
 
-                EngineCommand::HashInfo => self.hash_info(),
+                EngineCommand::Take { square } => {
+                    if let Some(piece) = game.take(square) {
+                        if self.debug {
+                            println!("Removed {piece} at {square}");
+                        }
+                    }
+                }
 
                 EngineCommand::Uci { cmd } => {
                     // UCI spec states to continue execution if an error occurs
@@ -260,9 +269,9 @@ impl Engine {
 
                 let config = SearchConfig::new(options, game);
                 self.search_thread = if self.debug {
-                    self.start_search::<LogDebug, V>(*game, config)
+                    self.start_search::<LogDebug, V>(game.clone(), config)
                 } else {
-                    self.start_search::<LogInfo, V>(*game, config)
+                    self.start_search::<LogInfo, V>(game.clone(), config)
                 };
             }
 
@@ -398,7 +407,6 @@ impl Engine {
     /// Makes the supplied move on the current position.
     #[inline(always)]
     fn make_move<V: Variant>(&mut self, game: &mut Game<V>, mv: Move) {
-        self.prev_positions.push(*game.position());
         game.make_move(mv);
     }
 
@@ -461,7 +469,6 @@ impl Engine {
     #[inline(always)]
     fn new_game<V: Variant>(&mut self) -> Game<V> {
         self.set_is_searching(false);
-        self.prev_positions.clear();
         self.clear_hash_tables();
         Game::default()
     }
@@ -479,9 +486,6 @@ impl Engine {
         } else {
             Game::default()
         };
-
-        // Since this is a new position, it has a new history
-        self.prev_positions.clear();
 
         // Apply the provided moves
         for mv_str in moves {
@@ -556,10 +560,6 @@ impl Engine {
 
         // Clone the parameters that will be sent into the thread
         let is_searching = Arc::clone(&self.is_searching);
-        let mut prev_positions = self.prev_positions.clone();
-        // Cloning a vec doesn't clone its capacity, so we need to do that manually
-        prev_positions.reserve(self.prev_positions.capacity());
-        prev_positions.push(*game.position());
         let ttable = Arc::clone(&self.ttable);
         let history = Arc::clone(&self.history);
 
@@ -570,14 +570,7 @@ impl Engine {
             let mut history = history.lock().unwrap();
 
             // Start the search, returning the result when completed.
-            Search::<Log, V>::new(
-                is_searching,
-                config,
-                prev_positions,
-                &mut ttable,
-                &mut history,
-            )
-            .start(&game)
+            Search::<Log, V>::new(is_searching, config, &mut ttable, &mut history).start(&game)
         });
 
         Some(handle)

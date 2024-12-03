@@ -11,6 +11,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Result};
+use arrayvec::ArrayVec;
 
 use crate::{
     bishop_attacks, bishop_rays, king_attacks, knight_attacks, pawn_attacks, pawn_pushes,
@@ -218,7 +219,7 @@ impl Variant for Horde {
 /// It is the primary type for working with a chess game, and is suitable for use in engines.
 ///
 /// The basic methods you're probably looking for are [`Game::<Standard>::from_fen`], [`Game::make_move`], and [`Game::get_legal_moves`].
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Game<V: Variant> {
     /// The current [`Position`] of the game, including piece layouts, castling rights, turn counters, etc.
     position: Position,
@@ -246,6 +247,8 @@ pub struct Game<V: Variant> {
 
     /// Responsible for evaluating the current position into a [`Score`].
     evaluator: Evaluator<V>,
+
+    previous: ArrayVec<Position, 50>,
 }
 
 /// Implementation details specific to standard chess.
@@ -290,6 +293,7 @@ impl<V: Variant> Game<V> {
             pinned: Bitboard::EMPTY_BOARD,
             attacks_by_color: [Bitboard::EMPTY_BOARD; Color::COUNT],
             evaluator: Evaluator::new(),
+            previous: ArrayVec::new(),
         }
     }
 
@@ -426,7 +430,7 @@ impl<V: Variant> Game<V> {
     /// Copies `self` and returns a [`Game`] after having applied the provided [`Move`].
     #[inline(always)]
     pub fn with_move_made(&self, mv: Move) -> Self {
-        let mut copied = *self;
+        let mut copied = self.clone();
         copied.make_move(mv);
         copied
     }
@@ -434,7 +438,7 @@ impl<V: Variant> Game<V> {
     /// Copies `self` and returns a [`Game`] after having applied a nullmove
     #[inline(always)]
     pub fn with_nullmove_made(&self) -> Self {
-        let mut copied = *self;
+        let mut copied = self.clone();
         copied.make_nullmove();
         copied
     }
@@ -499,21 +503,56 @@ impl<V: Variant> Game<V> {
         self.attacks_by_color[color.index()]
     }
 
+    /// Returns a list of the previous [`Position`]s of this game, until the last irreversible move.
+    #[inline(always)]
+    pub fn previous(&self) -> &[Position] {
+        &self.previous
+    }
+
     /// Evaluate this position from the side-to-move's perspective.
     ///
     /// A positive/high number is good for the side-to-move, while a negative number is better for the opponent.
     /// A score of 0 is considered equal.
     #[inline(always)]
-    pub fn eval(self) -> Score {
+    pub fn eval(&self) -> Score {
         let stm = self.side_to_move();
         self.evaluator().eval_for(stm)
+    }
+
+    /// Returns `true` if this game can be claimed as a draw.
+    #[inline(always)]
+    pub fn is_draw(&self) -> bool {
+        self.is_repetition() || self.can_draw_by_fifty() || self.can_draw_by_insufficient_material()
+    }
+
+    /// Checks if `self` is a repetition, comparing it to previous positions
+    #[inline(always)]
+    pub fn is_repetition(&self) -> bool {
+        // We can skip the previous position, because there's no way it can be a repetition.
+        // We also only need to look check at most `halfmove` previous positions.
+        let n = self.halfmove() as usize;
+        for prev in self.previous.iter().rev().take(n).skip(1) {
+            if prev.key() == self.key() {
+                return true;
+            } else
+            // The halfmove counter only resets on irreversible moves (captures, pawns, etc.) so it can't be a repetition.
+            if prev.halfmove() == 0 {
+                return false;
+            }
+        }
+
+        false
     }
 
     /// Applies the provided [`Move`]. No enforcement of legality.
     #[inline(always)]
     pub fn make_move(&mut self, mv: Move) {
+        // Push the previous position onto the history
+        self.previous.push(self.position);
+
         // Remove the piece from it's previous location, exiting early if there is no piece there
         let Some(mut piece) = self.take(mv.from()) else {
+            self.previous.clear();
             return;
         };
 
@@ -564,6 +603,7 @@ impl<V: Variant> Game<V> {
 
             // Reset halfmove counter, since a capture occurred
             self.position.halfmove = 0;
+            self.previous.clear();
         } else if mv.is_pawn_double_push() {
             // Double pawn push, so set the EP square
             self.position.ep_square = from.forward_by(color, 1);
@@ -594,7 +634,10 @@ impl<V: Variant> Game<V> {
 
         // Next, handle special cases for Pawn (halfmove), Rook, and King (castling)
         match piece.kind() {
-            PieceKind::Pawn => self.position.halfmove = 0,
+            PieceKind::Pawn => {
+                self.position.halfmove = 0;
+                self.previous.clear();
+            }
 
             // Disable castling if a rook moved for the first time
             PieceKind::Rook => {
@@ -637,6 +680,9 @@ impl<V: Variant> Game<V> {
     /// It does **NOT** increment the fullmove counter.
     #[inline(always)]
     pub fn make_nullmove(&mut self) {
+        // Push the previous position onto the history
+        self.previous.push(self.position);
+
         // Clear the EP square from the last move (and un-hash it)
         if let Some(ep_square) = self.position.ep_square.take() {
             self.position.key.hash_ep_square(ep_square);
@@ -1219,7 +1265,7 @@ impl<V: Variant> Game<V> {
 
     /// Places a piece at the provided square, updating Zobrist hash information.
     #[inline(always)]
-    fn place(&mut self, piece: Piece, square: Square) {
+    pub fn place(&mut self, piece: Piece, square: Square) {
         self.position.board.place(piece, square);
         self.position.key.hash_piece(square, piece);
         self.evaluator.piece_placed(piece, square);
@@ -1227,7 +1273,7 @@ impl<V: Variant> Game<V> {
 
     /// Removes and returns a piece on the provided square, updating Zobrist hash information.
     #[inline(always)]
-    fn take(&mut self, square: Square) -> Option<Piece> {
+    pub fn take(&mut self, square: Square) -> Option<Piece> {
         let piece = self.position.board.take(square)?;
 
         self.position.key.hash_piece(square, piece);
