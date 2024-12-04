@@ -522,7 +522,7 @@ impl<V: Variant> Game<V> {
     /// Returns `true` if this game can be claimed as a draw.
     #[inline(always)]
     pub fn is_draw(&self) -> bool {
-        self.is_repetition() || self.can_draw_by_fifty() || self.can_draw_by_insufficient_material()
+        self.can_draw_by_fifty() || self.can_draw_by_insufficient_material()
     }
 
     /// Checks if `self` is a repetition, comparing it to previous positions
