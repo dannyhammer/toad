@@ -710,11 +710,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             };
         }
 
-        // Is this position a draw?
-        if !NODE::ROOT && game.is_draw() {
-            return Score::DRAW;
-        }
-
         // Sort moves so that we look at "promising" ones first
         let tt_move = self.get_tt_bestmove(game.key());
         moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
@@ -890,11 +885,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // So, if there are no captures available, just return the current evaluation.
         if captures.is_empty() {
             return stand_pat;
-        }
-
-        // Is this position a draw?
-        if !NODE::ROOT && game.is_draw() {
-            return Score::DRAW;
         }
 
         let tt_move = self.get_tt_bestmove(game.key());
