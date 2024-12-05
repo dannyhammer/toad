@@ -73,17 +73,17 @@ impl PrincipalVariation {
     }
 
     /// Extend the contents of `self` with `mv` and the contents of `other`.
-    fn extend(&mut self, mv: Move, other: &Self) {
-        self.0.clear();
-        self.0.push(mv);
-        self.0
-            .try_extend_from_slice(&other.0)
-            .unwrap_or_else(|err| {
-                panic!(
-                    "{err}: Attempted to exceed PV capacity of {MAX_DEPTH} pushing {mv:?} and {:?}",
-                    &other.0
-                );
-            });
+    fn extend(&mut self, _mv: Move, _other: &Self) {
+        // self.0.clear();
+        // self.0.push(mv);
+        // self.0
+        //     .try_extend_from_slice(&other.0)
+        //     .unwrap_or_else(|err| {
+        //         panic!(
+        //             "{err}: Attempted to exceed PV capacity of {MAX_DEPTH} pushing {mv:?} and {:?}",
+        //             &other.0
+        //         );
+        //     });
     }
 }
 
@@ -543,7 +543,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 .score(result.score)
                 .nps((self.nodes as f32 / elapsed.as_secs_f32()).trunc())
                 .time(elapsed.as_millis())
-                .pv(result.pv.0.iter().map(|&mv| V::fmt_move(mv))),
+                .pv(result.bestmove.map(V::fmt_move)),
+            // .pv(result.pv.0.iter().map(|&mv| V::fmt_move(mv))),
         );
     }
 
@@ -801,7 +802,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                     // Only extend the PV if we're in a PV node
                     if NODE::PV {
-                        assert_pv_is_legal(game, *mv, &local_pv);
+                        // assert_pv_is_legal(game, *mv, &local_pv);
                         pv.extend(*mv, &local_pv);
                     }
                 }
@@ -1187,6 +1188,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     }
 }
 
+/*
 fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &PrincipalVariation) {
     let mut game = game.with_move_made(mv);
 
@@ -1200,6 +1202,7 @@ fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &Principal
         game.make_move(*local_pv_mv);
     }
 }
+ */
 
 /// This table represents values for [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) move ordering.
 ///
