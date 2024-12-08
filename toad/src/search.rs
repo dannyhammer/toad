@@ -65,14 +65,12 @@ impl NodeType for PvNode {
     const PV: bool = true;
 }
 
-/*
 /// A node not on the principal variation, searched with a null window.
 struct NonPvNode;
 impl NodeType for NonPvNode {
     const ROOT: bool = false;
     const PV: bool = false;
 }
- */
 
 /// Represents the best sequence of moves found during a search.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -139,13 +137,11 @@ impl SearchBounds {
         Self { alpha, beta }
     }
 
-    /*
     /// Create a "null window" around `alpha`.
     #[inline(always)]
     fn null_alpha(self) -> Self {
         Self::new(self.alpha, self.alpha + 1)
     }
-     */
 
     /// Create a "null window" around `beta`.
     #[inline(always)]
@@ -752,14 +748,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         for (i, mv) in moves.iter().enumerate() {
             // Copy-make the new position
             let new = game.with_move_made(*mv);
+            let mut score;
 
             // if Node::ROOT || !self.is_draw(&new) {
             // Append the move onto the history
             self.prev_positions.push(*new.position());
 
-            /*
-            let new_depth = depth - 1 + self.extension_value(&new);
+            // let new_depth = depth - 1 + self.extension_value(&new);
+            let new_depth = depth - 1;
 
+            /*
             // If this node can be reduced, search it with a reduced window.
             if let Some(lmr_reduction) = self.reduction_value::<Node>(depth, &new, i) {
                 // Reduced depth should never exceed `new_depth` and should never be less than `1`.
@@ -785,15 +783,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     );
                 }
             } else if !Node::PV || i > 0 {
-                // All non-PV nodes get searched with a null window
-                score = -self.negamax::<NonPvNode>(
-                    &new,
-                    new_depth,
-                    ply + 1,
-                    -bounds.null_alpha(),
-                    &mut local_pv,
-                );
-            }
+                */
+            // All non-PV nodes get searched with a null window
+            score = -self.negamax::<NonPvNode>(
+                &new,
+                new_depth,
+                ply + 1,
+                -bounds.null_alpha(),
+                &mut local_pv,
+            );
+            // }
 
             /****************************************************************************************************
              * Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
@@ -805,11 +804,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
              ****************************************************************************************************/
             // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
             if Node::PV && (i == 0 || score > bounds.alpha) {
-                score =
-                    -self.negamax::<PvNode>(&new, new_depth, ply + 1, -bounds, &mut local_pv);
+                score = -self.negamax::<PvNode>(&new, new_depth, ply + 1, -bounds, &mut local_pv);
             }
-             */
-            let score = -self.negamax::<PvNode>(&new, depth - 1, ply + 1, -bounds, &mut local_pv);
 
             // We've now searched this node
             self.nodes += 1;
