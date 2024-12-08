@@ -36,6 +36,7 @@ macro_rules! time_inc_divisor {
 }
 pub(crate) use time_inc_divisor;
 
+/*
 /// Initial Aspiration Window size
 macro_rules! initial_aspiration_window_delta {
     () => {
@@ -59,6 +60,7 @@ macro_rules! min_aspiration_window_depth {
     };
 }
 pub(crate) use min_aspiration_window_depth;
+ */
 
 /// Maximum bonus to apply to a move via History Heuristic.
 macro_rules! max_history_bonus {

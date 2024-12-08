@@ -95,6 +95,7 @@ impl TTableEntry {
         }
     }
 
+    /*
     /// Determine whether the score in this entry can be used and, if so, return it.
     ///
     /// An entry's score can be used if and only if:
@@ -116,6 +117,7 @@ impl TTableEntry {
                 || (self.node_type == NodeType::Cut && score >= bounds.beta)))
             .then_some(score)
     }
+     */
 }
 
 /// Transposition Table.
