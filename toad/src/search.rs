@@ -145,13 +145,13 @@ impl SearchBounds {
     fn null_alpha(self) -> Self {
         Self::new(self.alpha, self.alpha + 1)
     }
+     */
 
     /// Create a "null window" around `beta`.
     #[inline(always)]
     fn null_beta(self) -> Self {
         Self::new(self.beta - 1, self.beta)
     }
-     */
 }
 
 impl Neg for SearchBounds {
@@ -695,12 +695,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * work by just returning the evaluation stored in the transposition table.
          ****************************************************************************************************/
         // Do not prune in PV nodes
-        // if !Node::PV {
-        //     // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
-        //     if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
-        //         return tt_score;
-        //     }
-        // }
+        if !Node::PV {
+            // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
+            if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
+                return tt_score;
+            }
+        }
 
         /****************************************************************************************************
          * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
@@ -718,11 +718,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         pv.clear();
 
         // If we CAN prune this node by means other than the TT, do so
-        // if let Some(score) =
-        //     self.node_pruning_score::<Node>(game, depth, ply, bounds, &mut local_pv)
-        // {
-        //     return score;
-        // }
+        if let Some(score) =
+            self.node_pruning_score::<Node>(game, depth, ply, bounds, &mut local_pv)
+        {
+            return score;
+        }
 
         // If there are no legal moves, it's either mate or a draw.
         let mut moves = game.get_legal_moves();
@@ -1096,7 +1096,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         -score // We're sorting, so a lower number is better
     }
 
-    /*
     /// If we can prune the provided node, this function returns a score to return upon pruning.
     ///
     /// If we cannot prune the node, this function returns `None`.
@@ -1117,6 +1116,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Static evaluation of the current position is used in multiple pruning techniques.
         let static_eval = game.eval();
 
+        /*
         /****************************************************************************************************
          * Razoring: https://www.chessprogramming.org/Razoring
          *
@@ -1131,6 +1131,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 return Some(score); // fail-soft
             }
         }
+         */
 
         /****************************************************************************************************
          * Reverse Futility Pruning: https://www.chessprogramming.org/Reverse_Futility_Pruning
@@ -1182,9 +1183,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // If no pruning technique was possible, return no score
         None
     }
-     */
 
-    /*
     /// Probes the [`TTable`] for an entry at the provided `key`, returning that entry's score, if appropriate.
     ///
     /// If an entry is found from a greater depth than `depth`, its score is returned if and only if:
@@ -1211,7 +1210,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         None
     }
-     */
 
     /*
     /// Compute a reduction value (`R`) to apply to a given node's search depth, if possible.
