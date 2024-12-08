@@ -112,8 +112,10 @@ Commands:
   moves          Shows all legal moves in the current position, or for a specific piece
   option         Display the current value of the specified option
   perft          Performs a perft on the current position at the supplied depth, printing total node count
+  place          Place a piece on the provided square
   psqt           Outputs the Piece-Square table value for the provided piece at the provided square, scaled with the endgame weight
   splitperft     Performs a split perft on the current position at the supplied depth
+  take           Remove the piece at the provided square
   help           Print this message or the help of the given subcommand(s)
 ```
 

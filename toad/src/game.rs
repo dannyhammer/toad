@@ -504,7 +504,7 @@ impl<V: Variant> Game<V> {
     /// A positive/high number is good for the side-to-move, while a negative number is better for the opponent.
     /// A score of 0 is considered equal.
     #[inline(always)]
-    pub fn eval(self) -> Score {
+    pub fn eval(&self) -> Score {
         let stm = self.side_to_move();
         self.evaluator().eval_for(stm)
     }
@@ -1219,7 +1219,7 @@ impl<V: Variant> Game<V> {
 
     /// Places a piece at the provided square, updating Zobrist hash information.
     #[inline(always)]
-    fn place(&mut self, piece: Piece, square: Square) {
+    pub fn place(&mut self, piece: Piece, square: Square) {
         self.position.board.place(piece, square);
         self.position.key.hash_piece(square, piece);
         self.evaluator.piece_placed(piece, square);
@@ -1227,7 +1227,7 @@ impl<V: Variant> Game<V> {
 
     /// Removes and returns a piece on the provided square, updating Zobrist hash information.
     #[inline(always)]
-    fn take(&mut self, square: Square) -> Option<Piece> {
+    pub fn take(&mut self, square: Square) -> Option<Piece> {
         let piece = self.position.board.take(square)?;
 
         self.position.key.hash_piece(square, piece);

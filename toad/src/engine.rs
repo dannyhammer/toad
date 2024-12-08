@@ -4,9 +4,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use core::fmt;
 use std::{
-    io,
+    fmt, io,
     ops::ControlFlow,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -186,6 +185,8 @@ impl Engine {
 
                 EngineCommand::Flip => game.toggle_side_to_move(),
 
+                EngineCommand::HashInfo => self.hash_info(),
+
                 EngineCommand::MakeMove { mv_string } => match Move::from_uci(&game, &mv_string) {
                     Ok(mv) => self.make_move(&mut game, mv),
                     Err(e) => eprintln!("{e:#}"),
@@ -208,6 +209,13 @@ impl Engine {
 
                 EngineCommand::Perft { depth } => println!("{}", perft(&game, depth)),
 
+                EngineCommand::Place { piece, square } => {
+                    game.place(piece, square);
+                    if self.debug {
+                        println!("Placed {piece} at {square}");
+                    }
+                }
+
                 EngineCommand::Psqt {
                     piece,
                     square,
@@ -218,7 +226,13 @@ impl Engine {
                     println!("{}", splitperft(&game, depth))
                 }
 
-                EngineCommand::HashInfo => self.hash_info(),
+                EngineCommand::Take { square } => {
+                    if let Some(piece) = game.take(square) {
+                        if self.debug {
+                            println!("Removed {piece} at {square}");
+                        }
+                    }
+                }
 
                 EngineCommand::Uci { cmd } => {
                     // UCI spec states to continue execution if an error occurs
@@ -306,7 +320,9 @@ impl Engine {
             self.search_thread = self.start_search::<LogNone, Standard>(game, config);
 
             // Await the search, appending the node count once concluded.
-            let res = self.stop_search().unwrap();
+            let Some(res) = self.stop_search() else {
+                panic!("Search thread panicked while running benchmarks on fen {fen}");
+            };
             nodes += res.nodes;
 
             // Bench is on different positions, so hash tables are not likely to contain useful info.

@@ -25,6 +25,39 @@ use crate::{
 /// Maximum depth that can be searched
 pub const MAX_DEPTH: u8 = u8::MAX / 2;
 
+/// A marker trait for the types of nodes encountered during search.
+///
+/// Credit to Cosmo, author of Viridithas,
+/// for the idea of using a const generic trait for this.
+trait NodeType {
+    /// Is this node the first searched?
+    const ROOT: bool;
+
+    /// Is this node a PV node?
+    const PV: bool;
+}
+
+/// First node searched.
+struct RootNode;
+impl NodeType for RootNode {
+    const ROOT: bool = true;
+    const PV: bool = true;
+}
+
+/// A node on the principal variation, searched with a non-null window.
+struct PvNode;
+impl NodeType for PvNode {
+    const ROOT: bool = false;
+    const PV: bool = true;
+}
+
+/// A node not on the principal variation, searched with a null window.
+struct NonPvNode;
+impl NodeType for NonPvNode {
+    const ROOT: bool = false;
+    const PV: bool = false;
+}
+
 /// Bounds within an alpha-beta search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SearchBounds {
@@ -190,7 +223,7 @@ pub struct SearchResult {
     /// Evaluation of the position after `bestmove` is made.
     pub score: Score,
 
-    // The depth of the search that produced this result.
+    /// The depth of the search that produced this result.
     pub depth: u8,
 }
 
@@ -520,7 +553,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             // Get a score from the a/b search while using aspiration windows
             let score = 'aspiration_window: loop {
                 // Start a new search at the current depth
-                let score = self.negamax::<true>(game, result.depth, 0, window.bounds);
+                let score = self.negamax::<RootNode>(game, result.depth, 0, window.bounds);
 
                 // If the score fell outside of the aspiration window, widen it gradually
                 if window.fails_low(score) {
@@ -583,7 +616,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     /// Primary location of search logic.
     ///
     /// Uses the [negamax](https://www.chessprogramming.org/Negamax) algorithm in a [fail soft](https://www.chessprogramming.org/Alpha-Beta#Negamax_Framework) framework.
-    fn negamax<const PV: bool>(
+    fn negamax<Node: NodeType>(
         &mut self,
         game: &Game<V>,
         depth: u8,
@@ -597,7 +630,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * work by just returning the evaluation stored in the transposition table.
          ****************************************************************************************************/
         // Do not prune in PV nodes
-        if !PV {
+        if !Node::PV {
             // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
             if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
                 return tt_score;
@@ -612,11 +645,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
-            return self.quiescence(game, ply, bounds);
+            return self.quiescence::<Node>(game, ply, bounds);
         }
 
         // If we CAN prune this node by means other than the TT, do so
-        if let Some(score) = self.node_pruning_score::<PV>(game, depth, ply, bounds) {
+        if let Some(score) = self.node_pruning_score::<Node>(game, depth, ply, bounds) {
             return score;
         }
 
@@ -650,29 +683,38 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             let new = game.with_move_made(*mv);
             let mut score = Score::DRAW;
 
-            if !(ply > 0 && self.is_draw(&new)) {
+            if Node::ROOT || !self.is_draw(&new) {
                 // Append the move onto the history
                 self.prev_positions.push(*new.position());
 
                 let new_depth = depth - 1 + self.extension_value(&new);
 
                 // If this node can be reduced, search it with a reduced window.
-                if let Some(lmr_reduction) = self.reduction_value::<PV>(depth, &new, i) {
+                if let Some(lmr_reduction) = self.reduction_value::<Node>(depth, &new, i) {
                     // Reduced depth should never exceed `new_depth` and should never be less than `1`.
                     let reduced_depth = (new_depth - lmr_reduction).max(1).min(new_depth);
 
                     // Search at a reduced depth with a null window
-                    score =
-                        -self.negamax::<false>(&new, reduced_depth, ply + 1, -bounds.null_alpha());
+                    score = -self.negamax::<NonPvNode>(
+                        &new,
+                        reduced_depth,
+                        ply + 1,
+                        -bounds.null_alpha(),
+                    );
 
                     // If that failed *high* (raised alpha), re-search at the full depth with the null window
                     if score > bounds.alpha && reduced_depth < new_depth {
-                        score =
-                            -self.negamax::<false>(&new, new_depth, ply + 1, -bounds.null_alpha());
+                        score = -self.negamax::<NonPvNode>(
+                            &new,
+                            new_depth,
+                            ply + 1,
+                            -bounds.null_alpha(),
+                        );
                     }
-                } else if !PV || i > 0 {
+                } else if !Node::PV || i > 0 {
                     // All non-PV nodes get searched with a null window
-                    score = -self.negamax::<false>(&new, new_depth, ply + 1, -bounds.null_alpha());
+                    score =
+                        -self.negamax::<NonPvNode>(&new, new_depth, ply + 1, -bounds.null_alpha());
                 }
 
                 /****************************************************************************************************
@@ -684,8 +726,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                  * infrequently in practice that it ends up being an overall speedup.
                  ****************************************************************************************************/
                 // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
-                if PV && (i == 0 || score > bounds.alpha) {
-                    score = -self.negamax::<PV>(&new, new_depth, ply + 1, -bounds);
+                if Node::PV && (i == 0 || score > bounds.alpha) {
+                    score = -self.negamax::<PvNode>(&new, new_depth, ply + 1, -bounds);
                 }
 
                 // We've now searched this node
@@ -758,7 +800,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     ///
     /// A search that looks at only possible captures and capture-chains.
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
-    fn quiescence(&mut self, game: &Game<V>, ply: i32, mut bounds: SearchBounds) -> Score {
+    fn quiescence<Node: NodeType>(
+        &mut self,
+        game: &Game<V>,
+        _ply: i32,
+        mut bounds: SearchBounds,
+    ) -> Score {
         // Evaluate the current position, to serve as our baseline
         let stand_pat = game.eval();
 
@@ -798,16 +845,14 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         for mv in captures {
             // Copy-make the new position
             let new = game.with_move_made(mv);
-            let score;
+            let mut score = Score::DRAW;
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
-            if ply > 0 && self.is_draw(&new) {
-                score = Score::DRAW;
-            } else {
+            if Node::ROOT || !self.is_draw(&new) {
                 self.prev_positions.push(*new.position());
 
-                score = -self.quiescence(&new, ply + 1, -bounds);
+                score = -self.quiescence::<Node>(&new, _ply + 1, -bounds);
                 self.nodes += 1; // We've now searched this node
 
                 self.prev_positions.pop();
@@ -952,7 +997,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     ///
     /// If we cannot prune the node, this function returns `None`.
     #[inline]
-    fn node_pruning_score<const PV: bool>(
+    fn node_pruning_score<Node: NodeType>(
         &mut self,
         game: &Game<V>,
         depth: u8,
@@ -960,7 +1005,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         bounds: SearchBounds,
     ) -> Option<Score> {
         // Cannot prune anything in a PV node or if we're in check
-        if PV || game.is_in_check() {
+        if Node::PV || game.is_in_check() {
             return None;
         }
 
@@ -975,7 +1020,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
         let razoring_margin = Score::RAZORING_OFFSET + Score::RAZORING_MULTIPLIER * depth as i32;
         if depth <= 2 && static_eval + razoring_margin < bounds.alpha {
-            let score = self.quiescence(game, ply, bounds.null_alpha());
+            let score = self.quiescence::<Node>(game, ply, bounds.null_alpha());
             // If we can't beat alpha (without mating), we can prune.
             if score < bounds.alpha && !score.is_mate() {
                 return Some(score); // fail-soft
@@ -1018,7 +1063,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Search at a reduced depth with a zero-window
             let nmp_depth = depth - self.params.nmp_reduction;
-            let score = -self.negamax::<PV>(&null_game, nmp_depth, ply + 1, -bounds.null_beta());
+            let score = -self.negamax::<Node>(&null_game, nmp_depth, ply + 1, -bounds.null_beta());
 
             self.prev_positions.pop();
 
@@ -1061,7 +1106,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
     /// Compute a reduction value (`R`) to apply to a given node's search depth, if possible.
     #[inline(always)]
-    fn reduction_value<const PV: bool>(
+    fn reduction_value<Node: NodeType>(
         &self,
         depth: u8,
         game: &Game<V>,
@@ -1075,7 +1120,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * a null window. If this fails, however, we must perform a costly re-search.
          ****************************************************************************************************/
         (depth >= self.params.min_lmr_depth
-            && moves_made >= self.params.min_lmr_moves + PV as usize)
+            && moves_made >= self.params.min_lmr_moves + Node::PV as usize)
             .then(|| {
                 // Base LMR reduction increases as we go higher in depth and/or make more moves
                 let mut lmr_reduction = (self.params.lmr_offset
