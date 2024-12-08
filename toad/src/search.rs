@@ -15,6 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use arrayvec::ArrayVec;
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
@@ -56,6 +57,43 @@ struct NonPvNode;
 impl NodeType for NonPvNode {
     const ROOT: bool = false;
     const PV: bool = false;
+}
+
+/// Represents the best sequence of moves found during a search.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PrincipalVariation(ArrayVec<Move, { MAX_DEPTH as usize }>);
+
+impl PrincipalVariation {
+    /// An empty PV.
+    const EMPTY: Self = Self(ArrayVec::new_const());
+
+    /// clears the moves of `self`.
+    #[inline(always)]
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// Extend the contents of `self` with `mv` and the contents of `other`.
+    #[inline(always)]
+    fn extend(&mut self, mv: Move, other: &Self) {
+        self.clear();
+        self.0.push(mv);
+        self.0
+            .try_extend_from_slice(&other.0)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "{err}: Attempted to exceed PV capacity of {MAX_DEPTH} pushing {mv:?} and {:?}",
+                    &other.0
+                );
+            });
+    }
+}
+
+impl Default for PrincipalVariation {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::EMPTY
+    }
 }
 
 /// Bounds within an alpha-beta search.
@@ -212,7 +250,7 @@ impl AspirationWindow {
 }
 
 /// The result of a search, containing the best move found, score, and total nodes searched.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SearchResult {
     /// Number of nodes searched.
     pub nodes: u64,
@@ -225,6 +263,9 @@ pub struct SearchResult {
 
     /// The depth of the search that produced this result.
     pub depth: u8,
+
+    /// Principal variation during this search.
+    pub pv: PrincipalVariation,
 }
 
 impl Default for SearchResult {
@@ -237,6 +278,7 @@ impl Default for SearchResult {
             bestmove: None,
             score: Score::ALPHA,
             depth: 1,
+            pv: PrincipalVariation::EMPTY,
         }
     }
 }
@@ -510,6 +552,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 .nps((self.nodes as f32 / elapsed.as_secs_f32()).trunc())
                 .time(elapsed.as_millis())
                 .pv(result.bestmove.map(V::fmt_move)),
+            // .pv(result.pv.0.iter().map(|&mv| V::fmt_move(mv))),
         );
     }
 
@@ -553,7 +596,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             // Get a score from the a/b search while using aspiration windows
             let score = 'aspiration_window: loop {
                 // Start a new search at the current depth
-                let score = self.negamax::<RootNode>(game, result.depth, 0, window.bounds);
+                let score =
+                    self.negamax::<RootNode>(game, result.depth, 0, window.bounds, &mut result.pv);
 
                 // If the score fell outside of the aspiration window, widen it gradually
                 if window.fails_low(score) {
@@ -622,7 +666,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         depth: u8,
         ply: i32,
         mut bounds: SearchBounds,
+        pv: &mut PrincipalVariation,
     ) -> Score {
+        // Declare a local principal variation for nodes found in this search.
+        let mut local_pv = PrincipalVariation::default();
+
         /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
          *
@@ -645,11 +693,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
-            return self.quiescence::<Node>(game, ply, bounds);
+            return self.quiescence::<Node>(game, ply, bounds, pv);
         }
 
+        // Clear any nodes in this PV, since we're searching from a new position
+        pv.clear();
+
         // If we CAN prune this node by means other than the TT, do so
-        if let Some(score) = self.node_pruning_score::<Node>(game, depth, ply, bounds) {
+        if let Some(score) =
+            self.node_pruning_score::<Node>(game, depth, ply, bounds, &mut local_pv)
+        {
             return score;
         }
 
@@ -700,6 +753,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                         reduced_depth,
                         ply + 1,
                         -bounds.null_alpha(),
+                        &mut local_pv,
                     );
 
                     // If that failed *high* (raised alpha), re-search at the full depth with the null window
@@ -709,12 +763,18 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                             new_depth,
                             ply + 1,
                             -bounds.null_alpha(),
+                            &mut local_pv,
                         );
                     }
                 } else if !Node::PV || i > 0 {
                     // All non-PV nodes get searched with a null window
-                    score =
-                        -self.negamax::<NonPvNode>(&new, new_depth, ply + 1, -bounds.null_alpha());
+                    score = -self.negamax::<NonPvNode>(
+                        &new,
+                        new_depth,
+                        ply + 1,
+                        -bounds.null_alpha(),
+                        &mut local_pv,
+                    );
                 }
 
                 /****************************************************************************************************
@@ -727,7 +787,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                  ****************************************************************************************************/
                 // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
                 if Node::PV && (i == 0 || score > bounds.alpha) {
-                    score = -self.negamax::<PvNode>(&new, new_depth, ply + 1, -bounds);
+                    score =
+                        -self.negamax::<PvNode>(&new, new_depth, ply + 1, -bounds, &mut local_pv);
                 }
 
                 // We've now searched this node
@@ -749,6 +810,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 if score > bounds.alpha {
                     bounds.alpha = score;
                     bestmove = *mv;
+
+                    // Only extend the PV if we're in a PV node
+                    if Node::PV {
+                        // assert_pv_is_legal(game, *mv, &local_pv);
+                        pv.extend(*mv, &local_pv);
+                    }
                 }
 
                 // Fail high
@@ -805,6 +872,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         game: &Game<V>,
         _ply: i32,
         mut bounds: SearchBounds,
+        pv: &mut PrincipalVariation,
     ) -> Score {
         // Evaluate the current position, to serve as our baseline
         let stand_pat = game.eval();
@@ -815,6 +883,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         } else if stand_pat > bounds.alpha {
             bounds.alpha = stand_pat;
         }
+
+        // Declare a local principal variation for nodes found in this search.
+        let mut local_pv = PrincipalVariation::default();
+        // Clear any nodes in this PV, since we're searching from a new position
+        pv.clear();
 
         // Generate only the legal captures
         // TODO: Is there a more concise way of doing this?
@@ -852,7 +925,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             if Node::ROOT || !self.is_draw(&new) {
                 self.prev_positions.push(*new.position());
 
-                score = -self.quiescence::<Node>(&new, _ply + 1, -bounds);
+                score = -self.quiescence::<Node>(&new, _ply + 1, -bounds, &mut local_pv);
                 self.nodes += 1; // We've now searched this node
 
                 self.prev_positions.pop();
@@ -870,6 +943,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     bounds.alpha = score;
 
                     // bestmove = mv;
+
+                    // Only extend the PV if we're in a PV node
+                    // if Node::PV {
+                    //     eprintln!("Extending PV: {:?} with {mv:?} and {:?}", pv.0, local_pv.0);
+                    //     pv.extend(mv, &local_pv);
+                    // }
                 }
 
                 // Fail high
@@ -1003,6 +1082,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         depth: u8,
         ply: i32,
         bounds: SearchBounds,
+        pv: &mut PrincipalVariation,
     ) -> Option<Score> {
         // Cannot prune anything in a PV node or if we're in check
         if Node::PV || game.is_in_check() {
@@ -1020,7 +1100,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
         let razoring_margin = Score::RAZORING_OFFSET + Score::RAZORING_MULTIPLIER * depth as i32;
         if depth <= 2 && static_eval + razoring_margin < bounds.alpha {
-            let score = self.quiescence::<Node>(game, ply, bounds.null_alpha());
+            let score = self.quiescence::<Node>(game, ply, bounds.null_alpha(), pv);
             // If we can't beat alpha (without mating), we can prune.
             if score < bounds.alpha && !score.is_mate() {
                 return Some(score); // fail-soft
@@ -1063,7 +1143,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Search at a reduced depth with a zero-window
             let nmp_depth = depth - self.params.nmp_reduction;
-            let score = -self.negamax::<Node>(&null_game, nmp_depth, ply + 1, -bounds.null_beta());
+            let score =
+                -self.negamax::<Node>(&null_game, nmp_depth, ply + 1, -bounds.null_beta(), pv);
 
             self.prev_positions.pop();
 
@@ -1146,6 +1227,22 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         game.is_in_check() as u8
     }
 }
+
+/*
+fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &PrincipalVariation) {
+    let mut game = game.with_move_made(mv);
+
+    for local_pv_mv in &local_pv.0 {
+        assert!(
+            game.is_legal(*local_pv_mv),
+            "Illegal PV move {local_pv_mv} found on {}\nFull PV: {mv}, {:?}",
+            game.to_fen(),
+            local_pv.0,
+        );
+        game.make_move(*local_pv_mv);
+    }
+}
+ */
 
 /// This table represents values for [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) move ordering.
 ///
