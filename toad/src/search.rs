@@ -623,11 +623,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         ply: i32,
         mut bounds: SearchBounds,
     ) -> Score {
-        // If this position is a draw, immediately exit (don't detect draws in root node).
-        if !Node::ROOT && self.is_draw(game) {
-            return Score::DRAW;
-        }
-
         /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
          *
@@ -668,6 +663,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // Drawing is better than losing
                 Score::DRAW
             };
+        }
+
+        // If this position is a draw, immediately exit (don't detect draws in root node).
+        if !Node::ROOT && self.is_draw(game) {
+            return Score::DRAW;
         }
 
         // Sort moves so that we look at "promising" ones first
@@ -800,11 +800,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         _ply: i32,
         mut bounds: SearchBounds,
     ) -> Score {
-        // If this position is a draw, immediately exit (don't detect draws in root node).
-        if !Node::ROOT && self.is_draw(game) {
-            return Score::DRAW;
-        }
-
         // Evaluate the current position, to serve as our baseline
         let stand_pat = game.eval();
 
@@ -828,6 +823,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // So, if there are no captures available, just return the current evaluation.
         if captures.is_empty() {
             return stand_pat;
+        }
+
+        // If this position is a draw, immediately exit (don't detect draws in root node).
+        if !Node::ROOT && self.is_draw(game) {
+            return Score::DRAW;
         }
 
         let tt_move = self.get_tt_bestmove(game.key());
