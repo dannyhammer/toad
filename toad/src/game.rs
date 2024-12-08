@@ -552,7 +552,6 @@ impl<V: Variant> Game<V> {
 
         // Remove the piece from it's previous location, exiting early if there is no piece there
         let Some(mut piece) = self.take(mv.from()) else {
-            self.previous.clear();
             return;
         };
 
@@ -681,7 +680,7 @@ impl<V: Variant> Game<V> {
     #[inline(always)]
     pub fn make_nullmove(&mut self) {
         // Push the previous position onto the history
-        self.previous.push(self.position);
+        // self.previous.push(self.position);
 
         // Clear the EP square from the last move (and un-hash it)
         if let Some(ep_square) = self.position.ep_square.take() {
