@@ -174,7 +174,6 @@ impl Default for SearchBounds {
     }
 }
 
-/*
 /// Represents a window around a search result to act as our a/b bounds.
 #[derive(Debug)]
 struct AspirationWindow {
@@ -266,7 +265,6 @@ impl AspirationWindow {
         self.bounds.beta != Score::BETA && score >= self.bounds.beta
     }
 }
- */
 
 /// The result of a search, containing the best move found, score, and total nodes searched.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -601,20 +599,17 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
 
         // The actual Iterative Deepening loop
-        while self.config.starttime.elapsed() < self.config.soft_timeout
+        'iterative_deepening: while self.config.starttime.elapsed() < self.config.soft_timeout
             && self.is_searching.load(Ordering::Relaxed)
             && result.depth <= self.config.max_depth
         {
-            let bounds = SearchBounds::new(Score::ALPHA, Score::BETA);
-            let score = self.negamax::<RootNode>(game, result.depth, 0, bounds, &mut result.pv);
             /****************************************************************************************************
              * Aspiration Windows: https://www.chessprogramming.org/Aspiration_Windows
              ****************************************************************************************************/
 
             // Create a new aspiration window for this search
-            // let mut window = AspirationWindow::new(result.score, result.depth);
+            let mut window = AspirationWindow::new(result.score, result.depth);
 
-            /*
             // Get a score from the a/b search while using aspiration windows
             let score = 'aspiration_window: loop {
                 // Start a new search at the current depth
@@ -651,7 +646,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     break 'iterative_deepening;
                 }
             };
-            */
 
             /****************************************************************************************************
              * Update current best score
