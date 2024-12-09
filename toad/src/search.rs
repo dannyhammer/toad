@@ -945,10 +945,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     // bestmove = mv;
 
                     // Only extend the PV if we're in a PV node
-                    // if Node::PV {
-                    //     eprintln!("Extending PV: {:?} with {mv:?} and {:?}", pv.0, local_pv.0);
-                    //     pv.extend(mv, &local_pv);
-                    // }
+                    if Node::PV {
+                        assert_pv_is_legal(game, mv, &local_pv);
+                        pv.extend(mv, &local_pv);
+                    }
                 }
 
                 // Fail high
