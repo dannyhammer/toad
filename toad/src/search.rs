@@ -459,7 +459,55 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        let res = self.iterative_deepening(game);
+        // Initial result, populated immediately to contain the first legal move available, if possible.
+        let mut init_result = SearchResult::default();
+
+        // If there are no legal moves available, return immediately
+        let moves = game.get_legal_moves();
+        let Some(first) = moves.first() else {
+            // It's either a draw or a checkmate
+            init_result.score = -Score::MATE * game.is_in_check() as i32;
+
+            if Log::DEBUG {
+                self.send_string(format!(
+                    "Position {:?} has no legal moves available, evaluated at {}",
+                    game.to_fen(),
+                    init_result.score.into_uci(),
+                ));
+            }
+
+            if Log::INFO {
+                self.send_end_of_search_info(&init_result);
+            }
+
+            return init_result;
+        };
+
+        // Initialize `bestmove` to the first move available, so we can return *something* if we're low on time.
+        init_result.bestmove = Some(*first);
+
+        // If there is only 1 legal move available, it is forced, so don't waste time searching.
+        if moves.len() == 1 {
+            init_result.score = game.eval();
+
+            if Log::DEBUG {
+                self.send_string(format!(
+                    "Position {:?} has only one legal move available ({}), evaluated at {}",
+                    game.to_fen(),
+                    init_result.bestmove.unwrap(),
+                    init_result.score.into_uci(),
+                ));
+            }
+
+            if Log::INFO {
+                self.send_end_of_search_info(&init_result);
+            }
+
+            return init_result;
+        }
+
+        // Run the actual search, getting an updated SearchResult.
+        let end_result = self.iterative_deepening(game, init_result);
 
         if Log::DEBUG {
             let hits = self.ttable.hits;
@@ -474,7 +522,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Search has ended; send bestmove
         if Log::INFO {
             self.send_response(UciResponse::BestMove {
-                bestmove: res.bestmove.map(V::fmt_move),
+                bestmove: end_result.bestmove.map(V::fmt_move),
                 ponder: None,
             });
         }
@@ -482,7 +530,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Search has concluded, alert other thread(s) that we are no longer searching
         self.is_searching.store(false, Ordering::Relaxed);
 
-        res
+        end_result
     }
 
     /// Sends a [`UciResponse`] to `stdout`.
@@ -498,7 +546,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         self.send_response(resp);
     }
 
-    /// Sends UCI info about the conclusion of this search.
+    /// Sends UCI info about the conclusion of a search.
+    ///
+    /// This is sent at the end of each new search in the iterative deepening loop.
     #[inline(always)]
     fn send_end_of_search_info(&self, result: &SearchResult) {
         let elapsed = self.config.starttime.elapsed();
@@ -528,24 +578,22 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     /// However, with features such as move ordering, a/b pruning, and aspiration windows, ID enhances performance.
     ///
     /// After each iteration, we check if we've exceeded our `soft_timeout` and, if we haven't, we run a search at a greater depth.
-    fn iterative_deepening(&mut self, game: &Game<V>) -> SearchResult {
-        // Initialize `bestmove` to the first move available
-        let mut result = SearchResult {
-            bestmove: game.get_legal_moves().first().copied(),
-            ..Default::default()
-        };
-
+    fn iterative_deepening(&mut self, game: &Game<V>, mut result: SearchResult) -> SearchResult {
         /****************************************************************************************************
          * Iterative Deepening: https://www.chessprogramming.org/Iterative_Deepening
+         *
+         * Since we don't know how much time a search will take, we perform a series of searches as increasing
+         * depths until we run out of time.
          ****************************************************************************************************/
-
-        // The actual Iterative Deepening loop
         'iterative_deepening: while self.config.starttime.elapsed() < self.config.soft_timeout
             && self.is_searching.load(Ordering::Relaxed)
             && result.depth <= self.config.max_depth
         {
             /****************************************************************************************************
              * Aspiration Windows: https://www.chessprogramming.org/Aspiration_Windows
+             *
+             * If our search is stable, the result of a search from the next depth should be similar to our
+             * current result. Therefore, we can use the current result to initialize our alpha/beta bounds.
              ****************************************************************************************************/
 
             // Create a new aspiration window for this search
