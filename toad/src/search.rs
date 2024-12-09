@@ -939,13 +939,17 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         depth: u8,
         ply: i32,
     ) {
-        let entry = TTableEntry::new(key, bestmove, score, bounds, depth, ply);
-        let old = self.ttable.store(entry);
+        // Depth-Preferred Replacement Strategy: https://www.chessprogramming.org/Transposition_Table#Depth-Preferred
+        // Only replace TT entries if the new entry has a higher depth
+        if self.ttable.get(&key).is_none_or(|old| old.depth <= depth) {
+            let entry = TTableEntry::new(key, bestmove, score, bounds, depth, ply);
+            let old = self.ttable.store(entry);
 
-        if Log::DEBUG {
-            // If a previous entry existed and had a *different* key, this was a collision
-            if old.is_some_and(|old| old.key != key) {
-                self.ttable.collisions += 1;
+            if Log::DEBUG {
+                // If a previous entry existed and had a *different* key, this was a collision
+                if old.is_some_and(|old| old.key != key) {
+                    self.ttable.collisions += 1;
+                }
             }
         }
     }
