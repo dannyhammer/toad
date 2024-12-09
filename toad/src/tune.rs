@@ -23,7 +23,7 @@ pub(crate) use soft_timeout_divisor;
 /// Divisor for computing the hard timeout of a search.
 macro_rules! hard_timeout_divisor {
     () => {
-        5
+        3
     };
 }
 pub(crate) use hard_timeout_divisor;
