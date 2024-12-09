@@ -786,7 +786,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        // Save this node to the TTable
+        // Save this node to the TTable if and only if alpha was raised, meaning a bestmove was found.
         if bounds.alpha != original_alpha {
             self.save_to_tt(
                 game.key(),
@@ -808,7 +808,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     fn quiescence<Node: NodeType>(
         &mut self,
         game: &Game<V>,
-        _ply: i32,
+        ply: i32,
         mut bounds: SearchBounds,
     ) -> Score {
         // Evaluate the current position, to serve as our baseline
@@ -840,8 +840,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
-        // let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
-        // let original_alpha = alpha;
+        let mut bestmove = None;
+        let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
          * Primary move loop
@@ -857,7 +857,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             if Node::ROOT || !self.is_draw(&new) {
                 self.prev_positions.push(*new.position());
 
-                score = -self.quiescence::<Node>(&new, _ply + 1, -bounds);
+                score = -self.quiescence::<Node>(&new, ply + 1, -bounds);
                 self.nodes += 1; // We've now searched this node
 
                 self.prev_positions.pop();
@@ -873,8 +873,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // PV found
                 if score > bounds.alpha {
                     bounds.alpha = score;
-
-                    // bestmove = mv;
+                    bestmove = Some(mv);
                 }
 
                 // Fail high
@@ -889,8 +888,17 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        // Save this node to the TTable
-        // self.save_to_tt(game.key(), bestmove, best, original_alpha, beta, 0, ply);
+        // Save this node to the TTable if and only if alpha was raised, meaning a bestmove was found.
+        if bounds.alpha != original_alpha {
+            self.save_to_tt(
+                game.key(),
+                bestmove,
+                best,
+                SearchBounds::new(original_alpha, bounds.beta),
+                0,
+                ply,
+            );
+        }
 
         best // fail-soft
     }
