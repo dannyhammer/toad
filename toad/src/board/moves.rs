@@ -4,7 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use std::{fmt, str::FromStr};
+use std::{fmt, num::NonZeroU16, str::FromStr};
 
 use anyhow::{anyhow, Result};
 
@@ -194,6 +194,10 @@ impl fmt::Display for MoveKind {
     }
 }
 
+// Ensure that the `Move` type is correctly sized.
+const _ASSERT_MOVE_SIZE_IS_2_BYTES: () = assert!(std::mem::size_of::<Move>() == 2);
+const _ASSERT_OPTION_MOVE_SIZE_IS_2_BYTES: () = assert!(std::mem::size_of::<Option<Move>>() == 2);
+
 /// Represents a move made on a chess board, including whether a piece is to be promoted.
 ///
 /// Internally encoded using the following bit pattern:
@@ -208,7 +212,7 @@ impl fmt::Display for MoveKind {
 /// Flags are fetched directly from the [Chess Programming Wiki](https://www.chessprogramming.org/Encoding_Moves#From-To_Based).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct Move(u16);
+pub struct Move(NonZeroU16);
 
 impl Move {
     /// Mask for the source ("from") bits.
@@ -250,9 +254,12 @@ impl Move {
     /// ```
     #[inline(always)]
     pub const fn new(from: Square, to: Square, kind: MoveKind) -> Self {
-        Self(kind as u16 | (to.inner() as u16) << Self::DST_BITS | from.inner() as u16)
+        let n = kind as u16 | (to.inner() as u16) << Self::DST_BITS | from.inner() as u16;
+        let inner = unsafe { NonZeroU16::new_unchecked(n) };
+        Self(inner)
     }
 
+    /*
     /// Creates an "illegal" [`Move`], representing moving a piece to and from the same [`Square`].
     ///
     /// Playing this move on a [`Position`] is *not* the same as playing a [null move](https://www.chessprogramming.org/Null_Move).
@@ -261,11 +268,18 @@ impl Move {
     /// ```
     /// # use toad::Move;
     /// let illegal = Move::illegal();
-    /// assert_eq!(illegal.to_string(), "a1a1");
+    /// assert_eq!(illegal.to_string(), "h8h8q");
     /// ```
     #[inline(always)]
     pub const fn illegal() -> Self {
-        Self(0)
+        Self(NonZeroU16::MAX)
+    }
+     */
+
+    /// Retrieve the inner `u16` representation of this [`Move`].
+    #[inline(always)]
+    pub const fn inner(self) -> u16 {
+        self.0.get()
     }
 
     /// Fetches the source (or "from") part of this [`Move`], as a [`Square`].
@@ -279,7 +293,7 @@ impl Move {
     /// ```
     #[inline(always)]
     pub const fn from(&self) -> Square {
-        Square::from_bits_unchecked((self.0 & Self::SRC_MASK) as u8)
+        Square::from_bits_unchecked((self.inner() & Self::SRC_MASK) as u8)
     }
 
     /// Fetches the destination (or "to") part of this [`Move`], as a [`Square`].
@@ -293,7 +307,7 @@ impl Move {
     /// ```
     #[inline(always)]
     pub const fn to(&self) -> Square {
-        Square::from_bits_unchecked(((self.0 & Self::DST_MASK) >> Self::DST_BITS) as u8)
+        Square::from_bits_unchecked(((self.inner() & Self::DST_MASK) >> Self::DST_BITS) as u8)
     }
 
     /// Fetches the [`MoveKind`] part of this [`Move`].
@@ -308,7 +322,7 @@ impl Move {
     pub fn kind(&self) -> MoveKind {
         // Safety: Since a `Move` can ONLY be constructed through the public API,
         // any instance of a `Move` is guaranteed to have a valid bit pattern for its `MoveKind`.
-        unsafe { std::mem::transmute(self.0 & Self::FLG_MASK) }
+        unsafe { std::mem::transmute(self.inner() & Self::FLG_MASK) }
     }
 
     /// Returns `true` if this [`Move`] is a capture of any kind (capture, promotion-capture, en passant capture).
@@ -326,7 +340,7 @@ impl Move {
     /// ```
     #[inline(always)]
     pub const fn is_capture(&self) -> bool {
-        self.0 & Self::FLAG_CAPTURE != 0
+        self.inner() & Self::FLAG_CAPTURE != 0
     }
 
     /// Returns `true` if this [`Move`] is a non-capture (quiet) move.
@@ -347,25 +361,25 @@ impl Move {
     /// ```
     #[inline(always)]
     pub const fn is_quiet(&self) -> bool {
-        self.0 & Self::FLAG_CAPTURE == 0
+        self.inner() & Self::FLAG_CAPTURE == 0
     }
 
     /// Returns `true` if this [`Move`] is en passant.
     #[inline(always)]
     pub const fn is_en_passant(&self) -> bool {
-        (self.0 & Self::FLG_MASK) ^ Self::FLAG_EP_CAPTURE == 0
+        (self.inner() & Self::FLG_MASK) ^ Self::FLAG_EP_CAPTURE == 0
     }
 
     /// Returns `true` if this [`Move`] is a short (kingside) castle.
     #[inline(always)]
     pub const fn is_short_castle(&self) -> bool {
-        (self.0 & Self::FLG_MASK) ^ Self::FLAG_CASTLE_SHORT == 0
+        (self.inner() & Self::FLG_MASK) ^ Self::FLAG_CASTLE_SHORT == 0
     }
 
     /// Returns `true` if this [`Move`] is a long (queenside) castle.
     #[inline(always)]
     pub const fn is_long_castle(&self) -> bool {
-        (self.0 & Self::FLG_MASK) ^ Self::FLAG_CASTLE_LONG == 0
+        (self.inner() & Self::FLG_MASK) ^ Self::FLAG_CASTLE_LONG == 0
     }
 
     // #[inline(always)]
@@ -376,9 +390,10 @@ impl Move {
     /// If this [`Move`] is a castling move, returns the [`File`]s of the destinations for the King and Rook, respectively.
     #[inline(always)]
     pub const fn castling_files(&self) -> Option<(File, File)> {
-        if (self.0 & Self::FLG_MASK) ^ Self::FLAG_CASTLE_SHORT == 0 {
+        let inner = self.inner();
+        if (inner & Self::FLG_MASK) ^ Self::FLAG_CASTLE_SHORT == 0 {
             Some((File::G, File::F))
-        } else if (self.0 & Self::FLG_MASK) ^ Self::FLAG_CASTLE_LONG == 0 {
+        } else if (inner & Self::FLG_MASK) ^ Self::FLAG_CASTLE_LONG == 0 {
             Some((File::C, File::D))
         } else {
             None
@@ -395,7 +410,7 @@ impl Move {
     /// ```
     #[inline(always)]
     pub const fn is_pawn_double_push(&self) -> bool {
-        (self.0 & Self::FLG_MASK) ^ Self::FLAG_PAWN_DOUBLE == 0
+        (self.inner() & Self::FLG_MASK) ^ Self::FLAG_PAWN_DOUBLE == 0
     }
 
     /*
@@ -430,7 +445,7 @@ impl Move {
     /// ```
     #[inline(always)]
     pub fn promotion(&self) -> Option<PieceKind> {
-        match self.0 & Self::FLG_MASK {
+        match self.inner() & Self::FLG_MASK {
             Self::FLAG_PROMO_QUEEN | Self::FLAG_CAPTURE_PROMO_QUEEN => Some(PieceKind::Queen),
             Self::FLAG_PROMO_KNIGHT | Self::FLAG_CAPTURE_PROMO_KNIGHT => Some(PieceKind::Knight),
             Self::FLAG_PROMO_ROOK | Self::FLAG_CAPTURE_PROMO_ROOK => Some(PieceKind::Rook),
@@ -678,6 +693,7 @@ impl fmt::Debug for Move {
     }
 }
 
+/*
 impl Default for Move {
     /// A "default" move is an illegal move. See [`Move::illegal`]
     ///
@@ -687,6 +703,7 @@ impl Default for Move {
         Self::illegal()
     }
 }
+ */
 
 impl<T: AsRef<str>> PartialEq<T> for Move {
     #[inline(always)]

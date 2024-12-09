@@ -57,7 +57,7 @@ pub struct TTableEntry {
     pub depth: u8,
 
     /// Best move found for this position.
-    pub bestmove: Move,
+    pub bestmove: Option<Move>,
 
     /// Best score found for this position.
     pub score: Score,
@@ -74,7 +74,7 @@ impl TTableEntry {
     #[inline(always)]
     pub fn new(
         key: ZobristKey,
-        bestmove: Move,
+        bestmove: Option<Move>,
         score: Score,
         bounds: SearchBounds,
         depth: u8,
@@ -277,7 +277,7 @@ mod test {
         // Create entries for both positions
         let entry1 = TTableEntry {
             key: key1,
-            bestmove: Move::illegal(),
+            bestmove: None,
             score: Score::DRAW,
             depth: 0,
             node_type: NodeType::Pv,
@@ -285,7 +285,7 @@ mod test {
 
         let entry2 = TTableEntry {
             key: key2,
-            bestmove: Move::illegal(),
+            bestmove: None,
             score: Score::MATE,
             depth: 0,
             node_type: NodeType::Pv,

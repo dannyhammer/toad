@@ -595,7 +595,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             result.score = score;
 
             // Get the bestmove from the TTable
-            result.bestmove = self.ttable.get(&game.key()).map(|entry| entry.bestmove);
+            result.bestmove = self
+                .ttable
+                .get(&game.key())
+                .and_then(|entry| entry.bestmove);
 
             // Send search info to the GUI
             if Log::INFO {
@@ -672,7 +675,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Start with a *really bad* initial score
         let mut best = Score::ALPHA;
-        let mut bestmove = moves[0]; // Safe because we guaranteed `moves` to be nonempty above
+        let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
@@ -749,7 +752,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // PV found
                 if score > bounds.alpha {
                     bounds.alpha = score;
-                    bestmove = *mv;
+                    bestmove = Some(*mv);
                 }
 
                 // Fail high
@@ -784,7 +787,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        // Save this node to the TTable
+        // Save this node to the TTable if and only if alpha was raised, meaning a bestmove was found.
+        // if bounds.alpha != original_alpha {
         self.save_to_tt(
             game.key(),
             bestmove,
@@ -793,6 +797,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             depth,
             ply,
         );
+        // }
 
         best
     }
@@ -836,8 +841,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
-        // let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
-        // let original_alpha = alpha;
+        // let mut bestmove = None;
+        // let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
          * Primary move loop
@@ -869,8 +874,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // PV found
                 if score > bounds.alpha {
                     bounds.alpha = score;
-
-                    // bestmove = mv;
+                    // bestmove = Some(mv);
                 }
 
                 // Fail high
@@ -885,8 +889,17 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        // Save this node to the TTable
-        // self.save_to_tt(game.key(), bestmove, best, original_alpha, beta, 0, ply);
+        // Save this node to the TTable if and only if alpha was raised, meaning a bestmove was found.
+        // if bounds.alpha != original_alpha {
+        //     self.save_to_tt(
+        //         game.key(),
+        //         bestmove,
+        //         best,
+        //         SearchBounds::new(original_alpha, bounds.beta),
+        //         0,
+        //         ply,
+        //     );
+        // }
 
         best // fail-soft
     }
@@ -934,7 +947,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     fn save_to_tt(
         &mut self,
         key: ZobristKey,
-        bestmove: Move,
+        bestmove: Option<Move>,
         score: Score,
         bounds: SearchBounds,
         depth: u8,
@@ -957,7 +970,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     /// Gets the bestmove for the provided position from the TTable, if it exists.
     #[inline(always)]
     fn get_tt_bestmove(&mut self, key: ZobristKey) -> Option<Move> {
-        let mv = self.ttable.get(&key).map(|entry| entry.bestmove);
+        let mv = self.ttable.get(&key).and_then(|entry| entry.bestmove);
 
         if Log::DEBUG {
             // Regardless whether this was a hit, it was still an access
