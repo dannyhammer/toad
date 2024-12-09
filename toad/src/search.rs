@@ -19,21 +19,8 @@ use arrayvec::ArrayVec;
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune,
-    Color,
-    Game,
-    HistoryTable,
-    LogLevel,
-    Move,
-    // MoveList,
-    Piece,
-    PieceKind,
-    Position,
-    Score,
-    TTable,
-    TTableEntry,
-    Variant,
-    ZobristKey,
+    tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Position, Score,
+    TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Maximum depth that can be searched
@@ -706,8 +693,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
-            // return self.quiescence::<Node>(game, ply, bounds, pv);
-            return game.eval();
+            return self.quiescence::<Node>(game, ply, bounds, pv);
         }
 
         // Clear any nodes in this PV, since we're searching from a new position
@@ -876,7 +862,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         best
     }
 
-    /*
     /// Quiescence Search (QSearch)
     ///
     /// A search that looks at only possible captures and capture-chains.
@@ -932,18 +917,18 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         for mv in captures {
             // Copy-make the new position
             let new = game.with_move_made(mv);
-            let mut score = Score::DRAW;
+            // let mut score = Score::DRAW;
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
-            if Node::ROOT || !self.is_draw(&new) {
-                self.prev_positions.push(*new.position());
+            // if Node::ROOT || !self.is_draw(&new) {
+            self.prev_positions.push(*new.position());
 
-                score = -self.quiescence::<Node>(&new, _ply + 1, -bounds, &mut local_pv);
-                self.nodes += 1; // We've now searched this node
+            let score = -self.quiescence::<Node>(&new, _ply + 1, -bounds, &mut local_pv);
+            self.nodes += 1; // We've now searched this node
 
-                self.prev_positions.pop();
-            }
+            self.prev_positions.pop();
+            // }
 
             /****************************************************************************************************
              * Score evaluation & bounds adjustments
@@ -982,7 +967,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         best // fail-soft
     }
-     */
 
     /// Checks if we've exceeded any conditions that would warrant the search to end.
     #[inline(always)]
@@ -1109,7 +1093,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Static evaluation of the current position is used in multiple pruning techniques.
         let static_eval = game.eval();
 
-        /*
         /****************************************************************************************************
          * Razoring: https://www.chessprogramming.org/Razoring
          *
@@ -1124,7 +1107,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 return Some(score); // fail-soft
             }
         }
-         */
 
         /****************************************************************************************************
          * Reverse Futility Pruning: https://www.chessprogramming.org/Reverse_Futility_Pruning
@@ -1247,7 +1229,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     }
 }
 
-/*
+/// Utility function to assert that the PV is legal for the provided game.
+#[allow(dead_code)]
 fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &PrincipalVariation) {
     let mut game = game.with_move_made(mv);
 
@@ -1261,7 +1244,6 @@ fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &Principal
         game.make_move(*local_pv_mv);
     }
 }
- */
 
 /// This table represents values for [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) move ordering.
 ///
