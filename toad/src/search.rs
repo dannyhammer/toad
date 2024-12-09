@@ -701,7 +701,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // If we CAN prune this node by means other than the TT, do so
         if let Some(score) =
-            self.node_pruning_score::<Node>(game, depth, ply, bounds, &mut local_pv)
+            self.node_pruning_score::<Node>(game, depth, ply, bounds, pv, &mut local_pv)
         {
             return score;
         }
@@ -709,6 +709,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // If there are no legal moves, it's either mate or a draw.
         let mut moves = game.get_legal_moves();
         if moves.is_empty() {
+            pv.clear();
             return if game.is_in_check() {
                 // Offset by ply to prefer earlier mates
                 ply - Score::MATE
@@ -988,8 +989,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         let n = game.halfmove() as usize;
         for prev in self.prev_positions.iter().rev().take(n).skip(1).step_by(2) {
             if prev.key() == game.key() {
-                // TODO: FIx repetition detection
-                // return true;
+                return true;
             } else
             // The halfmove counter only resets on irreversible moves (captures, pawns, etc.) so it can't be a repetition.
             if prev.halfmove() == 0 {
@@ -1084,6 +1084,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         ply: i32,
         bounds: SearchBounds,
         pv: &mut PrincipalVariation,
+        local_pv: &mut PrincipalVariation,
     ) -> Option<Score> {
         // Cannot prune anything in a PV node or if we're in check
         if Node::PV || game.is_in_check() {
@@ -1144,8 +1145,13 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Search at a reduced depth with a zero-window
             let nmp_depth = depth - self.params.nmp_reduction;
-            let score =
-                -self.negamax::<Node>(&null_game, nmp_depth, ply + 1, -bounds.null_beta(), pv);
+            let score = -self.negamax::<NonPvNode>(
+                &null_game,
+                nmp_depth,
+                ply + 1,
+                -bounds.null_beta(),
+                local_pv,
+            );
 
             self.prev_positions.pop();
 
@@ -1232,14 +1238,20 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 /// Utility function to assert that the PV is legal for the provided game.
 #[allow(dead_code)]
 fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &PrincipalVariation) {
+    let fen = game.to_fen();
     let mut game = game.with_move_made(mv);
 
     for local_pv_mv in &local_pv.0 {
         assert!(
             game.is_legal(*local_pv_mv),
-            "Illegal PV move {local_pv_mv} found on {}\nFull PV: {mv}, {:?}",
-            game.to_fen(),
-            local_pv.0,
+            "Illegal PV move {local_pv_mv} found on {fen}\nFull PV: {}\nResulting FEN: {}",
+            [&mv]
+                .into_iter()
+                .chain(local_pv.0.iter())
+                .map(|m| m.to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+            game.to_fen()
         );
         game.make_move(*local_pv_mv);
     }
