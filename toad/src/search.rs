@@ -736,28 +736,38 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             let new = game.with_move_made(*mv);
             let mut score = Score::DRAW;
 
-            // if Node::ROOT || !self.is_draw(&new) {
-            // Append the move onto the history
-            self.prev_positions.push(*new.position());
+            if Node::ROOT || !self.is_draw(&new) {
+                // Append the move onto the history
+                self.prev_positions.push(*new.position());
 
-            let new_depth = depth - 1 + self.extension_value(&new);
+                let new_depth = depth - 1 + self.extension_value(&new);
 
-            // If this node can be reduced, search it with a reduced window.
-            if let Some(lmr_reduction) = self.reduction_value::<Node>(depth, &new, i) {
-                // Reduced depth should never exceed `new_depth` and should never be less than `1`.
-                let reduced_depth = (new_depth - lmr_reduction).max(1).min(new_depth);
+                // If this node can be reduced, search it with a reduced window.
+                if let Some(lmr_reduction) = self.reduction_value::<Node>(depth, &new, i) {
+                    // Reduced depth should never exceed `new_depth` and should never be less than `1`.
+                    let reduced_depth = (new_depth - lmr_reduction).max(1).min(new_depth);
 
-                // Search at a reduced depth with a null window
-                score = -self.negamax::<NonPvNode>(
-                    &new,
-                    reduced_depth,
-                    ply + 1,
-                    -bounds.null_alpha(),
-                    &mut local_pv,
-                );
+                    // Search at a reduced depth with a null window
+                    score = -self.negamax::<NonPvNode>(
+                        &new,
+                        reduced_depth,
+                        ply + 1,
+                        -bounds.null_alpha(),
+                        &mut local_pv,
+                    );
 
-                // If that failed *high* (raised alpha), re-search at the full depth with the null window
-                if score > bounds.alpha && reduced_depth < new_depth {
+                    // If that failed *high* (raised alpha), re-search at the full depth with the null window
+                    if score > bounds.alpha && reduced_depth < new_depth {
+                        score = -self.negamax::<NonPvNode>(
+                            &new,
+                            new_depth,
+                            ply + 1,
+                            -bounds.null_alpha(),
+                            &mut local_pv,
+                        );
+                    }
+                } else if !Node::PV || i > 0 {
+                    // All non-PV nodes get searched with a null window
                     score = -self.negamax::<NonPvNode>(
                         &new,
                         new_depth,
@@ -766,36 +776,27 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                         &mut local_pv,
                     );
                 }
-            } else if !Node::PV || i > 0 {
-                // All non-PV nodes get searched with a null window
-                score = -self.negamax::<NonPvNode>(
-                    &new,
-                    new_depth,
-                    ply + 1,
-                    -bounds.null_alpha(),
-                    &mut local_pv,
-                );
+
+                /****************************************************************************************************
+                 * Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
+                 *
+                 * We assume our move ordering is so good that the first move searched is then best available. So,
+                 * for every other move, we search with a null window and thus prune nodes easier. If we find
+                 * something that beats the null window, we have to do a costly re-search. However, this happens so
+                 * infrequently in practice that it ends up being an overall speedup.
+                 ****************************************************************************************************/
+                // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
+                if Node::PV && (i == 0 || score > bounds.alpha) {
+                    score =
+                        -self.negamax::<PvNode>(&new, new_depth, ply + 1, -bounds, &mut local_pv);
+                }
+
+                // We've now searched this node
+                self.nodes += 1;
+
+                // Pop the move from the history
+                self.prev_positions.pop();
             }
-
-            /****************************************************************************************************
-             * Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
-             *
-             * We assume our move ordering is so good that the first move searched is then best available. So,
-             * for every other move, we search with a null window and thus prune nodes easier. If we find
-             * something that beats the null window, we have to do a costly re-search. However, this happens so
-             * infrequently in practice that it ends up being an overall speedup.
-             ****************************************************************************************************/
-            // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
-            if Node::PV && (i == 0 || score > bounds.alpha) {
-                score = -self.negamax::<PvNode>(&new, new_depth, ply + 1, -bounds, &mut local_pv);
-            }
-
-            // We've now searched this node
-            self.nodes += 1;
-
-            // Pop the move from the history
-            self.prev_positions.pop();
-            // }
 
             /****************************************************************************************************
              * Score evaluation & bounds adjustments
@@ -812,7 +813,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                     // Only extend the PV if we're in a PV node
                     if Node::PV {
-                        // assert_pv_is_legal(game, *mv, &local_pv);
+                        assert_pv_is_legal(game, *mv, &local_pv);
                         pv.extend(*mv, &local_pv);
                     }
                 }
@@ -917,18 +918,18 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         for mv in captures {
             // Copy-make the new position
             let new = game.with_move_made(mv);
-            // let mut score = Score::DRAW;
+            let mut score = Score::DRAW;
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
-            // if Node::ROOT || !self.is_draw(&new) {
-            self.prev_positions.push(*new.position());
+            if Node::ROOT || !self.is_draw(&new) {
+                self.prev_positions.push(*new.position());
 
-            let score = -self.quiescence::<Node>(&new, _ply + 1, -bounds, &mut local_pv);
-            self.nodes += 1; // We've now searched this node
+                score = -self.quiescence::<Node>(&new, _ply + 1, -bounds, &mut local_pv);
+                self.nodes += 1; // We've now searched this node
 
-            self.prev_positions.pop();
-            // }
+                self.prev_positions.pop();
+            }
 
             /****************************************************************************************************
              * Score evaluation & bounds adjustments
@@ -979,7 +980,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         self.nodes >= self.config.max_nodes
     }
 
-    /*
     /// Checks if `game` is a repetition, comparing it to previous positions
     #[inline(always)]
     fn is_repetition(&self, game: &Game<V>) -> bool {
@@ -988,7 +988,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         let n = game.halfmove() as usize;
         for prev in self.prev_positions.iter().rev().take(n).skip(1).step_by(2) {
             if prev.key() == game.key() {
-                return true;
+                // TODO: FIx repetition detection
+                // return true;
             } else
             // The halfmove counter only resets on irreversible moves (captures, pawns, etc.) so it can't be a repetition.
             if prev.halfmove() == 0 {
@@ -1006,7 +1007,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             || game.can_draw_by_fifty()
             || game.can_draw_by_insufficient_material()
     }
-     */
 
     /// Saves the provided data to an entry in the TTable.
     #[inline(always)]
