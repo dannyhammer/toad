@@ -748,16 +748,14 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         for (i, mv) in moves.iter().enumerate() {
             // Copy-make the new position
             let new = game.with_move_made(*mv);
-            let mut score;
+            let mut score = Score::DRAW;
 
             // if Node::ROOT || !self.is_draw(&new) {
             // Append the move onto the history
             self.prev_positions.push(*new.position());
 
-            // let new_depth = depth - 1 + self.extension_value(&new);
-            let new_depth = depth - 1;
+            let new_depth = depth - 1 + self.extension_value(&new);
 
-            /*
             // If this node can be reduced, search it with a reduced window.
             if let Some(lmr_reduction) = self.reduction_value::<Node>(depth, &new, i) {
                 // Reduced depth should never exceed `new_depth` and should never be less than `1`.
@@ -783,16 +781,15 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     );
                 }
             } else if !Node::PV || i > 0 {
-                */
-            // All non-PV nodes get searched with a null window
-            score = -self.negamax::<NonPvNode>(
-                &new,
-                new_depth,
-                ply + 1,
-                -bounds.null_alpha(),
-                &mut local_pv,
-            );
-            // }
+                // All non-PV nodes get searched with a null window
+                score = -self.negamax::<NonPvNode>(
+                    &new,
+                    new_depth,
+                    ply + 1,
+                    -bounds.null_alpha(),
+                    &mut local_pv,
+                );
+            }
 
             /****************************************************************************************************
              * Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
@@ -1207,7 +1204,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         None
     }
 
-    /*
     /// Compute a reduction value (`R`) to apply to a given node's search depth, if possible.
     #[inline(always)]
     fn reduction_value<Node: NodeType>(
@@ -1238,9 +1234,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 lmr_reduction
             })
     }
-      */
 
-    /*
     /// Compute an extension value to apply to a given node's search depth.
     #[inline(always)]
     fn extension_value(&self, game: &Game<V>) -> u8 {
@@ -1251,7 +1245,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
         game.is_in_check() as u8
     }
-       */
 }
 
 /*
