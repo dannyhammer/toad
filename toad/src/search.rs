@@ -629,12 +629,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
          * work by just returning the evaluation stored in the transposition table.
          ****************************************************************************************************/
-        // Do not prune in PV nodes
-        if !Node::PV {
-            // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
-            if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
-                return tt_score;
-            }
+        // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
+        if let Some(tt_score) = self.probe_tt::<Node>(game.key(), depth, ply, bounds) {
+            return tt_score;
         }
 
         /****************************************************************************************************
@@ -1086,7 +1083,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     ///
     /// See [`TTableEntry::try_score`] for more.
     #[inline(always)]
-    fn probe_tt(
+    fn probe_tt<Node: NodeType>(
         &self,
         key: ZobristKey,
         depth: u8,
