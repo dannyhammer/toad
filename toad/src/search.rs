@@ -463,10 +463,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         if Log::DEBUG {
             let hits = self.ttable.hits;
-            let accesses = self.ttable.accesses;
-            let hit_rate = hits as f32 / accesses as f32 * 100.0;
+            let reads = self.ttable.reads;
+            let writes = self.ttable.writes;
+            let hit_rate = hits as f32 / reads as f32 * 100.0;
             let collisions = self.ttable.collisions;
-            let info = format!("TT stats: {hits} hits / {accesses} accesses ({hit_rate:.2}% hit rate), {collisions} collisions");
+            let info = format!("TT stats: {hits} hits / {reads} reads ({hit_rate:.2}% hit rate), {writes} writes, {collisions} collisions");
             self.send_string(info);
         }
 
@@ -947,6 +948,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             if old.is_some_and(|old| old.key != key) {
                 self.ttable.collisions += 1;
             }
+
+            // This was a write, regardless.
+            self.ttable.writes += 1;
         }
     }
 
@@ -957,7 +961,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         if Log::DEBUG {
             // Regardless whether this was a hit, it was still an access
-            self.ttable.accesses += 1;
+            self.ttable.reads += 1;
 
             // If a move was found, this was a hit
             if mv.is_some() {
@@ -1087,12 +1091,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     /// See [`TTableEntry::try_score`] for more.
     #[inline(always)]
     fn probe_tt(
-        &self,
+        &mut self,
         key: ZobristKey,
         depth: u8,
         ply: i32,
         bounds: SearchBounds,
     ) -> Option<Score> {
+        if Log::DEBUG {
+            self.ttable.reads += 1;
+        }
+
         // if-let chains are set to be stabilized in Rust 2024 (1.85.0): https://rust-lang.github.io/rfcs/2497-if-let-chains.html
         if let Some(tt_entry) = self.ttable.get(&key) {
             // Can only cut off if the existing entry came from a greater depth.

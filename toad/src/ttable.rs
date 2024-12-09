@@ -130,8 +130,11 @@ pub struct TTable {
     /// Number of collisions that have occurred since last clearing.
     pub(crate) collisions: usize,
 
-    /// Number of accesses that have occurred since last clearing.
-    pub(crate) accesses: usize,
+    /// Number of reads that have occurred since last clearing.
+    pub(crate) reads: usize,
+
+    /// Number of writes that have occurred since last clearing.
+    pub(crate) writes: usize,
 
     /// Number of hits that have occurred since last clearing.
     pub(crate) hits: usize,
@@ -161,17 +164,21 @@ impl TTable {
         Self {
             cache: vec![None; capacity],
             collisions: 0,
-            accesses: 0,
+            reads: 0,
+            writes: 0,
             hits: 0,
         }
     }
 
     /// Clears the entries of this [`TTable`].
+    ///
+    /// Also resets all collected stats.
     #[inline(always)]
     pub fn clear(&mut self) {
         self.cache.iter_mut().for_each(|entry| *entry = None);
         self.collisions = 0;
-        self.accesses = 0;
+        self.reads = 0;
+        self.writes = 0;
         self.hits = 0;
     }
 
