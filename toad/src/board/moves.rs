@@ -259,6 +259,7 @@ impl Move {
         Self(inner)
     }
 
+    /*
     /// Creates an "illegal" [`Move`], representing moving a piece to and from the same [`Square`].
     ///
     /// Playing this move on a [`Position`] is *not* the same as playing a [null move](https://www.chessprogramming.org/Null_Move).
@@ -273,6 +274,7 @@ impl Move {
     pub const fn illegal() -> Self {
         Self(NonZeroU16::MAX)
     }
+     */
 
     /// Retrieve the inner `u16` representation of this [`Move`].
     #[inline(always)]
@@ -691,6 +693,7 @@ impl fmt::Debug for Move {
     }
 }
 
+/*
 impl Default for Move {
     /// A "default" move is an illegal move. See [`Move::illegal`]
     ///
@@ -700,6 +703,7 @@ impl Default for Move {
         Self::illegal()
     }
 }
+ */
 
 impl<T: AsRef<str>> PartialEq<T> for Move {
     #[inline(always)]
