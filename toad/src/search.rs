@@ -544,6 +544,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             && self.is_searching.load(Ordering::Relaxed)
             && result.depth <= self.config.max_depth
         {
+            let now = Instant::now();
             /****************************************************************************************************
              * Aspiration Windows: https://www.chessprogramming.org/Aspiration_Windows
              ****************************************************************************************************/
@@ -603,6 +604,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             // Send search info to the GUI
             if Log::INFO {
                 self.send_end_of_search_info(&result);
+            }
+
+            // We assume the next search will take at least as long as the current search.
+            // So, if conducting another search will exceed our hard timeout, we exit early.
+            if self.config.starttime.elapsed() + now.elapsed() > self.config.hard_timeout {
+                break;
             }
 
             // Increase the depth for the next iteration
