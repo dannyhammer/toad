@@ -674,7 +674,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Start with a *really bad* initial score
         let mut best = Score::ALPHA;
-        let mut bestmove = None;
+        let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
@@ -952,9 +952,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         depth: u8,
         ply: i32,
     ) {
-        // If no bestmove was found, but there's already an entry at this key that has a bestmove, don't overwrite the existing bestmove to `None`!
-        let bestmove = bestmove.or_else(|| self.get_tt_bestmove(key));
-
         let entry = TTableEntry::new(key, bestmove, score, bounds, depth, ply);
         let old = self.ttable.store(entry);
 
