@@ -300,8 +300,8 @@ impl SearchConfig {
             if let Some(time) = time {
                 let inc = inc.unwrap_or(Duration::ZERO) / tune::time_inc_divisor!();
 
-                config.soft_timeout = time / tune::soft_timeout_divisor!() + inc;
-                config.hard_timeout = time / tune::hard_timeout_divisor!() + inc;
+                config.soft_timeout = (time / tune::soft_timeout_divisor!() + inc).min(time); // Don't exceed time limit with increment.
+                config.hard_timeout = time / tune::hard_timeout_divisor!();
             }
         }
 
