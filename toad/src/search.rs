@@ -464,6 +464,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // If there are no legal moves available, return immediately
         let moves = game.get_legal_moves();
+        /*
         let Some(first) = moves.first() else {
             // It's either a draw or a checkmate
             init_result.score = -Score::MATE * game.is_in_check() as i32;
@@ -482,9 +483,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             return init_result;
         };
+         */
 
         // Initialize `bestmove` to the first move available, so we can return *something* if we're low on time.
-        init_result.bestmove = Some(*first);
+        // init_result.bestmove = Some(*first);
+        init_result.bestmove = moves.first().copied();
 
         // If there is only 1 legal move available, it is forced, so don't waste time searching.
         if moves.len() == 1 {
