@@ -67,28 +67,29 @@ impl PrincipalVariation {
     /// An empty PV.
     const EMPTY: Self = Self(ArrayVec::new_const());
 
-    /// clears the moves of `self`.
+    /// Clears the moves of `self`.
     #[inline(always)]
     fn clear(&mut self) {
         self.0.clear();
     }
 
     /// Extend the contents of `self` with `mv` and the contents of `other`.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `mv` and `other` are longer than `self`'s capacity.
     #[inline(always)]
     fn extend(&mut self, mv: Move, other: &Self) {
         self.clear();
         self.0.push(mv);
-        for m in &other.0 {
-            self.0.push(*m);
-        }
-        // self.0
-        //     .try_extend_from_slice(&other.0)
-        //     .unwrap_or_else(|err| {
-        //         panic!(
-        //             "{err}: Attempted to exceed PV capacity of {MAX_DEPTH} pushing {mv:?} and {:?}",
-        //             &other.0
-        //         );
-        //     });
+        self.0
+            .try_extend_from_slice(&other.0)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "{err}: Attempted to exceed PV capacity of {MAX_DEPTH} pushing {mv:?} and {:?}",
+                    &other.0
+                );
+            });
     }
 }
 
@@ -335,18 +336,20 @@ impl SearchConfig {
             config.soft_timeout = movetime;
         } else {
             // Otherwise, search based on time remaining and increment
-            let (time, inc) = if game.side_to_move().is_white() {
+            let (remaining, inc) = if game.side_to_move().is_white() {
                 (options.wtime, options.winc)
             } else {
                 (options.btime, options.binc)
             };
 
             // Only calculate timeouts if a time was provided
-            if let Some(time) = time {
+            if let Some(remaining) = remaining {
                 let inc = inc.unwrap_or(Duration::ZERO) / tune::time_inc_divisor!();
 
-                config.soft_timeout = (time / tune::soft_timeout_divisor!() + inc).min(time); // Don't exceed time limit with increment.
-                config.hard_timeout = time / tune::hard_timeout_divisor!();
+                // Don't exceed time limit with increment.
+                config.soft_timeout =
+                    remaining.min(remaining / tune::soft_timeout_divisor!() + inc);
+                config.hard_timeout = remaining / tune::hard_timeout_divisor!();
             }
         }
 
@@ -675,6 +678,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Score {
+        // Declare a local principal variation for nodes found during this search.
+        let mut local_pv = PrincipalVariation::default();
+
+        // Clear any nodes in this PV, since we're searching from a new position
+        pv.clear();
+
         /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
          *
@@ -700,25 +709,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             return self.quiescence::<Node>(game, ply, bounds, pv);
         }
 
-        // Clear any nodes in this PV, since we're searching from a new position
-        pv.clear();
-
         // If we CAN prune this node by means other than the TT, do so
-        if let Some(score) = self.node_pruning_score::<Node>(
-            game,
-            depth,
-            ply,
-            bounds,
-            pv,
-            &mut PrincipalVariation::default(),
-        ) {
+        if let Some(score) =
+            self.node_pruning_score::<Node>(game, depth, ply, bounds, pv, &mut local_pv)
+        {
             return score;
         }
 
         // If there are no legal moves, it's either mate or a draw.
         let mut moves = game.get_legal_moves();
         if moves.is_empty() {
-            // pv.clear();
             return if game.is_in_check() {
                 // Offset by ply to prefer earlier mates
                 ply - Score::MATE
@@ -742,12 +742,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
 
         for (i, mv) in moves.iter().enumerate() {
+            // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
+            local_pv.clear();
+
             // Copy-make the new position
             let new = game.with_move_made(*mv);
             let mut score = Score::DRAW;
-
-            // Declare a local principal variation for nodes found after this move..
-            let mut local_pv = PrincipalVariation::default();
 
             if Node::ROOT || !self.is_draw(&new) {
                 // Append the move onto the history
@@ -863,8 +863,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        // Save this node to the TTable if and only if alpha was raised, meaning a bestmove was found.
-        // if bounds.alpha != original_alpha {
+        // Save this node to the TTable.
         self.save_to_tt(
             game.key(),
             bestmove,
@@ -873,7 +872,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             depth,
             ply,
         );
-        // }
 
         best
     }
@@ -889,6 +887,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Score {
+        // Declare a local principal variation for nodes found during this search.
+        let mut local_pv = PrincipalVariation::default();
         // Clear any nodes in this PV, since we're searching from a new position
         pv.clear();
 
@@ -929,12 +929,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
 
         for mv in captures {
+            // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
+            local_pv.clear();
+
             // Copy-make the new position
             let new = game.with_move_made(mv);
             let mut score = Score::DRAW;
-
-            // Declare a local principal variation for nodes found after this move.
-            let mut local_pv = PrincipalVariation::default();
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
@@ -978,8 +978,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        // Save this node to the TTable if and only if alpha was raised, meaning a bestmove was found.
-        // if bounds.alpha != original_alpha {
+        // Save this node to the TTable.
         self.save_to_tt(
             game.key(),
             bestmove,
@@ -988,7 +987,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             0,
             ply,
         );
-        // }
 
         best // fail-soft
     }
