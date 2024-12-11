@@ -825,20 +825,14 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Generate only the legal captures
         // TODO: Is there a more concise way of doing this?
         // The `game.into_iter().only_captures()` doesn't cover en passant...
-        let mut captures = game
+        let mut moves = game
             .get_legal_moves()
             .into_iter()
             .filter(Move::is_capture)
             .collect::<MoveList>();
 
-        // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
-        // So, if there are no captures available, just return the current evaluation.
-        if captures.is_empty() {
-            return stand_pat;
-        }
-
         let tt_move = self.get_tt_bestmove(game.key());
-        captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
+        moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
@@ -848,7 +842,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * Primary move loop
          ****************************************************************************************************/
 
-        for mv in captures {
+        for mv in moves {
             // Copy-make the new position
             let new = game.with_move_made(mv);
             let mut score = Score::DRAW;
