@@ -627,6 +627,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         ply: i32,
         mut bounds: SearchBounds,
     ) -> Score {
+        // Check if we can continue searching
+        if self.search_cancelled() {
+            return Score::DRAW;
+        }
+
         /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
          *
@@ -655,6 +660,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // If we CAN prune this node by means other than the TT, do so
         if let Some(score) = self.node_pruning_score::<Node>(game, depth, ply, bounds) {
             return score;
+        }
+
+        // Check if we can continue searching
+        if self.search_cancelled() {
+            return Score::DRAW;
         }
 
         // If there are no legal moves, it's either mate or a draw.
@@ -734,6 +744,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     score = -self.negamax::<PvNode>(&new, new_depth, ply + 1, -bounds);
                 }
 
+                // Check if we can continue searching
+                if self.search_cancelled() {
+                    return Score::DRAW;
+                }
+
                 // We've now searched this node
                 self.nodes += 1;
 
@@ -783,7 +798,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Check if we can continue searching
             if self.search_cancelled() {
-                break;
+                return Score::DRAW;
             }
         }
 
@@ -812,6 +827,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         ply: i32,
         mut bounds: SearchBounds,
     ) -> Score {
+        // Check if we can continue searching
+        if self.search_cancelled() {
+            return Score::DRAW;
+        }
+
         // Evaluate the current position, to serve as our baseline
         let stand_pat = game.eval();
 
@@ -859,6 +879,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 self.prev_positions.push(*new.position());
 
                 score = -self.quiescence::<Node>(&new, ply + 1, -bounds);
+
+                // Check if we can continue searching
+                if self.search_cancelled() {
+                    return Score::DRAW;
+                }
+
                 self.nodes += 1; // We've now searched this node
 
                 self.prev_positions.pop();
