@@ -18,8 +18,8 @@ use std::{
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Position, Score,
-    TTable, TTableEntry, Variant, ZobristKey,
+    tune, Color, Game, HistoryTable, LogLevel, Move, Piece, PieceKind, Position, Score, TTable,
+    TTableEntry, Variant, ZobristKey,
 };
 
 /// Maximum depth that can be searched
@@ -822,14 +822,22 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             bounds.alpha = stand_pat;
         }
 
-        // Generate only the legal captures
-        // TODO: Is there a more concise way of doing this?
-        // The `game.into_iter().only_captures()` doesn't cover en passant...
-        let mut moves = game
-            .get_legal_moves()
-            .into_iter()
-            .filter(Move::is_capture)
-            .collect::<MoveList>();
+        // Generate all legal moves to start, and we'll filter them next.
+        let moves = game.get_legal_moves();
+
+        // Filter down the moves that make this position not "quiet"
+        let mut moves = if game.is_in_check() {
+            // Generate all moves if in check
+            moves
+        } else {
+            moves.into_iter().filter(Move::is_capture).collect()
+        };
+
+        // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
+        // So, if there are no captures available, just return the current evaluation.
+        if moves.is_empty() {
+            return stand_pat;
+        }
 
         let tt_move = self.get_tt_bestmove(game.key());
         moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
