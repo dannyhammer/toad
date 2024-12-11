@@ -459,9 +459,25 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        let res = self.iterative_deepening(game);
+        let result = self.iterative_deepening(game);
 
         if Log::DEBUG {
+            if self.search_cancelled() {
+                if let Some(bestmove) = self.get_tt_bestmove(game.key()) {
+                    self.send_string(format!(
+                        "Search cancelled during depth {} while evaluating {} with score {}",
+                        result.depth,
+                        V::fmt_move(bestmove),
+                        result.score,
+                    ));
+                } else {
+                    self.send_string(format!(
+                        "Search cancelled during depth {} with score {} and no bestmove",
+                        result.depth, result.score,
+                    ));
+                }
+            }
+
             let hits = self.ttable.hits;
             let reads = self.ttable.reads;
             let writes = self.ttable.writes;
@@ -474,7 +490,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Search has ended; send bestmove
         if Log::INFO {
             self.send_response(UciResponse::BestMove {
-                bestmove: res.bestmove.map(V::fmt_move),
+                bestmove: result.bestmove.map(V::fmt_move),
                 ponder: None,
             });
         }
@@ -482,7 +498,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Search has concluded, alert other thread(s) that we are no longer searching
         self.is_searching.store(false, Ordering::Relaxed);
 
-        res
+        result
     }
 
     /// Sends a [`UciResponse`] to `stdout`.
@@ -540,7 +556,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
 
         // The actual Iterative Deepening loop
-        'iterative_deepening: while self.config.starttime.elapsed() < self.config.soft_timeout
+        while self.config.starttime.elapsed() < self.config.soft_timeout
             && self.is_searching.load(Ordering::Relaxed)
             && result.depth <= self.config.max_depth
         {
@@ -552,7 +568,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             let mut window = AspirationWindow::new(result.score, result.depth);
 
             // Get a score from the a/b search while using aspiration windows
-            let score = 'aspiration_window: loop {
+            let score = loop {
                 // Start a new search at the current depth
                 let score = self.negamax::<RootNode>(game, result.depth, 0, window.bounds);
 
@@ -563,27 +579,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     window.widen_up(score, result.depth);
                 } else {
                     // Otherwise, the window is OK and we can use the score
-                    break 'aspiration_window score;
+                    break score;
                 }
 
-                // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
-                // Instead, we should break out of the ID loop, using the result from the previous iteration
+                // If the search was cancelled, we need to exit immediately.
                 if self.search_cancelled() {
-                    if Log::DEBUG {
-                        if let Some(bestmove) = self.get_tt_bestmove(game.key()) {
-                            self.send_string(format!(
-                                "Search cancelled during depth {} while evaluating {} with score {score}",
-                                result.depth,
-                                V::fmt_move(bestmove),
-                                ));
-                        } else {
-                            self.send_string(format!(
-                            "Search cancelled during depth {} with score {score} and no bestmove",
-                            result.depth,
-                        ));
-                        }
-                    }
-                    break 'iterative_deepening;
+                    break Score::DRAW;
                 }
             };
 
@@ -603,6 +604,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             // Send search info to the GUI
             if Log::INFO {
                 self.send_end_of_search_info(&result);
+            }
+
+            // If the search was cancelled, we need to exit immediately.
+            if self.search_cancelled() {
+                break;
             }
 
             // Increase the depth for the next iteration
@@ -907,11 +913,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 if score >= bounds.beta {
                     break;
                 }
-            }
-
-            // Check if we can continue searching
-            if self.search_cancelled() {
-                break;
             }
         }
 
@@ -1287,6 +1288,7 @@ pub fn print_mvv_lva_table() {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::*;
 
@@ -1379,5 +1381,62 @@ mod tests {
 
         let res = run_search(fen, config);
         assert!(res.bestmove.is_some());
+    }
+
+    #[test]
+    fn test_go_nodes() {
+        let fen = FEN_KIWIPETE;
+
+        let node_limits = [0, 1, 10, 17, 126, 192, 1748, 182048, 1928392];
+
+        for max_nodes in node_limits {
+            let config = SearchConfig {
+                max_nodes,
+                ..Default::default()
+            };
+
+            let res = run_search(fen, config);
+
+            assert_eq!(res.nodes, max_nodes);
+            assert!(res.depth < MAX_DEPTH); // Ensure the ID didn't loop forever.
+        }
+    }
+
+    #[test]
+    fn test_go_nodes_cutoff_search_still_gives_good_result() {
+        // d5e6 is a good capture, but will lead to mate on the next iteration.
+        let fen = "k6r/8/4q3/3P4/8/8/PP6/K7 w - - 0 1";
+
+        // Loop until we reach a depth that does NOT think d5e6 is the best move
+        let mut max_depth = 1;
+        let max_nodes = loop {
+            let config = SearchConfig {
+                max_depth,
+                ..Default::default()
+            };
+
+            let res = run_search(fen, config);
+            if res.bestmove.unwrap() != "d5e6" {
+                break res.nodes;
+            }
+
+            max_depth += 1;
+        };
+
+        // Now run a search on that position, stopping *just* before we would have found a move better than d5e6
+        let config = SearchConfig {
+            max_nodes: max_nodes - 1,
+            ..Default::default()
+        };
+        let res = run_search(fen, config);
+        assert_eq!(res.bestmove.unwrap(), "d5e6");
+
+        // Do the same, but stop just *after* the node count that lets us find a better move than d5e6
+        let config = SearchConfig {
+            max_nodes: max_nodes + 1,
+            ..Default::default()
+        };
+        let res = run_search(fen, config);
+        assert_ne!(res.bestmove.unwrap(), "d5e6");
     }
 }
