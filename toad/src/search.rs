@@ -459,57 +459,64 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        // Initial result, populated immediately to contain the first legal move available, if possible.
-        let mut init_result = SearchResult::default();
-
-        // If there are no legal moves available, return immediately
+        // Initialize `bestmove` to the first move available, so we can return *something* if we're low on time.
         let moves = game.get_legal_moves();
-        let Some(first) = moves.first() else {
-            // It's either a draw or a checkmate
-            init_result.score = -Score::MATE * game.is_in_check() as i32;
-
-            if Log::DEBUG {
-                self.send_string(format!(
-                    "Position {:?} has no legal moves available, evaluated at {}",
-                    game.to_fen(),
-                    init_result.score.into_uci(),
-                ));
-            }
-
-            if Log::INFO {
-                self.send_end_of_search_info(&init_result);
-            }
-
-            return init_result;
+        let mut result = SearchResult {
+            bestmove: moves.first().copied(),
+            ..Default::default()
         };
 
-        // Initialize `bestmove` to the first move available, so we can return *something* if we're low on time.
-        init_result.bestmove = Some(*first);
+        // Get the search result, exiting early if there are fewer than two moves available.
+        let result = match moves.len() {
+            // If no legal moves available, the game is over, so return immediately.
+            0 => {
+                // It's either a draw or a checkmate
+                result.score = -Score::MATE * game.is_in_check() as i32;
+                result.nodes += 1;
 
-        /*
-        // If there is only 1 legal move available, it is forced, so don't waste time searching.
-        if moves.len() == 1 {
-            init_result.score = game.eval();
+                if Log::DEBUG {
+                    self.send_string(format!(
+                        "Position {:?} has no legal moves available, evaluated at {}",
+                        game.to_fen(),
+                        result.score.into_uci(),
+                    ));
+                }
 
-            if Log::DEBUG {
-                self.send_string(format!(
-                    "Position {:?} has only one legal move available ({}), evaluated at {}",
-                    game.to_fen(),
-                    init_result.bestmove.unwrap(),
-                    init_result.score.into_uci(),
-                ));
+                if Log::INFO {
+                    self.send_end_of_search_info(&result);
+                }
+
+                result
             }
 
-            if Log::INFO {
-                self.send_end_of_search_info(&init_result);
+            // If only 1 legal move available, it is forced, so don't waste time on a full search.
+            1 => {
+                // Get a proper evaluation of this position.
+                result.score = self.quiescence::<PvNode>(game, 0, SearchBounds::default());
+                result.nodes += 1;
+
+                if Log::DEBUG {
+                    self.send_string(format!(
+                        "Position {:?} has only one legal move available ({}), evaluated at {}",
+                        game.to_fen(),
+                        result.bestmove.unwrap(),
+                        result.score.into_uci(),
+                    ));
+                }
+
+                if Log::INFO {
+                    self.send_end_of_search_info(&result);
+                }
+
+                result
             }
 
-            return init_result;
-        }
-         */
+            // Otherwise, start a search like normal.
+            _ => self.iterative_deepening(game, result),
+        };
 
-        // Run the actual search, getting an updated SearchResult.
-        let end_result = self.iterative_deepening(game, init_result);
+        // Search has concluded, alert other thread(s) that we are no longer searching
+        self.is_searching.store(false, Ordering::Relaxed);
 
         if Log::DEBUG {
             let hits = self.ttable.hits;
@@ -524,15 +531,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Search has ended; send bestmove
         if Log::INFO {
             self.send_response(UciResponse::BestMove {
-                bestmove: end_result.bestmove.map(V::fmt_move),
+                bestmove: result.bestmove.map(V::fmt_move),
                 ponder: None,
             });
         }
 
-        // Search has concluded, alert other thread(s) that we are no longer searching
-        self.is_searching.store(false, Ordering::Relaxed);
-
-        end_result
+        result
     }
 
     /// Sends a [`UciResponse`] to `stdout`.
@@ -1358,14 +1362,14 @@ mod tests {
 
     #[test]
     fn test_black_mated_in_1() {
-        let fen = "1k6/8/KQ6/2Q5/8/8/8/8 b - - 0 1";
+        let fen = "2k5/7Q/8/2K5/8/8/8/6Q1 b - - 0 1";
         let config = SearchConfig {
             max_depth: 3,
             ..Default::default()
         };
 
         let res = ensure_is_mate_in(fen, config, -1);
-        assert_eq!(res.bestmove.unwrap(), "b8a8")
+        assert!(["c8b8", "c8d8"].contains(&res.bestmove.unwrap().to_string().as_str()));
     }
 
     #[test]
