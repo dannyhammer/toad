@@ -99,7 +99,6 @@ In addition to the above UCI commands, Toad also supports the following custom c
 
 ```
 Commands:
-  await          Await the current search, blocking until it completes
   bench          Run a benchmark with the provided parameters
   changevariant  Change the variant of chess being played, or display the current variant
   display        Print a visual representation of the current board state
@@ -116,6 +115,7 @@ Commands:
   psqt           Outputs the Piece-Square table value for the provided piece at the provided square, scaled with the endgame weight
   splitperft     Performs a split perft on the current position at the supplied depth
   take           Remove the piece at the provided square
+  wait           Await the current search, blocking until it completes
   help           Print this message or the help of the given subcommand(s)
 ```
 
