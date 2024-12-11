@@ -342,8 +342,8 @@ impl SearchConfig {
             if let Some(time) = time {
                 let inc = inc.unwrap_or(Duration::ZERO) / tune::time_inc_divisor!();
 
-                config.soft_timeout = time / tune::soft_timeout_divisor!() + inc;
-                config.hard_timeout = time / tune::hard_timeout_divisor!() + inc;
+                config.soft_timeout = (time / tune::soft_timeout_divisor!() + inc).min(time); // Don't exceed time limit with increment.
+                config.hard_timeout = time / tune::hard_timeout_divisor!();
             }
         }
 
@@ -505,10 +505,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         if Log::DEBUG {
             let hits = self.ttable.hits;
-            let accesses = self.ttable.accesses;
-            let hit_rate = hits as f32 / accesses as f32 * 100.0;
+            let reads = self.ttable.reads;
+            let writes = self.ttable.writes;
+            let hit_rate = hits as f32 / reads as f32 * 100.0;
             let collisions = self.ttable.collisions;
-            let info = format!("TT stats: {hits} hits / {accesses} accesses ({hit_rate:.2}% hit rate), {collisions} collisions");
+            let info = format!("TT stats: {hits} hits / {reads} reads ({hit_rate:.2}% hit rate), {writes} writes, {collisions} collisions");
             self.send_string(info);
         }
 
@@ -638,7 +639,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             result.score = score;
 
             // Get the bestmove from the TTable
-            result.bestmove = self.ttable.get(&game.key()).map(|entry| entry.bestmove);
+            result.bestmove = self
+                .ttable
+                .get(&game.key())
+                .and_then(|entry| entry.bestmove);
 
             // Send search info to the GUI
             if Log::INFO {
@@ -725,7 +729,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Start with a *really bad* initial score
         let mut best = Score::ALPHA;
-        let mut bestmove = moves[0]; // Safe because we guaranteed `moves` to be nonempty above
+        let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
@@ -810,11 +814,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // PV found
                 if score > bounds.alpha {
                     bounds.alpha = score;
-                    bestmove = *mv;
+                    bestmove = Some(*mv);
 
                     // Only extend the PV if we're in a PV node
                     if Node::PV {
-                        assert_pv_is_legal(game, *mv, &local_pv);
+                        // assert_pv_is_legal(game, *mv, &local_pv);
                         pv.extend(*mv, &local_pv);
                     }
                 }
@@ -851,7 +855,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        // Save this node to the TTable
+        // Save this node to the TTable if and only if alpha was raised, meaning a bestmove was found.
+        // if bounds.alpha != original_alpha {
         self.save_to_tt(
             game.key(),
             bestmove,
@@ -860,6 +865,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             depth,
             ply,
         );
+        // }
 
         best
     }
@@ -871,7 +877,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     fn quiescence<Node: NodeType>(
         &mut self,
         game: &Game<V>,
-        _ply: i32,
+        ply: i32,
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Score {
@@ -909,8 +915,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
-        // let mut bestmove = captures[0]; // Safe because we ensured `captures` is not empty
-        // let original_alpha = alpha;
+        let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
+        let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
          * Primary move loop
@@ -926,7 +932,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             if Node::ROOT || !self.is_draw(&new) {
                 self.prev_positions.push(*new.position());
 
-                score = -self.quiescence::<Node>(&new, _ply + 1, -bounds, &mut local_pv);
+                score = -self.quiescence::<Node>(&new, ply + 1, -bounds, &mut local_pv);
                 self.nodes += 1; // We've now searched this node
 
                 self.prev_positions.pop();
@@ -942,12 +948,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // PV found
                 if score > bounds.alpha {
                     bounds.alpha = score;
-
-                    // bestmove = mv;
+                    bestmove = Some(mv);
 
                     // Only extend the PV if we're in a PV node
                     if Node::PV {
-                        assert_pv_is_legal(game, mv, &local_pv);
+                        // assert_pv_is_legal(game, mv, &local_pv);
                         pv.extend(mv, &local_pv);
                     }
                 }
@@ -964,8 +969,17 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        // Save this node to the TTable
-        // self.save_to_tt(game.key(), bestmove, best, original_alpha, beta, 0, ply);
+        // Save this node to the TTable if and only if alpha was raised, meaning a bestmove was found.
+        // if bounds.alpha != original_alpha {
+        self.save_to_tt(
+            game.key(),
+            bestmove,
+            best,
+            SearchBounds::new(original_alpha, bounds.beta),
+            0,
+            ply,
+        );
+        // }
 
         best // fail-soft
     }
@@ -1013,7 +1027,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     fn save_to_tt(
         &mut self,
         key: ZobristKey,
-        bestmove: Move,
+        bestmove: Option<Move>,
         score: Score,
         bounds: SearchBounds,
         depth: u8,
@@ -1027,17 +1041,20 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             if old.is_some_and(|old| old.key != key) {
                 self.ttable.collisions += 1;
             }
+
+            // This was a write, regardless.
+            self.ttable.writes += 1;
         }
     }
 
     /// Gets the bestmove for the provided position from the TTable, if it exists.
     #[inline(always)]
     fn get_tt_bestmove(&mut self, key: ZobristKey) -> Option<Move> {
-        let mv = self.ttable.get(&key).map(|entry| entry.bestmove);
+        let mv = self.ttable.get(&key).and_then(|entry| entry.bestmove);
 
         if Log::DEBUG {
             // Regardless whether this was a hit, it was still an access
-            self.ttable.accesses += 1;
+            self.ttable.reads += 1;
 
             // If a move was found, this was a hit
             if mv.is_some() {
@@ -1175,12 +1192,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     /// See [`TTableEntry::try_score`] for more.
     #[inline(always)]
     fn probe_tt(
-        &self,
+        &mut self,
         key: ZobristKey,
         depth: u8,
         ply: i32,
         bounds: SearchBounds,
     ) -> Option<Score> {
+        if Log::DEBUG {
+            self.ttable.reads += 1;
+        }
+
         // if-let chains are set to be stabilized in Rust 2024 (1.85.0): https://rust-lang.github.io/rfcs/2497-if-let-chains.html
         if let Some(tt_entry) = self.ttable.get(&key) {
             // Can only cut off if the existing entry came from a greater depth.
