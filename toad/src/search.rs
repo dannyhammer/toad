@@ -70,7 +70,8 @@ impl PrincipalVariation {
     /// clears the moves of `self`.
     #[inline(always)]
     fn clear(&mut self) {
-        self.0.clear();
+        // self.0.clear();
+        unsafe { self.0.set_len(0) };
     }
 
     /// Extend the contents of `self` with `mv` and the contents of `other`.
@@ -78,14 +79,17 @@ impl PrincipalVariation {
     fn extend(&mut self, mv: Move, other: &Self) {
         self.clear();
         self.0.push(mv);
-        self.0
-            .try_extend_from_slice(&other.0)
-            .unwrap_or_else(|err| {
-                panic!(
-                    "{err}: Attempted to exceed PV capacity of {MAX_DEPTH} pushing {mv:?} and {:?}",
-                    &other.0
-                );
-            });
+        for m in &other.0 {
+            self.0.push(*m);
+        }
+        // self.0
+        //     .try_extend_from_slice(&other.0)
+        //     .unwrap_or_else(|err| {
+        //         panic!(
+        //             "{err}: Attempted to exceed PV capacity of {MAX_DEPTH} pushing {mv:?} and {:?}",
+        //             &other.0
+        //         );
+        //     });
     }
 }
 
@@ -672,9 +676,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Score {
-        // Declare a local principal variation for nodes found in this search.
-        let mut local_pv = PrincipalVariation::default();
-
         /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
          *
@@ -704,9 +705,14 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         pv.clear();
 
         // If we CAN prune this node by means other than the TT, do so
-        if let Some(score) =
-            self.node_pruning_score::<Node>(game, depth, ply, bounds, pv, &mut local_pv)
-        {
+        if let Some(score) = self.node_pruning_score::<Node>(
+            game,
+            depth,
+            ply,
+            bounds,
+            pv,
+            &mut PrincipalVariation::default(),
+        ) {
             return score;
         }
 
@@ -737,6 +743,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
 
         for (i, mv) in moves.iter().enumerate() {
+            // Declare a local principal variation for nodes found in this search.
+            let mut local_pv = PrincipalVariation::default();
             // Copy-make the new position
             let new = game.with_move_made(*mv);
             let mut score = Score::DRAW;
@@ -818,7 +826,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                     // Only extend the PV if we're in a PV node
                     if Node::PV {
-                        // assert_pv_is_legal(game, *mv, &local_pv);
+                        assert_pv_is_legal(game, *mv, &local_pv);
                         pv.extend(*mv, &local_pv);
                     }
                 }
@@ -881,6 +889,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Score {
+        // Clear any nodes in this PV, since we're searching from a new position
+        pv.clear();
+
         // Evaluate the current position, to serve as our baseline
         let stand_pat = game.eval();
 
@@ -890,11 +901,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         } else if stand_pat > bounds.alpha {
             bounds.alpha = stand_pat;
         }
-
-        // Declare a local principal variation for nodes found in this search.
-        let mut local_pv = PrincipalVariation::default();
-        // Clear any nodes in this PV, since we're searching from a new position
-        pv.clear();
 
         // Generate only the legal captures
         // TODO: Is there a more concise way of doing this?
@@ -923,6 +929,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
 
         for mv in captures {
+            // Declare a local principal variation for nodes found in this search.
+            let mut local_pv = PrincipalVariation::default();
+
             // Copy-make the new position
             let new = game.with_move_made(mv);
             let mut score = Score::DRAW;
@@ -952,7 +961,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                     // Only extend the PV if we're in a PV node
                     if Node::PV {
-                        // assert_pv_is_legal(game, mv, &local_pv);
+                        assert_pv_is_legal(game, mv, &local_pv);
                         pv.extend(mv, &local_pv);
                     }
                 }
