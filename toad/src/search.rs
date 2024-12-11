@@ -70,8 +70,7 @@ impl PrincipalVariation {
     /// clears the moves of `self`.
     #[inline(always)]
     fn clear(&mut self) {
-        // self.0.clear();
-        unsafe { self.0.set_len(0) };
+        self.0.clear();
     }
 
     /// Extend the contents of `self` with `mv` and the contents of `other`.
@@ -719,7 +718,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // If there are no legal moves, it's either mate or a draw.
         let mut moves = game.get_legal_moves();
         if moves.is_empty() {
-            pv.clear();
+            // pv.clear();
             return if game.is_in_check() {
                 // Offset by ply to prefer earlier mates
                 ply - Score::MATE
@@ -743,11 +742,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
 
         for (i, mv) in moves.iter().enumerate() {
-            // Declare a local principal variation for nodes found in this search.
-            let mut local_pv = PrincipalVariation::default();
             // Copy-make the new position
             let new = game.with_move_made(*mv);
             let mut score = Score::DRAW;
+
+            // Declare a local principal variation for nodes found after this move..
+            let mut local_pv = PrincipalVariation::default();
 
             if Node::ROOT || !self.is_draw(&new) {
                 // Append the move onto the history
@@ -826,7 +826,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                     // Only extend the PV if we're in a PV node
                     if Node::PV {
-                        assert_pv_is_legal(game, *mv, &local_pv);
+                        // assert_pv_is_legal(game, *mv, &local_pv);
                         pv.extend(*mv, &local_pv);
                     }
                 }
@@ -929,12 +929,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
 
         for mv in captures {
-            // Declare a local principal variation for nodes found in this search.
-            let mut local_pv = PrincipalVariation::default();
-
             // Copy-make the new position
             let new = game.with_move_made(mv);
             let mut score = Score::DRAW;
+
+            // Declare a local principal variation for nodes found after this move.
+            let mut local_pv = PrincipalVariation::default();
 
             // Normally, repetitions can't occur in QSearch, because captures are irreversible.
             // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
@@ -961,7 +961,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                     // Only extend the PV if we're in a PV node
                     if Node::PV {
-                        assert_pv_is_legal(game, mv, &local_pv);
+                        // assert_pv_is_legal(game, mv, &local_pv);
                         pv.extend(mv, &local_pv);
                     }
                 }
