@@ -5,7 +5,8 @@
  */
 
 use std::{
-    fmt, io,
+    fmt,
+    io::{self, Write},
     ops::ControlFlow,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -25,7 +26,7 @@ use crate::{
 };
 
 /// Default depth at which to run the benchmark searches.
-const BENCH_DEPTH: u8 = 11;
+const BENCH_DEPTH: u8 = 9;
 
 /// The Toad chess engine.
 #[derive(Debug)]
@@ -305,15 +306,21 @@ impl Engine {
         };
 
         let benches = BENCHMARK_FENS;
-        let num_tests = benches.len();
         let mut nodes = 0;
 
-        // Run a fixed search on each position
-        for (i, epd) in benches.into_iter().enumerate() {
-            // Parse the FEN and the total node count
+        // Padding for printing FENs
+        let width = benches.iter().map(|fen| fen.len()).max().unwrap();
 
-            let fen = epd.split(';').next().unwrap();
-            println!("Benchmark position {}/{}: {fen}", i + 1, num_tests);
+        println!(
+            "Running fixed-depth search (d={}) on {} positions",
+            config.max_depth,
+            benches.len()
+        );
+
+        // Run a fixed search on each position
+        for (i, fen) in benches.into_iter().enumerate() {
+            print!("{:>2}/{:>2}: {fen:<width$} := ", i + 1, benches.len());
+            std::io::stdout().lock().flush().unwrap(); // flush stdout so the node count will appear on the same line after search concludes
 
             // Set up the game and start the search
             let game = self.position(Some(fen), []).unwrap();
@@ -324,9 +331,10 @@ impl Engine {
                 panic!("Search thread panicked while running benchmarks on fen {fen}");
             };
             nodes += res.nodes;
+            println!("{}", res.nodes);
 
-            // Bench is on different positions, so hash tables are not likely to contain useful info.
-            self.clear_hash_tables();
+            // Each bench is essentially a new game, so reset hash tables, etc.
+            self.new_game::<Standard>();
         }
 
         // Compute results
@@ -338,14 +346,14 @@ impl Engine {
         if pretty {
             // Display the results in a nice table
             println!();
-            println!("+--- Benchmark Complete ---+");
-            println!("| time (ms)  : {ms:<12}|");
-            println!("| nodes      : {nodes:<12}|");
-            println!("| nps        : {nps:<12}|");
-            println!("| Mnps       : {m_nps:<12.2}|");
-            println!("+--------------------------+");
+            println!("+-- Benchmark Complete --+");
+            println!("| time (ms)  {ms:<12}|");
+            println!("|     nodes  {nodes:<12}|");
+            println!("|       nps  {nps:<12}|");
+            println!("|      Mnps  {m_nps:<12.2}|");
+            println!("+------------------------+");
         } else {
-            println!("{nodes} nodes {nps} nps");
+            println!("{nodes} nodes / {elapsed:?} := {nps} nps");
         }
 
         // Re-set the internal game state.

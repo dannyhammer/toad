@@ -3,4 +3,8 @@ resolver = "2"
 members = ["toad"]
 
 [profile.release]
+panic = 'abort'
+strip = true
 lto = true
+codegen-units = 1
+overflow-checks = true
