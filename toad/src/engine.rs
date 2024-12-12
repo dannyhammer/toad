@@ -150,8 +150,6 @@ impl Engine {
             }
 
             match cmd {
-                EngineCommand::Await => _ = self.stop_search(),
-
                 EngineCommand::Bench { depth, pretty } => self.bench(depth, pretty),
 
                 EngineCommand::ChangeVariant { variant } => {
@@ -241,6 +239,8 @@ impl Engine {
                         eprintln!("Error: {e:#}");
                     }
                 }
+
+                EngineCommand::Wait => _ = self.stop_search(),
             };
         }
 
