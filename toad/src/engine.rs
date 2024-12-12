@@ -96,10 +96,12 @@ impl Engine {
     /// Sends an [`EngineCommand`] to the engine to be executed.
     #[inline(always)]
     pub fn send_command(&self, command: EngineCommand) {
-        // Safe unwrap: `send` can only fail if it's corresponding receiver doesn't exist,
-        //  and the only way our engine's `Receiver` can no longer exist is when our engine
-        //  doesn't exist either, so this is always safe.
-        self.sender.send(command).unwrap();
+        // Safety: `send` can only fail if it's corresponding receiver doesn't exist,
+        //  and the only way our engine's `Receiver` can no longer exist is when our
+        //  engine doesn't exist either, so this is always safe.
+        self.sender
+            .send(command)
+            .expect("Failed to send a command to the engine via channels.");
     }
 
     /// Entrypoint of the engine.
@@ -145,9 +147,9 @@ impl Engine {
 
         // Execute commands as they are received
         while let Ok(cmd) = self.receiver.recv() {
-            if self.debug {
-                println!("info string Received command {cmd:?}");
-            }
+            // if self.debug {
+            //     println!("info string Received command {cmd:?}");
+            // }
 
             match cmd {
                 EngineCommand::Bench { depth, pretty } => self.bench(depth, pretty),
@@ -589,8 +591,12 @@ impl Engine {
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
             // Lock the hash tables at the start of the search so that only the search thread may modify them
-            let mut ttable = ttable.lock().unwrap();
-            let mut history = history.lock().unwrap();
+            let mut ttable = ttable
+                .lock()
+                .expect("A thread holding the ttable panicked.");
+            let mut history = history
+                .lock()
+                .expect("A thread holding the history table panicked.");
 
             // Start the search, returning the result when completed.
             Search::<Log, V>::new(

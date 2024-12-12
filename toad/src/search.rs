@@ -32,8 +32,8 @@ enum SearchCancelled {
     /// Search ran out of time.
     ///
     /// Contains the amount of time since the timeout was exceeded.
-    #[error("Exceeded hard timeout by {0:?}")]
-    HardTimeout(Duration),
+    #[error("Exceeded hard timeout of {0:?} by {1:?}")]
+    HardTimeout(Duration, Duration),
 
     /// Met or exceeded the maximum number of nodes allowed.
     ///
@@ -461,16 +461,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         if Log::DEBUG {
             self.send_string(format!("Starting search on {:?}", game.to_fen()));
 
-            let soft = self.config.soft_timeout.as_millis();
-            let hard = self.config.hard_timeout.as_millis();
+            let soft = self.config.soft_timeout;
+            let hard = self.config.hard_timeout;
             let nodes = self.config.max_nodes;
             let depth = self.config.max_depth;
 
-            if soft < Duration::MAX.as_millis() {
-                self.send_string(format!("Soft timeout := {soft}ms"));
+            if soft < Duration::MAX {
+                self.send_string(format!("Soft timeout := {soft:?}"));
             }
-            if hard < Duration::MAX.as_millis() {
-                self.send_string(format!("Hard timeout := {hard}ms"));
+            if hard < Duration::MAX {
+                self.send_string(format!("Hard timeout := {hard:?}"));
             }
             if nodes < u64::MAX {
                 self.send_string(format!("Max nodes := {nodes} nodes"));
@@ -493,7 +493,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         if Log::DEBUG {
             if let Err(reason) = self.search_cancelled() {
-                if let Some(bestmove) = self.get_tt_bestmove(game.key()) {
+                if let Some(bestmove) = result.bestmove {
                     self.send_string(format!(
                         "Search cancelled during depth {} while evaluating {} with score {}. Reason: {reason}",
                         result.depth,
@@ -952,7 +952,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             .elapsed()
             .checked_sub(self.config.hard_timeout)
         {
-            return Err(SearchCancelled::HardTimeout(diff));
+            return Err(SearchCancelled::HardTimeout(self.config.hard_timeout, diff));
         }
 
         // Condition 2: The search was stopped by an external factor, like the `stop` command
