@@ -157,7 +157,7 @@ impl Default for SearchBounds {
     /// Default [`SearchBounds`] are a `(-infinity, infinity)`.
     #[inline(always)]
     fn default() -> Self {
-        Self::new(Score::ALPHA, Score::BETA)
+        Self::new(-Score::INF, Score::INF)
     }
 }
 
@@ -199,8 +199,8 @@ impl AspirationWindow {
             // Otherwise we build a window around the provided score.
             let delta = Self::delta(depth);
             SearchBounds::new(
-                (score - delta).max(Score::ALPHA),
-                (score + delta).min(Score::BETA),
+                (score - delta).max(-Score::INF),
+                (score + delta).min(Score::INF),
             )
         };
 
@@ -220,8 +220,8 @@ impl AspirationWindow {
         let delta = Self::delta(depth) * (1 << (self.alpha_fails + 1));
 
         // By convention, we widen both bounds on a fail low.
-        self.bounds.beta = ((self.bounds.alpha + self.bounds.beta) / 2).min(Score::BETA);
-        self.bounds.alpha = (score - delta).max(Score::ALPHA);
+        self.bounds.beta = ((self.bounds.alpha + self.bounds.beta) / 2).min(Score::INF);
+        self.bounds.alpha = (score - delta).max(-Score::INF);
 
         // Increase number of failures
         self.alpha_fails += 1;
@@ -234,7 +234,7 @@ impl AspirationWindow {
         let delta = Self::delta(depth) * (1 << (self.beta_fails + 1));
 
         // Widen the beta bound
-        self.bounds.beta = (score + delta).min(Score::BETA);
+        self.bounds.beta = (score + delta).min(Score::INF);
 
         // Increase number of failures
         self.beta_fails += 1;
@@ -243,13 +243,13 @@ impl AspirationWindow {
     /// Returns `true` if `score` fails low, meaning it is below `alpha` and the window must be expanded downwards.
     #[inline(always)]
     fn fails_low(&self, score: Score) -> bool {
-        self.bounds.alpha != Score::ALPHA && score <= self.bounds.alpha
+        self.bounds.alpha != -Score::INF && score <= self.bounds.alpha
     }
 
     /// Returns `true` if `score` fails high, meaning it is above `beta` and the window must be expanded upwards.
     #[inline(always)]
     fn fails_high(&self, score: Score) -> bool {
-        self.bounds.beta != Score::BETA && score >= self.bounds.beta
+        self.bounds.beta != Score::INF && score >= self.bounds.beta
     }
 }
 
@@ -280,7 +280,7 @@ impl Default for SearchResult {
         Self {
             nodes: 0,
             bestmove: None,
-            score: Score::ALPHA,
+            score: -Score::INF,
             depth: 1,
             pv: PrincipalVariation::EMPTY,
         }
@@ -792,7 +792,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         // Start with a *really bad* initial score
-        let mut best = Score::ALPHA;
+        let mut best = -Score::INF;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
 
