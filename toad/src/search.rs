@@ -515,7 +515,14 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Initialize `bestmove` to the first move available, so we can return *something* if we're low on time.
         let moves = game.get_legal_moves();
-        let mut result = SearchResult::default();
+        let mut pv = ArrayVec::new();
+        if let Some(first) = moves.first().copied() {
+            pv.push(first);
+        }
+        let mut result = SearchResult {
+            pv: PrincipalVariation(pv),
+            ..Default::default()
+        };
 
         // Get the search result, exiting early if there are fewer than two moves available.
         let result = match moves.len() {
@@ -587,11 +594,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Search has ended; send bestmove
         if Log::INFO {
             self.send_response(UciResponse::BestMove {
-                // If a bestmove wasn't found, use the first generated legal move.
-                bestmove: result
-                    .bestmove()
-                    .or(moves.first().copied())
-                    .map(V::fmt_move),
+                bestmove: result.bestmove().map(V::fmt_move),
                 ponder: None,
             });
         }
