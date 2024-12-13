@@ -259,9 +259,6 @@ pub struct SearchResult {
     /// Number of nodes searched.
     pub nodes: u64,
 
-    /// Best move found during the search.
-    pub bestmove: Option<Move>,
-
     /// Evaluation of the position after `bestmove` is made.
     pub score: Score,
 
@@ -269,7 +266,17 @@ pub struct SearchResult {
     pub depth: u8,
 
     /// Principal variation during this search.
+    ///
+    /// The first entry of this field represents the "best move" found during the search.
     pub pv: PrincipalVariation,
+}
+
+impl SearchResult {
+    /// Fetch the first move in this PV, it one exists.
+    #[inline(always)]
+    fn bestmove(&self) -> Option<Move> {
+        self.pv.0.first().copied()
+    }
 }
 
 impl Default for SearchResult {
@@ -279,7 +286,6 @@ impl Default for SearchResult {
     fn default() -> Self {
         Self {
             nodes: 0,
-            bestmove: None,
             score: -Score::INF,
             depth: 1,
             pv: PrincipalVariation::EMPTY,
@@ -509,10 +515,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Initialize `bestmove` to the first move available, so we can return *something* if we're low on time.
         let moves = game.get_legal_moves();
-        let mut result = SearchResult {
-            bestmove: moves.first().copied(),
-            ..Default::default()
-        };
+        let mut result = SearchResult::default();
 
         // Get the search result, exiting early if there are fewer than two moves available.
         let result = match moves.len() {
@@ -552,7 +555,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     self.send_string(format!(
                         "Position {:?} has only one legal move available ({}), evaluated at {}",
                         game.to_fen(),
-                        result.bestmove.unwrap(),
+                        result.bestmove().unwrap(),
                         result.score.into_uci(),
                     ));
                 }
@@ -584,7 +587,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Search has ended; send bestmove
         if Log::INFO {
             self.send_response(UciResponse::BestMove {
-                bestmove: result.bestmove.map(V::fmt_move),
+                // If a bestmove wasn't found, use the first generated legal move.
+                bestmove: result
+                    .bestmove()
+                    .or(moves.first().copied())
+                    .map(V::fmt_move),
                 ponder: None,
             });
         }
@@ -619,7 +626,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 .score(result.score)
                 .nps((self.nodes as f32 / elapsed.as_secs_f32()).trunc())
                 .time(elapsed.as_millis())
-                // .pv(result.bestmove.map(V::fmt_move)),
                 .pv(result.pv.0.iter().map(|&mv| V::fmt_move(mv))),
         );
     }
@@ -702,12 +708,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Otherwise, we need to update the "best" result with the results from the new search
             result.score = score;
-
-            // Get the bestmove from the TTable
-            result.bestmove = self
-                .ttable
-                .get(&game.key())
-                .and_then(|entry| entry.bestmove);
 
             // Send search info to the GUI
             if Log::INFO {
@@ -1479,7 +1479,7 @@ mod tests {
         };
 
         let res = ensure_is_mate_in(fen, config, 1);
-        assert_eq!(res.bestmove.unwrap(), "b6a7")
+        assert_eq!(res.bestmove().unwrap(), "b6a7")
     }
 
     #[test]
@@ -1491,7 +1491,7 @@ mod tests {
         };
 
         let res = ensure_is_mate_in(fen, config, -1);
-        assert!(["c8b8", "c8d8"].contains(&res.bestmove.unwrap().to_string().as_str()));
+        assert!(["c8b8", "c8d8"].contains(&res.bestmove().unwrap().to_string().as_str()));
     }
 
     #[test]
@@ -1500,7 +1500,7 @@ mod tests {
         let config = SearchConfig::default();
 
         let res = run_search(fen, config);
-        assert!(res.bestmove.is_none());
+        assert!(res.bestmove().is_none());
         assert_eq!(res.score, Score::DRAW);
     }
 
@@ -1514,7 +1514,7 @@ mod tests {
         };
 
         let res = run_search(fen, config);
-        assert_eq!(res.bestmove.unwrap(), "e7d8q");
+        assert_eq!(res.bestmove().unwrap(), "e7d8q");
     }
 
     #[test]
@@ -1528,6 +1528,6 @@ mod tests {
         };
 
         let res = run_search(fen, config);
-        assert!(res.bestmove.is_some());
+        assert!(res.bestmove().is_some());
     }
 }
