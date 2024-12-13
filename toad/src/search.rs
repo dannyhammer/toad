@@ -704,10 +704,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             result.score = score;
 
             // Get the bestmove from the TTable
-            result.bestmove = self
-                .ttable
-                .get(&game.key())
-                .and_then(|entry| entry.bestmove);
+            result.bestmove = result.pv.0.first().copied();
 
             // Send search info to the GUI
             if Log::INFO {
