@@ -91,6 +91,12 @@ impl PrincipalVariation {
                 );
             });
     }
+
+    /// Fetch the first move in this PV, it one exists.
+    #[inline(always)]
+    fn bestmove(&self) -> Option<Move> {
+        self.0.first().copied()
+    }
 }
 
 impl Default for PrincipalVariation {
@@ -157,7 +163,7 @@ impl Default for SearchBounds {
     /// Default [`SearchBounds`] are a `(-infinity, infinity)`.
     #[inline(always)]
     fn default() -> Self {
-        Self::new(Score::ALPHA, Score::BETA)
+        Self::new(-Score::INF, Score::INF)
     }
 }
 
@@ -199,8 +205,8 @@ impl AspirationWindow {
             // Otherwise we build a window around the provided score.
             let delta = Self::delta(depth);
             SearchBounds::new(
-                (score - delta).max(Score::ALPHA),
-                (score + delta).min(Score::BETA),
+                (score - delta).max(-Score::INF),
+                (score + delta).min(Score::INF),
             )
         };
 
@@ -220,8 +226,8 @@ impl AspirationWindow {
         let delta = Self::delta(depth) * (1 << (self.alpha_fails + 1));
 
         // By convention, we widen both bounds on a fail low.
-        self.bounds.beta = ((self.bounds.alpha + self.bounds.beta) / 2).min(Score::BETA);
-        self.bounds.alpha = (score - delta).max(Score::ALPHA);
+        self.bounds.beta = ((self.bounds.alpha + self.bounds.beta) / 2).min(Score::INF);
+        self.bounds.alpha = (score - delta).max(-Score::INF);
 
         // Increase number of failures
         self.alpha_fails += 1;
@@ -234,7 +240,7 @@ impl AspirationWindow {
         let delta = Self::delta(depth) * (1 << (self.beta_fails + 1));
 
         // Widen the beta bound
-        self.bounds.beta = (score + delta).min(Score::BETA);
+        self.bounds.beta = (score + delta).min(Score::INF);
 
         // Increase number of failures
         self.beta_fails += 1;
@@ -243,13 +249,13 @@ impl AspirationWindow {
     /// Returns `true` if `score` fails low, meaning it is below `alpha` and the window must be expanded downwards.
     #[inline(always)]
     fn fails_low(&self, score: Score) -> bool {
-        self.bounds.alpha != Score::ALPHA && score <= self.bounds.alpha
+        self.bounds.alpha != -Score::INF && score <= self.bounds.alpha
     }
 
     /// Returns `true` if `score` fails high, meaning it is above `beta` and the window must be expanded upwards.
     #[inline(always)]
     fn fails_high(&self, score: Score) -> bool {
-        self.bounds.beta != Score::BETA && score >= self.bounds.beta
+        self.bounds.beta != Score::INF && score >= self.bounds.beta
     }
 }
 
@@ -259,9 +265,6 @@ pub struct SearchResult {
     /// Number of nodes searched.
     pub nodes: u64,
 
-    /// Best move found during the search.
-    pub bestmove: Option<Move>,
-
     /// Evaluation of the position after `bestmove` is made.
     pub score: Score,
 
@@ -269,6 +272,8 @@ pub struct SearchResult {
     pub depth: u8,
 
     /// Principal variation during this search.
+    ///
+    /// The first entry of this field represents the "best move" found during the search.
     pub pv: PrincipalVariation,
 }
 
@@ -279,8 +284,7 @@ impl Default for SearchResult {
     fn default() -> Self {
         Self {
             nodes: 0,
-            bestmove: None,
-            score: Score::ALPHA,
+            score: -Score::INF,
             depth: 1,
             pv: PrincipalVariation::EMPTY,
         }
@@ -507,14 +511,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        // Initialize `bestmove` to the first move available, so we can return *something* if we're low on time.
-        let moves = game.get_legal_moves();
-        let mut result = SearchResult {
-            bestmove: moves.first().copied(),
-            ..Default::default()
-        };
-
         // Get the search result, exiting early if there are fewer than two moves available.
+        let moves = game.get_legal_moves();
+        let mut result = SearchResult::default();
         let result = match moves.len() {
             // If no legal moves available, the game is over, so return immediately.
             0 => {
@@ -552,7 +551,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     self.send_string(format!(
                         "Position {:?} has only one legal move available ({}), evaluated at {}",
                         game.to_fen(),
-                        result.bestmove.unwrap(),
+                        result.pv.bestmove().unwrap(),
                         result.score.into_uci(),
                     ));
                 }
@@ -584,7 +583,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Search has ended; send bestmove
         if Log::INFO {
             self.send_response(UciResponse::BestMove {
-                bestmove: result.bestmove.map(V::fmt_move),
+                // If a bestmove wasn't found, use the first generated legal move.
+                bestmove: result
+                    .pv
+                    .bestmove()
+                    .or(moves.first().copied())
+                    .map(V::fmt_move),
                 ponder: None,
             });
         }
@@ -619,7 +623,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 .score(result.score)
                 .nps((self.nodes as f32 / elapsed.as_secs_f32()).trunc())
                 .time(elapsed.as_millis())
-                // .pv(result.bestmove.map(V::fmt_move)),
                 .pv(result.pv.0.iter().map(|&mv| V::fmt_move(mv))),
         );
     }
@@ -660,7 +663,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             let mut window = AspirationWindow::new(result.score, result.depth);
 
             // Get a score from the a/b search while using aspiration windows
-            let score = 'aspiration_window: loop {
+            let new_score = 'aspiration_window: loop {
                 // Start a new search at the current depth
                 let score =
                     self.negamax::<RootNode>(game, result.depth, 0, window.bounds, &mut result.pv);
@@ -701,13 +704,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
              ****************************************************************************************************/
 
             // Otherwise, we need to update the "best" result with the results from the new search
-            result.score = score;
-
-            // Get the bestmove from the TTable
-            result.bestmove = self
-                .ttable
-                .get(&game.key())
-                .and_then(|entry| entry.bestmove);
+            result.score = new_score;
 
             // Send search info to the GUI
             if Log::INFO {
@@ -792,7 +789,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         // Start with a *really bad* initial score
-        let mut best = Score::ALPHA;
+        let mut best = -Score::INF;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
 
@@ -1479,7 +1476,7 @@ mod tests {
         };
 
         let res = ensure_is_mate_in(fen, config, 1);
-        assert_eq!(res.bestmove.unwrap(), "b6a7")
+        assert_eq!(res.pv.bestmove().unwrap(), "b6a7")
     }
 
     #[test]
@@ -1491,7 +1488,7 @@ mod tests {
         };
 
         let res = ensure_is_mate_in(fen, config, -1);
-        assert!(["c8b8", "c8d8"].contains(&res.bestmove.unwrap().to_string().as_str()));
+        assert!(["c8b8", "c8d8"].contains(&res.pv.bestmove().unwrap().to_string().as_str()));
     }
 
     #[test]
@@ -1500,7 +1497,7 @@ mod tests {
         let config = SearchConfig::default();
 
         let res = run_search(fen, config);
-        assert!(res.bestmove.is_none());
+        assert!(res.pv.0.len() == 0);
         assert_eq!(res.score, Score::DRAW);
     }
 
@@ -1514,7 +1511,7 @@ mod tests {
         };
 
         let res = run_search(fen, config);
-        assert_eq!(res.bestmove.unwrap(), "e7d8q");
+        assert_eq!(res.pv.bestmove().unwrap(), "e7d8q");
     }
 
     #[test]
@@ -1528,6 +1525,6 @@ mod tests {
         };
 
         let res = run_search(fen, config);
-        assert!(res.bestmove.is_some());
+        assert!(res.pv.0.len() > 0);
     }
 }
