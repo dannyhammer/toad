@@ -667,12 +667,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Create a new aspiration window for this search
             let mut window = AspirationWindow::new(result.score, result.depth);
+            let mut pv = PrincipalVariation::EMPTY;
 
             // Get a score from the a/b search while using aspiration windows
             let score = 'aspiration_window: loop {
                 // Start a new search at the current depth
-                let score =
-                    self.negamax::<RootNode>(game, result.depth, 0, window.bounds, &mut result.pv);
+                let score = self.negamax::<RootNode>(game, result.depth, 0, window.bounds, &mut pv);
 
                 // If the score fell outside of the aspiration window, widen it gradually
                 if window.fails_low(score) {
@@ -688,7 +688,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // Instead, we should break out of the ID loop, using the result from the previous iteration
                 if self.search_cancelled() {
                     if Log::DEBUG {
-                        if let Some(bestmove) = self.get_tt_bestmove(game.key()) {
+                        if let Some(bestmove) = result.bestmove() {
                             self.send_string(format!(
                                 "Search cancelled during depth {} while evaluating {} with score {score}",
                                 result.depth,
@@ -711,6 +711,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Otherwise, we need to update the "best" result with the results from the new search
             result.score = score;
+            result.pv = pv;
 
             // Send search info to the GUI
             if Log::INFO {
