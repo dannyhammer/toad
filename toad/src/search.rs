@@ -515,17 +515,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Initialize `bestmove` to the first move available, so we can return *something* if we're low on time.
         let moves = game.get_legal_moves();
-        let mut pv = ArrayVec::new();
-        if let Some(first) = moves.first().copied() {
-            pv.push(first);
-        }
-        let mut result = SearchResult {
-            pv: PrincipalVariation(pv),
-            ..Default::default()
-        };
+        let mut result = SearchResult::default();
 
         // Get the search result, exiting early if there are fewer than two moves available.
-        let result = match moves.len() {
+        let mut result = match moves.len() {
             // If no legal moves available, the game is over, so return immediately.
             0 => {
                 // It's either a draw or a checkmate
@@ -589,6 +582,13 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             let collisions = self.ttable.collisions;
             let info = format!("TT stats: {hits} hits / {reads} reads ({hit_rate:.2}% hit rate), {writes} writes, {collisions} collisions");
             self.send_string(info);
+        }
+
+        // If no bestmove, but there is a legal move, update bestmove.
+        if result.bestmove().is_none() {
+            if let Some(first) = moves.first().copied() {
+                result.pv.0.push(first);
+            }
         }
 
         // Search has ended; send bestmove
@@ -1482,7 +1482,7 @@ mod tests {
         };
 
         let res = ensure_is_mate_in(fen, config, 1);
-        assert_eq!(res.bestmove().unwrap(), "b6a7")
+        assert_eq!(res.bestmove().unwrap(), "b6a7", "Result: {res:#?}");
     }
 
     #[test]
