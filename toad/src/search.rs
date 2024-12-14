@@ -542,14 +542,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // If only 1 legal move available, it is forced, so don't waste time on a full search.
             1 => {
-                // Get a proper evaluation of this position.
-                result.score = self.quiescence::<PvNode>(
-                    game,
-                    0,
-                    SearchBounds::default(),
-                    &mut PrincipalVariation::default(),
-                );
+                // Get a quick, albeit poor, evaluation of the position.
+                // TODO: Replace this with a call to qsearch?
+                result.score = game.eval();
                 result.nodes += 1;
+                result.pv.0.push(moves.first().copied().unwrap());
 
                 if Log::DEBUG {
                     self.send_string(format!(
