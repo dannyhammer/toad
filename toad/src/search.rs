@@ -494,16 +494,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         if Log::DEBUG {
             self.send_string(format!("Starting search on {:?}", game.to_fen()));
 
-            let soft = self.config.soft_timeout.as_millis();
-            let hard = self.config.hard_timeout.as_millis();
+            let soft = self.config.soft_timeout;
+            let hard = self.config.hard_timeout;
             let nodes = self.config.max_nodes;
             let depth = self.config.max_depth;
 
-            if soft < Duration::MAX.as_millis() {
-                self.send_string(format!("Soft timeout := {soft}ms"));
+            if soft < Duration::MAX {
+                self.send_string(format!("Soft timeout := {soft:?}"));
             }
-            if hard < Duration::MAX.as_millis() {
-                self.send_string(format!("Hard timeout := {hard}ms"));
+            if hard < Duration::MAX {
+                self.send_string(format!("Hard timeout := {hard:?}"));
             }
             if nodes < u64::MAX {
                 self.send_string(format!("Max nodes := {nodes} nodes"));
@@ -674,6 +674,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // Start a new search at the current depth
                 let score = self.negamax::<RootNode>(game, result.depth, 0, window.bounds, &mut pv);
 
+                // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
+                // Instead, we should break out of the ID loop, using the result from the previous iteration
+                if self.search_cancelled() {
+                    break 'iterative_deepening;
+                }
+
                 // If the score fell outside of the aspiration window, widen it gradually
                 if window.fails_low(score) {
                     window.widen_down(score, result.depth);
@@ -683,27 +689,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     // Otherwise, the window is OK and we can use the score
                     break 'aspiration_window score;
                 }
-
-                // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
-                // Instead, we should break out of the ID loop, using the result from the previous iteration
-                if self.search_cancelled() {
-                    if Log::DEBUG {
-                        if let Some(bestmove) = result.bestmove() {
-                            self.send_string(format!(
-                                "Search cancelled during depth {} while evaluating {} with score {score}",
-                                result.depth,
-                                V::fmt_move(bestmove),
-                                ));
-                        } else {
-                            self.send_string(format!(
-                            "Search cancelled during depth {} with score {score} and no bestmove",
-                            result.depth,
-                        ));
-                        }
-                    }
-                    break 'iterative_deepening;
-                }
             };
+
+            // We check this again here for sanity reasons.
+            if self.search_cancelled() {
+                break 'iterative_deepening;
+            }
 
             /****************************************************************************************************
              * Update current best score
