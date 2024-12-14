@@ -584,7 +584,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Search has ended; send bestmove
         if Log::INFO {
             self.send_response(UciResponse::BestMove {
-                bestmove: result.bestmove.map(V::fmt_move),
+                bestmove: result.pv.0.first().copied().map(V::fmt_move),
                 ponder: None,
             });
         }
@@ -702,9 +702,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Otherwise, we need to update the "best" result with the results from the new search
             result.score = score;
-
-            // Get the bestmove from the TTable
-            result.bestmove = result.pv.0.first().copied();
 
             // Send search info to the GUI
             if Log::INFO {
