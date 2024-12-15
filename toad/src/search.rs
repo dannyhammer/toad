@@ -749,9 +749,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Result<Score, SearchCancelled> {
-        // Check if we can continue searching
-        self.search_cancelled()?;
-
         // Declare a local principal variation for nodes found during this search.
         let mut local_pv = PrincipalVariation::default();
 
@@ -964,9 +961,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Result<Score, SearchCancelled> {
-        // Check if we can continue searching
-        self.search_cancelled()?;
-
         // Declare a local principal variation for nodes found during this search.
         let mut local_pv = PrincipalVariation::default();
         // Clear any nodes in this PV, since we're searching from a new position
