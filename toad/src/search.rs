@@ -16,6 +16,7 @@ use std::{
 };
 
 use arrayvec::ArrayVec;
+use thiserror::Error;
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
@@ -25,6 +26,26 @@ use crate::{
 
 /// Maximum depth that can be searched
 pub const MAX_DEPTH: u8 = u8::MAX / 2;
+
+/// Reasons that a search can be cancelled.
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchCancelled {
+    /// Search ran out of time.
+    ///
+    /// Contains the amount of time since the timeout was exceeded.
+    #[error("Exceeded hard timeout of {0:?} by {1:?}")]
+    HardTimeout(Duration, Duration),
+
+    /// Met or exceeded the maximum number of nodes allowed.
+    ///
+    /// Contains the number of nodes past the allowance that were searched.
+    #[error("Exceeded node allowance by {0}")]
+    MaxNodes(u64),
+
+    /// Stopped by an external factor
+    #[error("Atomic flag was flipped")]
+    Stopped,
+}
 
 /// A marker trait for the types of nodes encountered during search.
 ///
@@ -669,14 +690,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Get a score from the a/b search while using aspiration windows
             let score = 'aspiration_window: loop {
-                // Start a new search at the current depth
-                let score = self.negamax::<RootNode>(game, result.depth, 0, window.bounds, &mut pv);
-
-                // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
-                // Instead, we should break out of the ID loop, using the result from the previous iteration
-                if self.search_cancelled() {
+                // Start a new search at the current depth, exiting the ID loop if we've ran out of time
+                let Ok(score) =
+                    self.negamax::<RootNode>(game, result.depth, 0, window.bounds, &mut pv)
+                else {
                     break 'iterative_deepening;
-                }
+                };
 
                 // If the score fell outside of the aspiration window, widen it gradually
                 if window.fails_low(score) {
@@ -690,7 +709,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             };
 
             // We check this again here for sanity reasons.
-            if self.search_cancelled() {
+            if self.search_cancelled().is_err() {
                 break 'iterative_deepening;
             }
 
@@ -729,7 +748,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         ply: i32,
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
-    ) -> Score {
+    ) -> Result<Score, SearchCancelled> {
         // Declare a local principal variation for nodes found during this search.
         let mut local_pv = PrincipalVariation::default();
 
@@ -746,7 +765,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         if !Node::PV {
             // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
             if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
-                return tt_score;
+                return Ok(tt_score);
             }
         }
 
@@ -763,9 +782,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // If we CAN prune this node by means other than the TT, do so
         if let Some(score) =
-            self.node_pruning_score::<Node>(game, depth, ply, bounds, pv, &mut local_pv)
+            self.node_pruning_score::<Node>(game, depth, ply, bounds, pv, &mut local_pv)?
         {
-            return score;
+            return Ok(score);
         }
 
         // If there are no legal moves, it's either mate or a draw.
@@ -773,10 +792,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         if moves.is_empty() {
             return if game.is_in_check() {
                 // Offset by ply to prefer earlier mates
-                ply - Score::MATE
+                Ok(ply - Score::MATE)
             } else {
                 // Drawing is better than losing
-                Score::DRAW
+                Ok(Score::DRAW)
             };
         }
 
@@ -819,7 +838,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                         ply + 1,
                         -bounds.null_alpha(),
                         &mut local_pv,
-                    );
+                    )?;
 
                     // If that failed *high* (raised alpha), re-search at the full depth with the null window
                     if score > bounds.alpha && reduced_depth < new_depth {
@@ -829,7 +848,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                             ply + 1,
                             -bounds.null_alpha(),
                             &mut local_pv,
-                        );
+                        )?;
                     }
                 } else if !Node::PV || i > 0 {
                     // All non-PV nodes get searched with a null window
@@ -839,7 +858,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                         ply + 1,
                         -bounds.null_alpha(),
                         &mut local_pv,
-                    );
+                    )?;
                 }
 
                 /****************************************************************************************************
@@ -852,8 +871,13 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                  ****************************************************************************************************/
                 // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
                 if Node::PV && (i == 0 || score > bounds.alpha) {
-                    score =
-                        -self.negamax::<PvNode>(&new, new_depth, ply + 1, -bounds, &mut local_pv);
+                    score = -self.negamax::<PvNode>(
+                        &new,
+                        new_depth,
+                        ply + 1,
+                        -bounds,
+                        &mut local_pv,
+                    )?;
                 }
 
                 // We've now searched this node
@@ -910,9 +934,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
 
             // Check if we can continue searching
-            if self.search_cancelled() {
-                break;
-            }
+            self.search_cancelled()?;
         }
 
         // Save this node to the TTable.
@@ -925,7 +947,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             ply,
         );
 
-        best
+        Ok(best)
     }
 
     /// Quiescence Search (QSearch)
@@ -938,7 +960,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         ply: i32,
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
-    ) -> Score {
+    ) -> Result<Score, SearchCancelled> {
         // Declare a local principal variation for nodes found during this search.
         let mut local_pv = PrincipalVariation::default();
         // Clear any nodes in this PV, since we're searching from a new position
@@ -949,7 +971,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Beta cutoff; this position is "too good" and our opponent would never let us get here
         if stand_pat >= bounds.beta {
-            return stand_pat;
+            return Ok(stand_pat);
         } else if stand_pat > bounds.alpha {
             bounds.alpha = stand_pat;
         }
@@ -966,7 +988,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
         // So, if there are no captures available, just return the current evaluation.
         if captures.is_empty() {
-            return stand_pat;
+            return Ok(stand_pat);
         }
 
         let tt_move = self.get_tt_bestmove(game.key());
@@ -993,7 +1015,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             if Node::ROOT || !self.is_draw(&new) {
                 self.prev_positions.push(*new.position());
 
-                score = -self.quiescence::<Node>(&new, ply + 1, -bounds, &mut local_pv);
+                score = -self.quiescence::<Node>(&new, ply + 1, -bounds, &mut local_pv)?;
                 self.nodes += 1; // We've now searched this node
 
                 self.prev_positions.pop();
@@ -1025,9 +1047,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
 
             // Check if we can continue searching
-            if self.search_cancelled() {
-                break;
-            }
+            self.search_cancelled()?;
         }
 
         // Save this node to the TTable.
@@ -1040,18 +1060,34 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             ply,
         );
 
-        best // fail-soft
+        Ok(best) // fail-soft
     }
 
     /// Checks if we've exceeded any conditions that would warrant the search to end.
     #[inline(always)]
-    fn search_cancelled(&self) -> bool {
+    fn search_cancelled(&self) -> Result<(), SearchCancelled> {
         // Condition 1: We've exceeded the hard limit of our allotted search time
-        self.config.starttime.elapsed() >= self.config.hard_timeout ||
+        if let Some(diff) = self
+            .config
+            .starttime
+            .elapsed()
+            .checked_sub(self.config.hard_timeout)
+        {
+            return Err(SearchCancelled::HardTimeout(self.config.hard_timeout, diff));
+        }
+
         // Condition 2: The search was stopped by an external factor, like the `stop` command
-        !self.is_searching.load(Ordering::Relaxed) ||
+        if !self.is_searching.load(Ordering::Relaxed) {
+            return Err(SearchCancelled::Stopped);
+        }
+
         // Condition 3: We've exceeded the maximum amount of nodes we're allowed to search
-        self.nodes >= self.config.max_nodes
+        if let Some(diff) = self.nodes.checked_sub(self.config.max_nodes) {
+            return Err(SearchCancelled::MaxNodes(diff));
+        }
+
+        // No conditions met; we can continue searching
+        Ok(())
     }
 
     /// Checks if `game` is a repetition, comparing it to previous positions
@@ -1161,10 +1197,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         bounds: SearchBounds,
         pv: &mut PrincipalVariation,
         local_pv: &mut PrincipalVariation,
-    ) -> Option<Score> {
+    ) -> Result<Option<Score>, SearchCancelled> {
         // Cannot prune anything in a PV node or if we're in check
         if Node::PV || game.is_in_check() {
-            return None;
+            return Ok(None);
         }
 
         // Static evaluation of the current position is used in multiple pruning techniques.
@@ -1178,10 +1214,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
         let razoring_margin = Score::RAZORING_OFFSET + Score::RAZORING_MULTIPLIER * depth as i32;
         if depth <= 2 && static_eval + razoring_margin < bounds.alpha {
-            let score = self.quiescence::<Node>(game, ply, bounds.null_alpha(), pv);
+            let score = self.quiescence::<Node>(game, ply, bounds.null_alpha(), pv)?;
             // If we can't beat alpha (without mating), we can prune.
             if score < bounds.alpha && !score.is_mate() {
-                return Some(score); // fail-soft
+                return Ok(Some(score)); // fail-soft
             }
         }
 
@@ -1193,7 +1229,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
         let rfp_score = static_eval - self.params.rfp_margin * depth as i32;
         if depth <= self.params.max_rfp_depth && rfp_score >= bounds.beta {
-            return Some(rfp_score);
+            return Ok(Some(rfp_score));
         }
 
         /****************************************************************************************************
@@ -1227,18 +1263,18 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 ply + 1,
                 -bounds.null_beta(),
                 local_pv,
-            );
+            )?;
 
             self.prev_positions.pop();
 
             // If making the nullmove produces a cutoff, we can assume that a full-depth search would also produce a cutoff
             if score >= bounds.beta {
-                return Some(score);
+                return Ok(Some(score));
             }
         }
 
         // If no pruning technique was possible, return no score
-        None
+        Ok(None)
     }
 
     /// Probes the [`TTable`] for an entry at the provided `key`, returning that entry's score, if appropriate.
