@@ -554,10 +554,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     ));
                 }
 
-                if Log::INFO {
-                    self.send_end_of_search_info(&result);
-                }
-
                 result
             }
 
@@ -578,10 +574,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     ));
                 }
 
-                if Log::INFO {
-                    self.send_end_of_search_info(&result);
-                }
-
                 result
             }
 
@@ -593,6 +585,22 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         self.is_searching.store(false, Ordering::Relaxed);
 
         if Log::DEBUG {
+            if let Err(reason) = self.search_cancelled() {
+                if let Some(bestmove) = result.bestmove() {
+                    self.send_string(format!(
+                        "Search cancelled during depth {} while evaluating {} with score {}. Reason: {reason}",
+                        result.depth,
+                        V::fmt_move(bestmove),
+                        result.score,
+                    ));
+                } else {
+                    self.send_string(format!(
+                        "Search cancelled during depth {} with score {} and no bestmove. Reason: {reason}",
+                        result.depth, result.score,
+                    ));
+                }
+            }
+
             let hits = self.ttable.hits;
             let reads = self.ttable.reads;
             let writes = self.ttable.writes;
@@ -612,6 +620,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Search has ended; send bestmove
         if Log::INFO {
+            self.send_search_info(&result); // UCI spec states to send one last `info` before `bestmove`.
             self.send_response(UciResponse::BestMove {
                 bestmove: result.bestmove().map(V::fmt_move),
                 ponder: None,
@@ -638,7 +647,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     ///
     /// This is sent at the end of each new search in the iterative deepening loop.
     #[inline(always)]
-    fn send_end_of_search_info(&self, result: &SearchResult) {
+    fn send_search_info(&self, result: &SearchResult) {
         let elapsed = self.config.starttime.elapsed();
 
         self.send_info(
@@ -717,13 +726,18 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
              * Update current best score
              ****************************************************************************************************/
 
-            // Otherwise, we need to update the "best" result with the results from the new search
+            // We need to update our bestmove and score, since this iteration's search completed without timeout.
             result.score = score;
             result.pv = pv;
 
+            // Hack; if we're on the last iteration, don't send an `info` line, as it gets sent just before `bestmove` anyway.
+            if result.depth == self.config.max_depth {
+                break;
+            }
+
             // Send search info to the GUI
             if Log::INFO {
-                self.send_end_of_search_info(&result);
+                self.send_search_info(&result);
             }
 
             // Increase the depth for the next iteration
@@ -749,8 +763,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Result<Score, SearchCancelled> {
-        // Check if we can continue searching
-        self.search_cancelled()?;
+        self.search_cancelled()?; // Exit early if search is terminated.
 
         // Declare a local principal variation for nodes found during this search.
         let mut local_pv = PrincipalVariation::default();
@@ -793,13 +806,13 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // If there are no legal moves, it's either mate or a draw.
         let mut moves = game.get_legal_moves();
         if moves.is_empty() {
-            return if game.is_in_check() {
+            return Ok(if game.is_in_check() {
                 // Offset by ply to prefer earlier mates
-                Ok(ply - Score::MATE)
+                ply - Score::MATE
             } else {
                 // Drawing is better than losing
-                Ok(Score::DRAW)
-            };
+                Score::DRAW
+            });
         }
 
         // Sort moves so that we look at "promising" ones first
@@ -883,8 +896,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     )?;
                 }
 
-                // Check if we can continue searching
-                self.search_cancelled()?;
+                self.search_cancelled()?; // Exit early if search is terminated.
 
                 // We've now searched this node
                 self.nodes += 1;
@@ -964,8 +976,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Result<Score, SearchCancelled> {
-        // Check if we can continue searching
-        self.search_cancelled()?;
+        self.search_cancelled()?; // Exit early if search is terminated.
 
         // Declare a local principal variation for nodes found during this search.
         let mut local_pv = PrincipalVariation::default();
@@ -1023,8 +1034,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                 score = -self.quiescence::<Node>(&new, ply + 1, -bounds, &mut local_pv)?;
 
-                // Check if we can continue searching
-                self.search_cancelled()?;
+                self.search_cancelled()?; // Exit early if search is terminated.
 
                 self.nodes += 1; // We've now searched this node
 
@@ -1071,31 +1081,33 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     }
 
     /// Checks if we've exceeded any conditions that would warrant the search to end.
+    ///
+    /// This method returns an `Err` of [`SearchCancelled`] if the search must end prematurely.
+    /// While a termination isn't truly an error, this API allows us to cleanly leverage the `?` operator.
     #[inline(always)]
     fn search_cancelled(&self) -> Result<(), SearchCancelled> {
-        // Only check every 1024 nodes, to speed things up a bit.
-        if self.nodes & 1023 != 0 {
-            return Ok(());
+        // Only check for timeouts every 1024 nodes, because searches are fast and 1k nodes doesn't take too long..
+        if self.nodes % 1024 == 0 {
+            // We've exceeded the hard limit of our allotted search time
+            if let Some(diff) = self
+                .config
+                .starttime
+                .elapsed()
+                .checked_sub(self.config.hard_timeout)
+            {
+                return Err(SearchCancelled::HardTimeout(self.config.hard_timeout, diff));
+            }
         }
 
-        // Condition 1: We've exceeded the hard limit of our allotted search time
-        if let Some(diff) = self
-            .config
-            .starttime
-            .elapsed()
-            .checked_sub(self.config.hard_timeout)
-        {
-            return Err(SearchCancelled::HardTimeout(self.config.hard_timeout, diff));
-        }
-
-        // Condition 2: The search was stopped by an external factor, like the `stop` command
-        if !self.is_searching.load(Ordering::Relaxed) {
-            return Err(SearchCancelled::Stopped);
-        }
-
-        // Condition 3: We've exceeded the maximum amount of nodes we're allowed to search
+        // We've exceeded the maximum amount of nodes we're allowed to search
+        // This is checked first so that `go nodes` searches terminate properly
         if let Some(diff) = self.nodes.checked_sub(self.config.max_nodes) {
             return Err(SearchCancelled::MaxNodes(diff));
+        }
+
+        // The search was stopped by an external factor, like the `stop` command
+        if !self.is_searching.load(Ordering::Relaxed) {
+            return Err(SearchCancelled::Stopped);
         }
 
         // No conditions met; we can continue searching
@@ -1570,5 +1582,62 @@ mod tests {
 
         let res = run_search(fen, config);
         assert!(res.bestmove().is_some());
+    }
+
+    #[test]
+    fn test_go_nodes() {
+        let fen = FEN_KIWIPETE;
+
+        let node_limits = [0, 1, 10, 17, 126, 192, 1748, 182048, 1928392];
+
+        for max_nodes in node_limits {
+            let config = SearchConfig {
+                max_nodes,
+                ..Default::default()
+            };
+
+            let res = run_search(fen, config);
+
+            assert_eq!(res.nodes, max_nodes);
+            assert!(res.depth < MAX_DEPTH); // Ensure the ID didn't loop forever.
+        }
+    }
+
+    #[test]
+    fn test_go_nodes_cutoff_search_still_gives_good_result() {
+        // d5e6 is a good capture, but will lead to mate on the next iteration.
+        let fen = "k6r/8/4q3/3P4/8/8/PP6/K7 w - - 0 1";
+
+        // Loop until we reach a depth that does NOT think d5e6 is the best move
+        let mut max_depth = 1;
+        let max_nodes = loop {
+            let config = SearchConfig {
+                max_depth,
+                ..Default::default()
+            };
+
+            let res = run_search(fen, config);
+            if res.bestmove().unwrap() != "d5e6" {
+                break res.nodes;
+            }
+
+            max_depth += 1;
+        };
+
+        // Now run a search on that position, stopping *just* before we would have found a move better than d5e6
+        let config = SearchConfig {
+            max_nodes: max_nodes - 1,
+            ..Default::default()
+        };
+        let res = run_search(fen, config);
+        assert_eq!(res.bestmove().unwrap(), "d5e6");
+
+        // Do the same, but stop just *after* the node count that lets us find a better move than d5e6
+        let config = SearchConfig {
+            max_nodes: max_nodes + 1,
+            ..Default::default()
+        };
+        let res = run_search(fen, config);
+        assert_ne!(res.bestmove().unwrap(), "d5e6");
     }
 }
