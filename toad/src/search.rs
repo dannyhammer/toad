@@ -563,6 +563,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // TODO: Replace this with a call to qsearch?
                 result.score = game.eval();
                 result.nodes += 1;
+
+                // Append the only legal move to the PV
                 let bestmove = moves[0];
                 result.pv.0.push(bestmove);
 
@@ -580,9 +582,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             // Otherwise, start a search like normal.
             _ => self.iterative_deepening(game, result),
         };
-
-        // Search has concluded, alert other thread(s) that we are no longer searching
-        self.is_searching.store(false, Ordering::Relaxed);
 
         if Log::DEBUG {
             if let Err(reason) = self.search_cancelled() {
@@ -621,11 +620,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Search has ended; send bestmove
         if Log::INFO {
             self.send_search_info(&result); // UCI spec states to send one last `info` before `bestmove`.
+
+            // TODO: On a `go infinite` search, we should *only* send `bestmove` after `stop` is received, regardless of whether the search has concluded
             self.send_response(UciResponse::BestMove {
                 bestmove: result.bestmove().map(V::fmt_move),
                 ponder: None,
             });
         }
+
+        // Search has concluded, alert other thread(s) that we are no longer searching
+        self.is_searching.store(false, Ordering::Relaxed);
 
         result
     }
