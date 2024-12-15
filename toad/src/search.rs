@@ -20,8 +20,8 @@ use thiserror::Error;
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Position, Score,
-    TTable, TTableEntry, Variant, ZobristKey,
+    tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Position, Psqt,
+    Score, TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Maximum depth that can be searched
@@ -801,7 +801,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Sort moves so that we look at "promising" ones first
         let tt_move = self.get_tt_bestmove(game.key());
-        moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
+        let weight = game.evaluator().endgame_weight();
+        moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move, weight));
 
         // Start with a *really bad* initial score
         let mut best = -Score::INF;
@@ -992,7 +993,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         }
 
         let tt_move = self.get_tt_bestmove(game.key());
-        captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
+        let weight = game.evaluator().endgame_weight();
+        captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move, weight));
 
         let mut best = stand_pat;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
@@ -1162,7 +1164,13 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
     /// Applies a score to the provided move, intended to be used when ordering moves during search.
     #[inline(always)]
-    fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> Score {
+    fn score_move(
+        &self,
+        game: &Game<V>,
+        mv: &Move,
+        tt_move: Option<Move>,
+        endgame_weight: i32,
+    ) -> Score {
         // TT move should be looked at first, so assign it the best possible score and immediately exit.
         if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
             return Score::new(i32::MIN);
@@ -1171,7 +1179,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Safe unwrap because we can't move unless there's a piece at `from`
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
+        let from = mv.from();
         let mut score = Score::BASE_MOVE_SCORE;
+
+        score += Psqt::eval(piece, to, endgame_weight) - Psqt::eval(piece, from, endgame_weight);
 
         // Apply history bonus to quiets
         if mv.is_quiet() {

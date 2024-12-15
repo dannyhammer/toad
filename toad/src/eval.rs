@@ -248,6 +248,13 @@ impl<V: Variant> Evaluator<V> {
 pub struct Psqt(Table<Score>);
 
 impl Psqt {
+    /// Fetch an interpolated score for a `piece` at `square`.
+    #[inline(always)]
+    pub fn eval(piece: Piece, square: Square, endgame_weight: i32) -> Score {
+        let (mg, eg) = Self::evals(piece, square);
+        mg.lerp(eg, endgame_weight)
+    }
+
     /// Fetch the mid-game and end-game evaluations for a `piece` at `square`.
     #[inline(always)]
     pub fn evals(piece: Piece, square: Square) -> (Score, Score) {
