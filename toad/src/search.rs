@@ -749,6 +749,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Result<Score, SearchCancelled> {
+        // Check if we can continue searching
+        self.search_cancelled()?;
+
         // Declare a local principal variation for nodes found during this search.
         let mut local_pv = PrincipalVariation::default();
 
@@ -961,6 +964,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Result<Score, SearchCancelled> {
+        // Check if we can continue searching
+        self.search_cancelled()?;
+
         // Declare a local principal variation for nodes found during this search.
         let mut local_pv = PrincipalVariation::default();
         // Clear any nodes in this PV, since we're searching from a new position
@@ -1067,6 +1073,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     /// Checks if we've exceeded any conditions that would warrant the search to end.
     #[inline(always)]
     fn search_cancelled(&self) -> Result<(), SearchCancelled> {
+        // Only check every 1024 nodes, to speed things up a bit.
+        if self.nodes & 1023 != 0 {
+            return Ok(());
+        }
+
         // Condition 1: We've exceeded the hard limit of our allotted search time
         if let Some(diff) = self
             .config
