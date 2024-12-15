@@ -749,6 +749,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Result<Score, SearchCancelled> {
+        // Check if we can continue searching
+        self.search_cancelled()?;
+
         // Declare a local principal variation for nodes found during this search.
         let mut local_pv = PrincipalVariation::default();
 
@@ -880,6 +883,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     )?;
                 }
 
+                // Check if we can continue searching
+                self.search_cancelled()?;
+
                 // We've now searched this node
                 self.nodes += 1;
 
@@ -932,9 +938,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     break;
                 }
             }
-
-            // Check if we can continue searching
-            self.search_cancelled()?;
         }
 
         // Save this node to the TTable.
@@ -961,6 +964,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Result<Score, SearchCancelled> {
+        // Check if we can continue searching
+        self.search_cancelled()?;
+
         // Declare a local principal variation for nodes found during this search.
         let mut local_pv = PrincipalVariation::default();
         // Clear any nodes in this PV, since we're searching from a new position
@@ -1016,6 +1022,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 self.prev_positions.push(*new.position());
 
                 score = -self.quiescence::<Node>(&new, ply + 1, -bounds, &mut local_pv)?;
+
+                // Check if we can continue searching
+                self.search_cancelled()?;
+
                 self.nodes += 1; // We've now searched this node
 
                 self.prev_positions.pop();
@@ -1045,9 +1055,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     break;
                 }
             }
-
-            // Check if we can continue searching
-            self.search_cancelled()?;
         }
 
         // Save this node to the TTable.
