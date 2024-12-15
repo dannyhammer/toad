@@ -563,22 +563,17 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // If only 1 legal move available, it is forced, so don't waste time on a full search.
             1 => {
-                // Get a proper evaluation of this position, if possible.
-                if let Ok(score) = self.quiescence::<PvNode>(
-                    game,
-                    0,
-                    SearchBounds::default(),
-                    &mut PrincipalVariation::default(),
-                ) {
-                    result.score = score;
-                }
+                // Get a quick, albeit poor, evaluation of the position.
+                // TODO: Replace this with a call to qsearch?
+                result.score = game.eval();
                 result.nodes += 1;
+                let bestmove = moves[0];
+                result.pv.0.push(bestmove);
 
                 if Log::DEBUG {
                     self.send_string(format!(
-                        "Position {:?} has only one legal move available ({}), evaluated at {}",
+                        "Position {:?} has only one legal move available ({bestmove}), evaluated at {}",
                         game.to_fen(),
-                        result.bestmove().unwrap(),
                         result.score.into_uci(),
                     ));
                 }
@@ -617,7 +612,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             let hits = self.ttable.hits;
             let reads = self.ttable.reads;
             let writes = self.ttable.writes;
-            let hit_rate = hits as f32 / reads as f32 * 100.0;
+            let hit_rate = (hits as f32 / reads as f32 * 100.0).min(0.0);
             let collisions = self.ttable.collisions;
             let info = format!("TT stats: {hits} hits / {reads} reads ({hit_rate:.2}% hit rate), {writes} writes, {collisions} collisions");
             self.send_string(info);
@@ -627,6 +622,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         if result.bestmove().is_none() {
             if let Some(first) = moves.first().copied() {
                 result.pv.0.push(first);
+                result.score = game.eval();
             }
         }
 
@@ -1130,7 +1126,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     fn is_repetition(&self, game: &Game<V>) -> bool {
         // We can skip the previous position, because there's no way it can be a repetition.
         // We also only need to look check at most `halfmove` previous positions.
-        let n = game.halfmove() as usize;
+        let n = game.halfmove();
         for prev in self.prev_positions.iter().rev().take(n).skip(1).step_by(2) {
             if prev.key() == game.key() {
                 return true;
@@ -1587,8 +1583,8 @@ mod tests {
         // If *any* legal move is available, it should be found, regardless of how much time was given.
         let fen = FEN_STARTPOS;
         let config = SearchConfig {
-            soft_timeout: Duration::from_millis(0),
-            hard_timeout: Duration::from_millis(0),
+            soft_timeout: Duration::from_nanos(1),
+            hard_timeout: Duration::from_nanos(1),
             ..Default::default()
         };
 
