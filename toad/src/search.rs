@@ -556,6 +556,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 }
             }
 
+            /*
             // If only 1 legal move available, it is forced, so don't waste time on a full search.
             1 => {
                 // Get a quick, albeit poor, evaluation of the position.
@@ -575,7 +576,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     ));
                 }
             }
-
+             */
             // Otherwise, start a search like normal.
             _ => self.iterative_deepening(game),
         }
