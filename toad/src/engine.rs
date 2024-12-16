@@ -21,8 +21,8 @@ use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
     perft, splitperft, Bitboard, Chess960, EngineCommand, Game, GameVariant, HistoryTable,
-    LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Position, Psqt, Score,
-    Search, SearchConfig, SearchResult, Square, Standard, TTable, Variant, BENCHMARK_FENS,
+    LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Ply, Position, Psqt,
+    Score, Search, SearchConfig, SearchResult, Square, Standard, TTable, Variant, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -303,7 +303,7 @@ impl Engine {
     fn bench(&mut self, depth: Option<u8>, pretty: bool) {
         // Set up the benchmarking config
         let config = SearchConfig {
-            max_depth: depth.unwrap_or(BENCH_DEPTH),
+            max_depth: Ply::new(depth.unwrap_or(BENCH_DEPTH) as i32),
             ..Default::default()
         };
 

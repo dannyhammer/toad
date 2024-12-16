@@ -6,6 +6,8 @@
 
 /// Commands to be sent to the engine, and how to parse them.
 mod cli;
+/// Types and utilities for measuring the vertical distance between nodes in a search.
+mod depth;
 /// Code related to the engine's functionality, such as user input handling.
 mod engine;
 /// Static evaluation of a given board state and the types used to compute it, such as piece-square tables.
@@ -61,6 +63,7 @@ mod board {
 
 pub use board::*;
 pub use cli::*;
+use depth::*;
 pub use engine::*;
 pub use eval::*;
 pub use game::*;

@@ -20,12 +20,9 @@ use thiserror::Error;
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Position, Score,
-    TTable, TTableEntry, Variant, ZobristKey,
+    tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Ply, Position,
+    Score, TTable, TTableEntry, Variant, ZobristKey,
 };
-
-/// Maximum depth that can be searched
-pub const MAX_DEPTH: u8 = u8::MAX / 2;
 
 /// Reasons that a search can be cancelled.
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,7 +79,7 @@ impl NodeType for NonPvNode {
 
 /// Represents the best sequence of moves found during a search.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct PrincipalVariation(ArrayVec<Move, { MAX_DEPTH as usize }>);
+pub struct PrincipalVariation(ArrayVec<Move, { Ply::MAX.plies() as usize }>);
 
 impl PrincipalVariation {
     /// An empty PV.
@@ -107,7 +104,8 @@ impl PrincipalVariation {
             .try_extend_from_slice(&other.0)
             .unwrap_or_else(|err| {
                 panic!(
-                    "{err}: Attempted to exceed PV capacity of {MAX_DEPTH} pushing {mv:?} and {:?}",
+                    "{err}: Attempted to exceed PV capacity of {} pushing {mv:?} and {:?}",
+                    Ply::MAX,
                     &other.0
                 );
             });
@@ -200,18 +198,18 @@ impl AspirationWindow {
     ///
     /// The value will differ depending on `depth`, with higher depths producing narrower windows.
     #[inline(always)]
-    fn delta(depth: u8) -> Score {
+    fn delta(depth: Ply) -> Score {
         let initial_delta = tune::initial_aspiration_window_delta!();
 
         let min_delta = tune::min_aspiration_window_delta!();
 
         // Gradually decrease the window size from `8*init` to `min`
-        Score::new(((initial_delta << 3) / depth as i32).max(min_delta))
+        Score::new(((initial_delta << 3) / depth.plies()).max(min_delta))
     }
 
     /// Creates a new [`AspirationWindow`] centered around `score`.
     #[inline(always)]
-    fn new(score: Score, depth: u8) -> Self {
+    fn new(score: Score, depth: Ply) -> Self {
         // If the score is mate, we expect search results to fluctuate, so set the windows to infinite.
         // Also, we only want to use aspiration windows after certain depths, so check that, too.
         let bounds = if depth < tune::min_aspiration_window_depth!() || score.is_mate() {
@@ -236,7 +234,7 @@ impl AspirationWindow {
     ///
     /// This also resets the `beta` bound to `(alpha + beta) / 2`
     #[inline(always)]
-    fn widen_down(&mut self, score: Score, depth: u8) {
+    fn widen_down(&mut self, score: Score, depth: Ply) {
         // Compute a gradually-increasing delta
         let delta = Self::delta(depth) * (1 << (self.alpha_fails + 1));
 
@@ -250,7 +248,7 @@ impl AspirationWindow {
 
     /// Widens the window's `beta` bound, expanding it upwards.
     #[inline(always)]
-    fn widen_up(&mut self, score: Score, depth: u8) {
+    fn widen_up(&mut self, score: Score, depth: Ply) {
         // Compute a gradually-increasing delta
         let delta = Self::delta(depth) * (1 << (self.beta_fails + 1));
 
@@ -284,7 +282,10 @@ pub struct SearchResult {
     pub score: Score,
 
     /// The depth of the search that produced this result.
-    pub depth: u8,
+    pub depth: Ply,
+
+    /// The maximum depth (ply) reached during this search.
+    pub seldepth: Ply,
 
     /// Principal variation during this search.
     ///
@@ -308,7 +309,8 @@ impl Default for SearchResult {
         Self {
             nodes: 0,
             score: -Score::INF,
-            depth: 1,
+            depth: Ply::ONE,
+            seldepth: Ply::ZERO,
             pv: PrincipalVariation::EMPTY,
         }
     }
@@ -318,7 +320,7 @@ impl Default for SearchResult {
 #[derive(Debug, Clone, Copy)]
 pub struct SearchConfig {
     /// Maximum depth to execute the search.
-    pub max_depth: u8,
+    pub max_depth: Ply,
 
     /// Node allowance.
     ///
@@ -350,7 +352,7 @@ impl SearchConfig {
 
         // If supplied, set the max depth / node allowance
         if let Some(depth) = options.depth {
-            config.max_depth = depth as u8;
+            config.max_depth = Ply::new(depth as i32);
         }
 
         if let Some(nodes) = options.nodes {
@@ -391,7 +393,7 @@ impl Default for SearchConfig {
     #[inline(always)]
     fn default() -> Self {
         Self {
-            max_depth: MAX_DEPTH,
+            max_depth: Ply::MAX,
             max_nodes: u64::MAX,
             starttime: Instant::now(),
             soft_timeout: Duration::MAX,
@@ -404,16 +406,16 @@ impl Default for SearchConfig {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct SearchParameters {
     /// Minium depth at which null move pruning can be applied.
-    min_nmp_depth: u8,
+    min_nmp_depth: Ply,
 
     /// Value to subtract from `depth` when applying null move pruning.
-    nmp_reduction: u8,
+    nmp_reduction: Ply,
 
     /// MAximum depth at which to apply reverse futility pruning.
-    max_rfp_depth: u8,
+    max_rfp_depth: Ply,
 
     /// Minimum depth at which to apply late move reductions.
-    min_lmr_depth: u8,
+    min_lmr_depth: Ply,
 
     /// Minimum moves that must be made before late move reductions can be applied.
     min_lmr_moves: usize,
@@ -437,10 +439,10 @@ struct SearchParameters {
 impl Default for SearchParameters {
     fn default() -> Self {
         Self {
-            min_nmp_depth: tune::min_nmp_depth!(),
-            nmp_reduction: tune::nmp_reduction!(),
-            max_rfp_depth: tune::max_rfp_depth!(),
-            min_lmr_depth: tune::min_lmr_depth!(),
+            min_nmp_depth: Ply::new(tune::min_nmp_depth!()),
+            nmp_reduction: Ply::new(tune::nmp_reduction!()),
+            max_rfp_depth: Ply::new(tune::max_rfp_depth!()),
+            min_lmr_depth: Ply::new(tune::min_lmr_depth!()),
             min_lmr_moves: tune::min_lmr_moves!(),
             lmr_offset: tune::lmr_offset!(),
             lmr_divisor: tune::lmr_divisor!(),
@@ -461,7 +463,7 @@ pub struct Search<'a, Log, V> {
     /// Configuration variables for this instance of the search.
     config: SearchConfig,
 
-    /// Result of the search to be returned once concluded.
+    /// Information collected that is returned at the conclusion of the search.
     result: SearchResult,
 
     /// Previous positions encountered during search.
@@ -477,10 +479,10 @@ pub struct Search<'a, Log, V> {
     params: SearchParameters,
 
     /// Marker for what variant of Chess is being played.
-    variant: PhantomData<&'a V>,
+    variant: PhantomData<V>,
 
     /// Marker for the level of logging to print.
-    log: PhantomData<&'a Log>,
+    log: PhantomData<Log>,
 }
 
 impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
@@ -529,7 +531,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             if nodes < u64::MAX {
                 self.send_string(format!("Max nodes := {nodes} nodes"));
             }
-            if depth < MAX_DEPTH {
+            if depth < Ply::MAX {
                 self.send_string(format!("Max depth := {depth}"));
             }
         }
@@ -576,7 +578,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Otherwise, start a search like normal.
             _ => self.iterative_deepening(game),
-        };
+        }
 
         if Log::DEBUG {
             if let Err(reason) = self.search_cancelled() {
@@ -652,6 +654,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         self.send_info(
             UciInfo::new()
                 .depth(self.result.depth)
+                .seldepth(self.result.seldepth)
                 .nodes(self.result.nodes)
                 .score(self.result.score)
                 .nps((self.result.nodes as f32 / elapsed.as_secs_f32()).trunc())
@@ -699,9 +702,13 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             // Get a score from the a/b search while using aspiration windows
             let score = 'aspiration_window: loop {
                 // Start a new search at the current depth, exiting the ID loop if we've ran out of time
-                let Ok(score) =
-                    self.negamax::<RootNode>(game, self.result.depth, 0, window.bounds, &mut pv)
-                else {
+                let Ok(score) = self.negamax::<RootNode>(
+                    game,
+                    self.result.depth,
+                    Ply::ZERO,
+                    window.bounds,
+                    &mut pv,
+                ) else {
                     break 'iterative_deepening;
                 };
 
@@ -750,12 +757,15 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     fn negamax<Node: NodeType>(
         &mut self,
         game: &Game<V>,
-        depth: u8,
-        ply: i32,
+        depth: Ply,
+        ply: Ply,
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Result<Score, SearchCancelled> {
         self.search_cancelled()?; // Exit early if search is terminated.
+
+        // Record the max max height / max ply / seldepth
+        self.result.seldepth = self.result.seldepth.max(ply) * !Node::ROOT as i32;
 
         // Declare a local principal variation for nodes found during this search.
         let mut local_pv = PrincipalVariation::default();
@@ -837,7 +847,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // If this node can be reduced, search it with a reduced window.
                 if let Some(lmr_reduction) = self.reduction_value::<Node>(depth, &new, i) {
                     // Reduced depth should never exceed `new_depth` and should never be less than `1`.
-                    let reduced_depth = (new_depth - lmr_reduction).max(1).min(new_depth);
+                    let reduced_depth = (new_depth - lmr_reduction).max(Ply::ONE).min(new_depth);
 
                     // Search at a reduced depth with a null window
                     score = -self.negamax::<NonPvNode>(
@@ -927,8 +937,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                      * as this one (as they did not cause a beta cutoff).
                      ****************************************************************************************************/
                     // Simple bonus based on depth
-                    let bonus =
-                        self.params.history_multiplier * depth as i32 - self.params.history_offset;
+                    let bonus = self.params.history_multiplier * depth - self.params.history_offset;
 
                     // Only update quiet moves
                     if mv.is_quiet() {
@@ -964,7 +973,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     fn quiescence<Node: NodeType>(
         &mut self,
         game: &Game<V>,
-        ply: i32,
+        ply: Ply,
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
     ) -> Result<Score, SearchCancelled> {
@@ -1065,7 +1074,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             bestmove,
             best,
             SearchBounds::new(original_alpha, bounds.beta),
-            0,
+            Ply::ZERO,
             ply,
         );
 
@@ -1141,8 +1150,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         bestmove: Option<Move>,
         score: Score,
         bounds: SearchBounds,
-        depth: u8,
-        ply: i32,
+        depth: Ply,
+        ply: Ply,
     ) {
         let entry = TTableEntry::new(key, bestmove, score, bounds, depth, ply);
         let old = self.ttable.store(entry);
@@ -1208,8 +1217,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     fn node_pruning_score<Node: NodeType>(
         &mut self,
         game: &Game<V>,
-        depth: u8,
-        ply: i32,
+        depth: Ply,
+        ply: Ply,
         bounds: SearchBounds,
         pv: &mut PrincipalVariation,
         local_pv: &mut PrincipalVariation,
@@ -1228,7 +1237,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * If the static eval of our position is low enough, check if a qsearch can beat alpha.
          * If it can't, we can prune this node.
          ****************************************************************************************************/
-        let razoring_margin = Score::RAZORING_OFFSET + Score::RAZORING_MULTIPLIER * depth as i32;
+        let razoring_margin = Score::RAZORING_OFFSET + Score::RAZORING_MULTIPLIER * depth;
         if depth <= 2 && static_eval + razoring_margin < bounds.alpha {
             let score = self.quiescence::<Node>(game, ply, bounds.null_alpha(), pv)?;
             // If we can't beat alpha (without mating), we can prune.
@@ -1243,7 +1252,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * If our static eval is too good (better than beta), we can prune this branch. Multiplying our
          * margin by depth makes this pruning process less risky for higher depths.
          ****************************************************************************************************/
-        let rfp_score = static_eval - self.params.rfp_margin * depth as i32;
+        let rfp_score = static_eval - self.params.rfp_margin * depth;
         if depth <= self.params.max_rfp_depth && rfp_score >= bounds.beta {
             return Ok(Some(rfp_score));
         }
@@ -1305,8 +1314,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     fn probe_tt(
         &mut self,
         key: ZobristKey,
-        depth: u8,
-        ply: i32,
+        depth: Ply,
+        ply: Ply,
         bounds: SearchBounds,
     ) -> Option<Score> {
         if Log::DEBUG {
@@ -1316,7 +1325,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // if-let chains are set to be stabilized in Rust 2024 (1.85.0): https://rust-lang.github.io/rfcs/2497-if-let-chains.html
         if let Some(tt_entry) = self.ttable.get(&key) {
             // Can only cut off if the existing entry came from a greater depth.
-            if tt_entry.depth >= depth {
+            if tt_entry.depth() >= depth {
                 return tt_entry.try_score(bounds, ply);
             }
         }
@@ -1328,10 +1337,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     #[inline(always)]
     fn reduction_value<Node: NodeType>(
         &self,
-        depth: u8,
+        depth: Ply,
         game: &Game<V>,
         moves_made: usize,
-    ) -> Option<u8> {
+    ) -> Option<i32> {
         /****************************************************************************************************
          * Late Move Reductions: https://www.chessprogramming.org/Late_Move_Reductions
          *
@@ -1344,12 +1353,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             .then(|| {
                 // Base LMR reduction increases as we go higher in depth and/or make more moves
                 let mut lmr_reduction = (self.params.lmr_offset
-                    + (depth as f32).ln() * (moves_made as f32).ln() / self.params.lmr_divisor)
-                    as u8;
+                    + (depth.plies() as f32).ln() * (moves_made as f32).ln()
+                        / self.params.lmr_divisor) as i32;
 
                 // Increase/decrease the reduction based on current conditions
                 // lmr_reduction += something;
-                lmr_reduction -= game.is_in_check() as u8;
+                lmr_reduction -= game.is_in_check() as i32;
 
                 lmr_reduction
             })
@@ -1357,13 +1366,13 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
     /// Compute an extension value to apply to a given node's search depth.
     #[inline(always)]
-    fn extension_value(&self, game: &Game<V>) -> u8 {
+    fn extension_value(&self, game: &Game<V>) -> Ply {
         /****************************************************************************************************
          * Check Extensions: https://www.chessprogramming.org/Check_Extensions
          *
          * If we're in check, we should extend the search a bit, in hopes to find a good way to escape.
          ****************************************************************************************************/
-        game.is_in_check() as u8
+        Ply::new(game.is_in_check() as i32)
     }
 }
 
@@ -1519,7 +1528,7 @@ mod tests {
     fn test_white_mate_in_1() {
         let fen = "k7/8/KQ6/8/8/8/8/8 w - - 0 1";
         let config = SearchConfig {
-            max_depth: 2,
+            max_depth: Ply::new(2),
             ..Default::default()
         };
 
@@ -1531,7 +1540,7 @@ mod tests {
     fn test_black_mated_in_1() {
         let fen = "2k5/7Q/8/2K5/8/8/8/6Q1 b - - 0 1";
         let config = SearchConfig {
-            max_depth: 3,
+            max_depth: Ply::new(3),
             ..Default::default()
         };
 
@@ -1554,7 +1563,7 @@ mod tests {
         // Pawn should take queen and also promote to queen
         let fen = "3q1n2/4P3/8/8/8/8/k7/7K w - - 0 1";
         let config = SearchConfig {
-            max_depth: 1,
+            max_depth: Ply::new(1),
             ..Default::default()
         };
 
@@ -1591,7 +1600,7 @@ mod tests {
             let res = run_search(fen, config);
 
             assert_eq!(res.nodes, max_nodes);
-            assert!(res.depth < MAX_DEPTH); // Ensure the ID didn't loop forever.
+            assert!(res.depth < Ply::MAX); // Ensure the ID didn't loop forever.
         }
     }
 
@@ -1601,7 +1610,7 @@ mod tests {
         let fen = "k6r/8/4q3/3P4/8/8/PP6/K7 w - - 0 1";
 
         // Loop until we reach a depth that does NOT think d5e6 is the best move
-        let mut max_depth = 1;
+        let mut max_depth = Ply::ONE;
         let max_nodes = loop {
             let config = SearchConfig {
                 max_depth,

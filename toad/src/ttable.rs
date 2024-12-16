@@ -4,7 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use crate::{Move, Score, SearchBounds, ZobristKey};
+use crate::{Move, Ply, Score, SearchBounds, ZobristKey};
 
 /// Number of bytes in a megabyte
 const BYTES_IN_MB: usize = 1024 * 1024;
@@ -77,9 +77,10 @@ impl TTableEntry {
         bestmove: Option<Move>,
         score: Score,
         bounds: SearchBounds,
-        depth: u8,
-        ply: i32,
+        depth: Ply,
+        ply: Ply,
     ) -> Self {
+        let depth = depth.plies() as u8;
         // Determine what kind of node this is fist, before score adjustment
         let node_type = NodeType::new(score, bounds);
 
@@ -102,7 +103,7 @@ impl TTableEntry {
     ///     2. The entry is an upper bound ([`NodeType::All`]) and its score is `<= alpha`.
     ///     3. The entry is a lower bound ([`NodeType::Cut`]) and its score is `>= beta`.
     #[inline(always)]
-    pub fn try_score(&self, bounds: SearchBounds, ply: i32) -> Option<Score> {
+    pub fn try_score(&self, bounds: SearchBounds, ply: Ply) -> Option<Score> {
         // Adjust mate scores to be relative to current ply
         let score = if self.score.is_mate() {
             self.score.relative(ply)
@@ -115,6 +116,12 @@ impl TTableEntry {
             || ((self.node_type == NodeType::All && score <= bounds.alpha)
                 || (self.node_type == NodeType::Cut && score >= bounds.beta)))
             .then_some(score)
+    }
+
+    /// Fetch the depth associated with this entry.
+    #[inline(always)]
+    pub fn depth(&self) -> Ply {
+        Ply::new(self.depth as i32)
     }
 }
 
