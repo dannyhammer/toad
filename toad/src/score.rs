@@ -27,12 +27,6 @@ impl Score {
     /// Score of a draw.
     pub const DRAW: Self = Self(0);
 
-    /// Initial value of alpha in alpha-beta pruning.
-    pub const ALPHA: Self = Self(-Self::INF.0);
-
-    /// Initial value of beta in alpha-beta pruning.
-    pub const BETA: Self = Self::INF;
-
     /// Lowest possible score for mate.
     ///
     /// This is only obtainable if mate is possible in [`MAX_DEPTH`] moves.

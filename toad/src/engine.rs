@@ -99,7 +99,9 @@ impl Engine {
         // Safe unwrap: `send` can only fail if it's corresponding receiver doesn't exist,
         //  and the only way our engine's `Receiver` can no longer exist is when our engine
         //  doesn't exist either, so this is always safe.
-        self.sender.send(command).unwrap();
+        self.sender
+            .send(command)
+            .expect("Failed to send a command to the engine via channels.");
     }
 
     /// Entrypoint of the engine.
@@ -145,13 +147,11 @@ impl Engine {
 
         // Execute commands as they are received
         while let Ok(cmd) = self.receiver.recv() {
-            if self.debug {
-                println!("info string Received command {cmd:?}");
-            }
+            // if self.debug {
+            //     println!("info string Received command {cmd:?}");
+            // }
 
             match cmd {
-                EngineCommand::Await => _ = self.stop_search(),
-
                 EngineCommand::Bench { depth, pretty } => self.bench(depth, pretty),
 
                 EngineCommand::ChangeVariant { variant } => {
@@ -241,6 +241,8 @@ impl Engine {
                         eprintln!("Error: {e:#}");
                     }
                 }
+
+                EngineCommand::Wait => _ = self.stop_search(),
             };
         }
 
@@ -589,8 +591,12 @@ impl Engine {
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
             // Lock the hash tables at the start of the search so that only the search thread may modify them
-            let mut ttable = ttable.lock().unwrap();
-            let mut history = history.lock().unwrap();
+            let mut ttable = ttable
+                .lock()
+                .expect("Failed to acquire Transposition Table at the start of search.");
+            let mut history = history
+                .lock()
+                .expect("Failed to acquire History Table at the start of search.");
 
             // Start the search, returning the result when completed.
             Search::<Log, V>::new(

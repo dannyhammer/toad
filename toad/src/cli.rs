@@ -19,12 +19,6 @@ use uci_parser::UciCommand;
     override_usage("<ENGINE COMMAND> | <UCI COMMAND>")
 )]
 pub enum EngineCommand {
-    /// Await the current search, blocking until it completes.
-    ///
-    /// This is primarily used when executing searches on startup,
-    /// to await their results before doing something else.
-    Await,
-
     /// Run a benchmark with the provided parameters.
     Bench {
         /// If set, the benchmarking results will be printed in a well-formatted table.
@@ -133,6 +127,12 @@ pub enum EngineCommand {
     /// Wrapper over UCI commands sent to the engine.
     #[command(skip)]
     Uci { cmd: UciCommand },
+
+    /// Await the current search, blocking until it completes.
+    ///
+    /// This is primarily used when executing searches on startup,
+    /// to await their results before doing something else.
+    Wait,
 }
 
 impl FromStr for EngineCommand {

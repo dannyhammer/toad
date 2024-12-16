@@ -15,6 +15,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use arrayvec::ArrayVec;
+use thiserror::Error;
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
@@ -24,6 +26,26 @@ use crate::{
 
 /// Maximum depth that can be searched
 pub const MAX_DEPTH: u8 = u8::MAX / 2;
+
+/// Reasons that a search can be cancelled.
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchCancelled {
+    /// Search ran out of time.
+    ///
+    /// Contains the amount of time since the timeout was exceeded.
+    #[error("Exceeded hard timeout of {0:?} by {1:?}")]
+    HardTimeout(Duration, Duration),
+
+    /// Met or exceeded the maximum number of nodes allowed.
+    ///
+    /// Contains the number of nodes past the allowance that were searched.
+    #[error("Exceeded node allowance by {0}")]
+    MaxNodes(u64),
+
+    /// Stopped by an external factor
+    #[error("Atomic flag was flipped")]
+    Stopped,
+}
 
 /// A marker trait for the types of nodes encountered during search.
 ///
@@ -56,6 +78,47 @@ struct NonPvNode;
 impl NodeType for NonPvNode {
     const ROOT: bool = false;
     const PV: bool = false;
+}
+
+/// Represents the best sequence of moves found during a search.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PrincipalVariation(ArrayVec<Move, { MAX_DEPTH as usize }>);
+
+impl PrincipalVariation {
+    /// An empty PV.
+    const EMPTY: Self = Self(ArrayVec::new_const());
+
+    /// Clears the moves of `self`.
+    #[inline(always)]
+    fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// Extend the contents of `self` with `mv` and the contents of `other`.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `mv` and `other` are longer than `self`'s capacity.
+    #[inline(always)]
+    fn extend(&mut self, mv: Move, other: &Self) {
+        self.clear();
+        self.0.push(mv);
+        self.0
+            .try_extend_from_slice(&other.0)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "{err}: Attempted to exceed PV capacity of {MAX_DEPTH} pushing {mv:?} and {:?}",
+                    &other.0
+                );
+            });
+    }
+}
+
+impl Default for PrincipalVariation {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::EMPTY
+    }
 }
 
 /// Bounds within an alpha-beta search.
@@ -115,7 +178,7 @@ impl Default for SearchBounds {
     /// Default [`SearchBounds`] are a `(-infinity, infinity)`.
     #[inline(always)]
     fn default() -> Self {
-        Self::new(Score::ALPHA, Score::BETA)
+        Self::new(-Score::INF, Score::INF)
     }
 }
 
@@ -157,8 +220,8 @@ impl AspirationWindow {
             // Otherwise we build a window around the provided score.
             let delta = Self::delta(depth);
             SearchBounds::new(
-                (score - delta).max(Score::ALPHA),
-                (score + delta).min(Score::BETA),
+                (score - delta).max(-Score::INF),
+                (score + delta).min(Score::INF),
             )
         };
 
@@ -178,8 +241,8 @@ impl AspirationWindow {
         let delta = Self::delta(depth) * (1 << (self.alpha_fails + 1));
 
         // By convention, we widen both bounds on a fail low.
-        self.bounds.beta = ((self.bounds.alpha + self.bounds.beta) / 2).min(Score::BETA);
-        self.bounds.alpha = (score - delta).max(Score::ALPHA);
+        self.bounds.beta = ((self.bounds.alpha + self.bounds.beta) / 2).min(Score::INF);
+        self.bounds.alpha = (score - delta).max(-Score::INF);
 
         // Increase number of failures
         self.alpha_fails += 1;
@@ -192,7 +255,7 @@ impl AspirationWindow {
         let delta = Self::delta(depth) * (1 << (self.beta_fails + 1));
 
         // Widen the beta bound
-        self.bounds.beta = (score + delta).min(Score::BETA);
+        self.bounds.beta = (score + delta).min(Score::INF);
 
         // Increase number of failures
         self.beta_fails += 1;
@@ -201,30 +264,40 @@ impl AspirationWindow {
     /// Returns `true` if `score` fails low, meaning it is below `alpha` and the window must be expanded downwards.
     #[inline(always)]
     fn fails_low(&self, score: Score) -> bool {
-        self.bounds.alpha != Score::ALPHA && score <= self.bounds.alpha
+        self.bounds.alpha != -Score::INF && score <= self.bounds.alpha
     }
 
     /// Returns `true` if `score` fails high, meaning it is above `beta` and the window must be expanded upwards.
     #[inline(always)]
     fn fails_high(&self, score: Score) -> bool {
-        self.bounds.beta != Score::BETA && score >= self.bounds.beta
+        self.bounds.beta != Score::INF && score >= self.bounds.beta
     }
 }
 
 /// The result of a search, containing the best move found, score, and total nodes searched.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SearchResult {
     /// Number of nodes searched.
     pub nodes: u64,
-
-    /// Best move found during the search.
-    pub bestmove: Option<Move>,
 
     /// Evaluation of the position after `bestmove` is made.
     pub score: Score,
 
     /// The depth of the search that produced this result.
     pub depth: u8,
+
+    /// Principal variation during this search.
+    ///
+    /// The first entry of this field represents the "best move" found during the search.
+    pub pv: PrincipalVariation,
+}
+
+impl SearchResult {
+    /// Fetch the first move in this PV, it one exists.
+    #[inline(always)]
+    fn bestmove(&self) -> Option<Move> {
+        self.pv.0.first().copied()
+    }
 }
 
 impl Default for SearchResult {
@@ -234,9 +307,9 @@ impl Default for SearchResult {
     fn default() -> Self {
         Self {
             nodes: 0,
-            bestmove: None,
-            score: Score::ALPHA,
+            score: -Score::INF,
             depth: 1,
+            pv: PrincipalVariation::EMPTY,
         }
     }
 }
@@ -290,18 +363,20 @@ impl SearchConfig {
             config.soft_timeout = movetime;
         } else {
             // Otherwise, search based on time remaining and increment
-            let (time, inc) = if game.side_to_move().is_white() {
+            let (remaining, inc) = if game.side_to_move().is_white() {
                 (options.wtime, options.winc)
             } else {
                 (options.btime, options.binc)
             };
 
             // Only calculate timeouts if a time was provided
-            if let Some(time) = time {
+            if let Some(remaining) = remaining {
                 let inc = inc.unwrap_or(Duration::ZERO) / tune::time_inc_divisor!();
 
-                config.soft_timeout = (time / tune::soft_timeout_divisor!() + inc).min(time); // Don't exceed time limit with increment.
-                config.hard_timeout = time / tune::hard_timeout_divisor!();
+                // Don't exceed time limit with increment.
+                config.soft_timeout =
+                    remaining.min(remaining / tune::soft_timeout_divisor!() + inc);
+                config.hard_timeout = remaining / tune::hard_timeout_divisor!();
             }
         }
 
@@ -440,16 +515,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         if Log::DEBUG {
             self.send_string(format!("Starting search on {:?}", game.to_fen()));
 
-            let soft = self.config.soft_timeout.as_millis();
-            let hard = self.config.hard_timeout.as_millis();
+            let soft = self.config.soft_timeout;
+            let hard = self.config.hard_timeout;
             let nodes = self.config.max_nodes;
             let depth = self.config.max_depth;
 
-            if soft < Duration::MAX.as_millis() {
-                self.send_string(format!("Soft timeout := {soft}ms"));
+            if soft < Duration::MAX {
+                self.send_string(format!("Soft timeout := {soft:?}"));
             }
-            if hard < Duration::MAX.as_millis() {
-                self.send_string(format!("Hard timeout := {hard}ms"));
+            if hard < Duration::MAX {
+                self.send_string(format!("Hard timeout := {hard:?}"));
             }
             if nodes < u64::MAX {
                 self.send_string(format!("Max nodes := {nodes} nodes"));
@@ -459,22 +534,96 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        let res = self.iterative_deepening(game);
+        // Initialize `bestmove` to the first move available, so we can return *something* if we're low on time.
+        let moves = game.get_legal_moves();
+        let mut result = SearchResult::default();
+
+        // Get the search result, exiting early if there are fewer than two moves available.
+        let mut result = match moves.len() {
+            // If no legal moves available, the game is over, so return immediately.
+            0 => {
+                // It's either a draw or a checkmate
+                result.score = -Score::MATE * game.is_in_check() as i32;
+                result.nodes += 1;
+
+                if Log::DEBUG {
+                    self.send_string(format!(
+                        "Position {:?} has no legal moves available, evaluated at {}",
+                        game.to_fen(),
+                        result.score.into_uci(),
+                    ));
+                }
+
+                result
+            }
+
+            // If only 1 legal move available, it is forced, so don't waste time on a full search.
+            1 => {
+                // Get a quick, albeit poor, evaluation of the position.
+                // TODO: Replace this with a call to qsearch?
+                result.score = game.eval();
+                result.nodes += 1;
+
+                // Append the only legal move to the PV
+                let bestmove = moves[0];
+                result.pv.0.push(bestmove);
+
+                if Log::DEBUG {
+                    self.send_string(format!(
+                        "Position {:?} has only one legal move available ({bestmove}), evaluated at {}",
+                        game.to_fen(),
+                        result.score.into_uci(),
+                    ));
+                }
+
+                result
+            }
+
+            // Otherwise, start a search like normal.
+            _ => self.iterative_deepening(game, result),
+        };
 
         if Log::DEBUG {
+            if let Err(reason) = self.search_cancelled() {
+                if let Some(bestmove) = result.bestmove() {
+                    self.send_string(format!(
+                        "Search cancelled during depth {} while evaluating {} with score {}. Reason: {reason}",
+                        result.depth,
+                        V::fmt_move(bestmove),
+                        result.score,
+                    ));
+                } else {
+                    self.send_string(format!(
+                        "Search cancelled during depth {} with score {} and no bestmove. Reason: {reason}",
+                        result.depth, result.score,
+                    ));
+                }
+            }
+
             let hits = self.ttable.hits;
             let reads = self.ttable.reads;
             let writes = self.ttable.writes;
-            let hit_rate = hits as f32 / reads as f32 * 100.0;
+            let hit_rate = (hits as f32 / reads as f32 * 100.0).min(0.0);
             let collisions = self.ttable.collisions;
             let info = format!("TT stats: {hits} hits / {reads} reads ({hit_rate:.2}% hit rate), {writes} writes, {collisions} collisions");
             self.send_string(info);
         }
 
+        // If no bestmove, but there is a legal move, update bestmove.
+        if result.bestmove().is_none() {
+            if let Some(first) = moves.first().copied() {
+                result.pv.0.push(first);
+                result.score = game.eval();
+            }
+        }
+
         // Search has ended; send bestmove
         if Log::INFO {
+            self.send_search_info(&result); // UCI spec states to send one last `info` before `bestmove`.
+
+            // TODO: On a `go infinite` search, we should *only* send `bestmove` after `stop` is received, regardless of whether the search has concluded
             self.send_response(UciResponse::BestMove {
-                bestmove: res.bestmove.map(V::fmt_move),
+                bestmove: result.bestmove().map(V::fmt_move),
                 ponder: None,
             });
         }
@@ -482,7 +631,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Search has concluded, alert other thread(s) that we are no longer searching
         self.is_searching.store(false, Ordering::Relaxed);
 
-        res
+        result
     }
 
     /// Sends a [`UciResponse`] to `stdout`.
@@ -498,9 +647,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         self.send_response(resp);
     }
 
-    /// Sends UCI info about the conclusion of this search.
+    /// Sends UCI info about the conclusion of a search.
+    ///
+    /// This is sent at the end of each new search in the iterative deepening loop.
     #[inline(always)]
-    fn send_end_of_search_info(&self, result: &SearchResult) {
+    fn send_search_info(&self, result: &SearchResult) {
         let elapsed = self.config.starttime.elapsed();
 
         self.send_info(
@@ -510,7 +661,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 .score(result.score)
                 .nps((self.nodes as f32 / elapsed.as_secs_f32()).trunc())
                 .time(elapsed.as_millis())
-                .pv(result.bestmove.map(V::fmt_move)),
+                .pv(result.pv.0.iter().map(|&mv| V::fmt_move(mv))),
         );
     }
 
@@ -528,33 +679,36 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     /// However, with features such as move ordering, a/b pruning, and aspiration windows, ID enhances performance.
     ///
     /// After each iteration, we check if we've exceeded our `soft_timeout` and, if we haven't, we run a search at a greater depth.
-    fn iterative_deepening(&mut self, game: &Game<V>) -> SearchResult {
-        // Initialize `bestmove` to the first move available
-        let mut result = SearchResult {
-            bestmove: game.get_legal_moves().first().copied(),
-            ..Default::default()
-        };
-
+    fn iterative_deepening(&mut self, game: &Game<V>, mut result: SearchResult) -> SearchResult {
         /****************************************************************************************************
          * Iterative Deepening: https://www.chessprogramming.org/Iterative_Deepening
+         *
+         * Since we don't know how much time a search will take, we perform a series of searches as increasing
+         * depths until we run out of time.
          ****************************************************************************************************/
-
-        // The actual Iterative Deepening loop
         'iterative_deepening: while self.config.starttime.elapsed() < self.config.soft_timeout
             && self.is_searching.load(Ordering::Relaxed)
             && result.depth <= self.config.max_depth
         {
             /****************************************************************************************************
              * Aspiration Windows: https://www.chessprogramming.org/Aspiration_Windows
+             *
+             * If our search is stable, the result of a search from the next depth should be similar to our
+             * current result. Therefore, we can use the current result to initialize our alpha/beta bounds.
              ****************************************************************************************************/
 
             // Create a new aspiration window for this search
             let mut window = AspirationWindow::new(result.score, result.depth);
+            let mut pv = PrincipalVariation::EMPTY;
 
             // Get a score from the a/b search while using aspiration windows
             let score = 'aspiration_window: loop {
-                // Start a new search at the current depth
-                let score = self.negamax::<RootNode>(game, result.depth, 0, window.bounds);
+                // Start a new search at the current depth, exiting the ID loop if we've ran out of time
+                let Ok(score) =
+                    self.negamax::<RootNode>(game, result.depth, 0, window.bounds, &mut pv)
+                else {
+                    break 'iterative_deepening;
+                };
 
                 // If the score fell outside of the aspiration window, widen it gradually
                 if window.fails_low(score) {
@@ -565,44 +719,29 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     // Otherwise, the window is OK and we can use the score
                     break 'aspiration_window score;
                 }
-
-                // If we've ran out of time, we shouldn't update the score, because the last search iteration was forcibly cancelled.
-                // Instead, we should break out of the ID loop, using the result from the previous iteration
-                if self.search_cancelled() {
-                    if Log::DEBUG {
-                        if let Some(bestmove) = self.get_tt_bestmove(game.key()) {
-                            self.send_string(format!(
-                                "Search cancelled during depth {} while evaluating {} with score {score}",
-                                result.depth,
-                                V::fmt_move(bestmove),
-                                ));
-                        } else {
-                            self.send_string(format!(
-                            "Search cancelled during depth {} with score {score} and no bestmove",
-                            result.depth,
-                        ));
-                        }
-                    }
-                    break 'iterative_deepening;
-                }
             };
+
+            // We check this again here for sanity reasons.
+            if self.search_cancelled().is_err() {
+                break 'iterative_deepening;
+            }
 
             /****************************************************************************************************
              * Update current best score
              ****************************************************************************************************/
 
-            // Otherwise, we need to update the "best" result with the results from the new search
+            // We need to update our bestmove and score, since this iteration's search completed without timeout.
             result.score = score;
+            result.pv = pv;
 
-            // Get the bestmove from the TTable
-            result.bestmove = self
-                .ttable
-                .get(&game.key())
-                .and_then(|entry| entry.bestmove);
+            // Hack; if we're on the last iteration, don't send an `info` line, as it gets sent just before `bestmove` anyway.
+            if result.depth == self.config.max_depth {
+                break;
+            }
 
             // Send search info to the GUI
             if Log::INFO {
-                self.send_end_of_search_info(&result);
+                self.send_search_info(&result);
             }
 
             // Increase the depth for the next iteration
@@ -626,7 +765,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         depth: u8,
         ply: i32,
         mut bounds: SearchBounds,
-    ) -> Score {
+        pv: &mut PrincipalVariation,
+    ) -> Result<Score, SearchCancelled> {
+        self.search_cancelled()?; // Exit early if search is terminated.
+
+        // Declare a local principal variation for nodes found during this search.
+        let mut local_pv = PrincipalVariation::default();
+
+        // Clear any nodes in this PV, since we're searching from a new position
+        pv.clear();
+
         /****************************************************************************************************
          * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
          *
@@ -637,7 +785,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         if !Node::PV {
             // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
             if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
-                return tt_score;
+                return Ok(tt_score);
             }
         }
 
@@ -649,24 +797,26 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
         // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
-            return self.quiescence::<Node>(game, ply, bounds);
+            return self.quiescence::<Node>(game, ply, bounds, pv);
         }
 
         // If we CAN prune this node by means other than the TT, do so
-        if let Some(score) = self.node_pruning_score::<Node>(game, depth, ply, bounds) {
-            return score;
+        if let Some(score) =
+            self.node_pruning_score::<Node>(game, depth, ply, bounds, pv, &mut local_pv)?
+        {
+            return Ok(score);
         }
 
         // If there are no legal moves, it's either mate or a draw.
         let mut moves = game.get_legal_moves();
         if moves.is_empty() {
-            return if game.is_in_check() {
+            return Ok(if game.is_in_check() {
                 // Offset by ply to prefer earlier mates
                 ply - Score::MATE
             } else {
                 // Drawing is better than losing
                 Score::DRAW
-            };
+            });
         }
 
         // Sort moves so that we look at "promising" ones first
@@ -674,7 +824,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         // Start with a *really bad* initial score
-        let mut best = Score::ALPHA;
+        let mut best = -Score::INF;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
 
@@ -683,6 +833,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
 
         for (i, mv) in moves.iter().enumerate() {
+            // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
+            local_pv.clear();
+
             // Copy-make the new position
             let new = game.with_move_made(*mv);
             let mut score = Score::DRAW;
@@ -704,7 +857,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                         reduced_depth,
                         ply + 1,
                         -bounds.null_alpha(),
-                    );
+                        &mut local_pv,
+                    )?;
 
                     // If that failed *high* (raised alpha), re-search at the full depth with the null window
                     if score > bounds.alpha && reduced_depth < new_depth {
@@ -713,12 +867,18 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                             new_depth,
                             ply + 1,
                             -bounds.null_alpha(),
-                        );
+                            &mut local_pv,
+                        )?;
                     }
                 } else if !Node::PV || i > 0 {
                     // All non-PV nodes get searched with a null window
-                    score =
-                        -self.negamax::<NonPvNode>(&new, new_depth, ply + 1, -bounds.null_alpha());
+                    score = -self.negamax::<NonPvNode>(
+                        &new,
+                        new_depth,
+                        ply + 1,
+                        -bounds.null_alpha(),
+                        &mut local_pv,
+                    )?;
                 }
 
                 /****************************************************************************************************
@@ -731,8 +891,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                  ****************************************************************************************************/
                 // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
                 if Node::PV && (i == 0 || score > bounds.alpha) {
-                    score = -self.negamax::<PvNode>(&new, new_depth, ply + 1, -bounds);
+                    score = -self.negamax::<PvNode>(
+                        &new,
+                        new_depth,
+                        ply + 1,
+                        -bounds,
+                        &mut local_pv,
+                    )?;
                 }
+
+                self.search_cancelled()?; // Exit early if search is terminated.
 
                 // We've now searched this node
                 self.nodes += 1;
@@ -753,6 +921,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 if score > bounds.alpha {
                     bounds.alpha = score;
                     bestmove = Some(*mv);
+
+                    // Only extend the PV if we're in a PV node
+                    if Node::PV {
+                        // assert_pv_is_legal(game, *mv, &local_pv);
+                        pv.extend(*mv, &local_pv);
+                    }
                 }
 
                 // Fail high
@@ -780,15 +954,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     break;
                 }
             }
-
-            // Check if we can continue searching
-            if self.search_cancelled() {
-                break;
-            }
         }
 
-        // Save this node to the TTable if and only if alpha was raised, meaning a bestmove was found.
-        // if bounds.alpha != original_alpha {
+        // Save this node to the TTable.
         self.save_to_tt(
             game.key(),
             bestmove,
@@ -797,27 +965,34 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             depth,
             ply,
         );
-        // }
 
-        best
+        Ok(best)
     }
 
     /// Quiescence Search (QSearch)
     ///
-    /// A search that looks at only possible captures and capture-chains.
+    /// A search that looks at only "non-quiet" moves and terminates at "quiet" positions.
     /// This is called when [`Search::negamax`] reaches a depth of 0, and has no recursion limit.
     fn quiescence<Node: NodeType>(
         &mut self,
         game: &Game<V>,
         ply: i32,
         mut bounds: SearchBounds,
-    ) -> Score {
+        pv: &mut PrincipalVariation,
+    ) -> Result<Score, SearchCancelled> {
+        self.search_cancelled()?; // Exit early if search is terminated.
+
+        // Declare a local principal variation for nodes found during this search.
+        let mut local_pv = PrincipalVariation::default();
+        // Clear any nodes in this PV, since we're searching from a new position
+        pv.clear();
+
         // Evaluate the current position, to serve as our baseline
         let stand_pat = game.eval();
 
         // Beta cutoff; this position is "too good" and our opponent would never let us get here
         if stand_pat >= bounds.beta {
-            return stand_pat;
+            return Ok(stand_pat);
         } else if stand_pat > bounds.alpha {
             bounds.alpha = stand_pat;
         }
@@ -834,9 +1009,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         };
 
         // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
-        // So, if there are no captures available, just return the current evaluation.
+        // So, if there are no moves available, just return the current evaluation.
         if moves.is_empty() {
-            return stand_pat;
+            return Ok(stand_pat);
         }
 
         let tt_move = self.get_tt_bestmove(game.key());
@@ -851,6 +1026,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
 
         for mv in moves {
+            // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
+            local_pv.clear();
+
             // Copy-make the new position
             let new = game.with_move_made(mv);
             let mut score = Score::DRAW;
@@ -860,7 +1038,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             if Node::ROOT || !self.is_draw(&new) {
                 self.prev_positions.push(*new.position());
 
-                score = -self.quiescence::<Node>(&new, ply + 1, -bounds);
+                score = -self.quiescence::<Node>(&new, ply + 1, -bounds, &mut local_pv)?;
+
+                self.search_cancelled()?; // Exit early if search is terminated.
+
                 self.nodes += 1; // We've now searched this node
 
                 self.prev_positions.pop();
@@ -877,6 +1058,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 if score > bounds.alpha {
                     bounds.alpha = score;
                     bestmove = Some(mv);
+
+                    // Only extend the PV if we're in a PV node
+                    if Node::PV {
+                        // assert_pv_is_legal(game, mv, &local_pv);
+                        pv.extend(mv, &local_pv);
+                    }
                 }
 
                 // Fail high
@@ -884,15 +1071,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     break;
                 }
             }
-
-            // Check if we can continue searching
-            if self.search_cancelled() {
-                break;
-            }
         }
 
-        // Save this node to the TTable if and only if alpha was raised, meaning a bestmove was found.
-        // if bounds.alpha != original_alpha {
+        // Save this node to the TTable.
         self.save_to_tt(
             game.key(),
             bestmove,
@@ -901,20 +1082,42 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             0,
             ply,
         );
-        // }
 
-        best // fail-soft
+        Ok(best) // fail-soft
     }
 
     /// Checks if we've exceeded any conditions that would warrant the search to end.
+    ///
+    /// This method returns an `Err` of [`SearchCancelled`] if the search must end prematurely.
+    /// While a termination isn't truly an error, this API allows us to cleanly leverage the `?` operator.
     #[inline(always)]
-    fn search_cancelled(&self) -> bool {
-        // Condition 1: We've exceeded the hard limit of our allotted search time
-        self.config.starttime.elapsed() >= self.config.hard_timeout ||
-        // Condition 2: The search was stopped by an external factor, like the `stop` command
-        !self.is_searching.load(Ordering::Relaxed) ||
-        // Condition 3: We've exceeded the maximum amount of nodes we're allowed to search
-        self.nodes >= self.config.max_nodes
+    fn search_cancelled(&self) -> Result<(), SearchCancelled> {
+        // Only check for timeouts every 1024 nodes, because searches are fast and 1k nodes doesn't take too long..
+        if self.nodes % 1024 == 0 {
+            // We've exceeded the hard limit of our allotted search time
+            if let Some(diff) = self
+                .config
+                .starttime
+                .elapsed()
+                .checked_sub(self.config.hard_timeout)
+            {
+                return Err(SearchCancelled::HardTimeout(self.config.hard_timeout, diff));
+            }
+        }
+
+        // We've exceeded the maximum amount of nodes we're allowed to search
+        // This is checked first so that `go nodes` searches terminate properly
+        if let Some(diff) = self.nodes.checked_sub(self.config.max_nodes) {
+            return Err(SearchCancelled::MaxNodes(diff));
+        }
+
+        // The search was stopped by an external factor, like the `stop` command
+        if !self.is_searching.load(Ordering::Relaxed) {
+            return Err(SearchCancelled::Stopped);
+        }
+
+        // No conditions met; we can continue searching
+        Ok(())
     }
 
     /// Checks if `game` is a repetition, comparing it to previous positions
@@ -922,7 +1125,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     fn is_repetition(&self, game: &Game<V>) -> bool {
         // We can skip the previous position, because there's no way it can be a repetition.
         // We also only need to look check at most `halfmove` previous positions.
-        let n = game.halfmove() as usize;
+        let n = game.halfmove();
         for prev in self.prev_positions.iter().rev().take(n).skip(1).step_by(2) {
             if prev.key() == game.key() {
                 return true;
@@ -1022,10 +1225,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         depth: u8,
         ply: i32,
         bounds: SearchBounds,
-    ) -> Option<Score> {
+        pv: &mut PrincipalVariation,
+        local_pv: &mut PrincipalVariation,
+    ) -> Result<Option<Score>, SearchCancelled> {
         // Cannot prune anything in a PV node or if we're in check
         if Node::PV || game.is_in_check() {
-            return None;
+            return Ok(None);
         }
 
         // Static evaluation of the current position is used in multiple pruning techniques.
@@ -1039,10 +1244,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
         let razoring_margin = Score::RAZORING_OFFSET + Score::RAZORING_MULTIPLIER * depth as i32;
         if depth <= 2 && static_eval + razoring_margin < bounds.alpha {
-            let score = self.quiescence::<Node>(game, ply, bounds.null_alpha());
+            let score = self.quiescence::<Node>(game, ply, bounds.null_alpha(), pv)?;
             // If we can't beat alpha (without mating), we can prune.
             if score < bounds.alpha && !score.is_mate() {
-                return Some(score); // fail-soft
+                return Ok(Some(score)); // fail-soft
             }
         }
 
@@ -1054,7 +1259,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
         let rfp_score = static_eval - self.params.rfp_margin * depth as i32;
         if depth <= self.params.max_rfp_depth && rfp_score >= bounds.beta {
-            return Some(rfp_score);
+            return Ok(Some(rfp_score));
         }
 
         /****************************************************************************************************
@@ -1082,18 +1287,24 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Search at a reduced depth with a zero-window
             let nmp_depth = depth - self.params.nmp_reduction;
-            let score = -self.negamax::<Node>(&null_game, nmp_depth, ply + 1, -bounds.null_beta());
+            let score = -self.negamax::<NonPvNode>(
+                &null_game,
+                nmp_depth,
+                ply + 1,
+                -bounds.null_beta(),
+                local_pv,
+            )?;
 
             self.prev_positions.pop();
 
             // If making the nullmove produces a cutoff, we can assume that a full-depth search would also produce a cutoff
             if score >= bounds.beta {
-                return Some(score);
+                return Ok(Some(score));
             }
         }
 
         // If no pruning technique was possible, return no score
-        None
+        Ok(None)
     }
 
     /// Probes the [`TTable`] for an entry at the provided `key`, returning that entry's score, if appropriate.
@@ -1167,6 +1378,28 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * If we're in check, we should extend the search a bit, in hopes to find a good way to escape.
          ****************************************************************************************************/
         game.is_in_check() as u8
+    }
+}
+
+/// Utility function to assert that the PV is legal for the provided game.
+#[allow(dead_code)]
+fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &PrincipalVariation) {
+    let fen = game.to_fen();
+    let mut game = game.with_move_made(mv);
+
+    for local_pv_mv in &local_pv.0 {
+        assert!(
+            game.is_legal(*local_pv_mv),
+            "Illegal PV move {local_pv_mv} found on {fen}\nFull PV: {}\nResulting FEN: {}",
+            [&mv]
+                .into_iter()
+                .chain(local_pv.0.iter())
+                .map(|m| m.to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+            game.to_fen()
+        );
+        game.make_move(*local_pv_mv);
     }
 }
 
@@ -1305,19 +1538,19 @@ mod tests {
         };
 
         let res = ensure_is_mate_in(fen, config, 1);
-        assert_eq!(res.bestmove.unwrap(), "b6a7")
+        assert_eq!(res.bestmove().unwrap(), "b6a7", "Result: {res:#?}");
     }
 
     #[test]
     fn test_black_mated_in_1() {
-        let fen = "1k6/8/KQ6/2Q5/8/8/8/8 b - - 0 1";
+        let fen = "2k5/7Q/8/2K5/8/8/8/6Q1 b - - 0 1";
         let config = SearchConfig {
             max_depth: 3,
             ..Default::default()
         };
 
         let res = ensure_is_mate_in(fen, config, -1);
-        assert_eq!(res.bestmove.unwrap(), "b8a8")
+        assert!(["c8b8", "c8d8"].contains(&res.bestmove().unwrap().to_string().as_str()));
     }
 
     #[test]
@@ -1326,7 +1559,7 @@ mod tests {
         let config = SearchConfig::default();
 
         let res = run_search(fen, config);
-        assert!(res.bestmove.is_none());
+        assert!(res.bestmove().is_none());
         assert_eq!(res.score, Score::DRAW);
     }
 
@@ -1340,7 +1573,7 @@ mod tests {
         };
 
         let res = run_search(fen, config);
-        assert_eq!(res.bestmove.unwrap(), "e7d8q");
+        assert_eq!(res.bestmove().unwrap(), "e7d8q");
     }
 
     #[test]
@@ -1348,12 +1581,69 @@ mod tests {
         // If *any* legal move is available, it should be found, regardless of how much time was given.
         let fen = FEN_STARTPOS;
         let config = SearchConfig {
-            soft_timeout: Duration::from_millis(0),
-            hard_timeout: Duration::from_millis(0),
+            soft_timeout: Duration::from_nanos(1),
+            hard_timeout: Duration::from_nanos(1),
             ..Default::default()
         };
 
         let res = run_search(fen, config);
-        assert!(res.bestmove.is_some());
+        assert!(res.bestmove().is_some());
+    }
+
+    #[test]
+    fn test_go_nodes() {
+        let fen = FEN_KIWIPETE;
+
+        let node_limits = [0, 1, 10, 17, 126, 192, 1748, 182048, 1928392];
+
+        for max_nodes in node_limits {
+            let config = SearchConfig {
+                max_nodes,
+                ..Default::default()
+            };
+
+            let res = run_search(fen, config);
+
+            assert_eq!(res.nodes, max_nodes);
+            assert!(res.depth < MAX_DEPTH); // Ensure the ID didn't loop forever.
+        }
+    }
+
+    #[test]
+    fn test_go_nodes_cutoff_search_still_gives_good_result() {
+        // d5e6 is a good capture, but will lead to mate on the next iteration.
+        let fen = "k6r/8/4q3/3P4/8/8/PP6/K7 w - - 0 1";
+
+        // Loop until we reach a depth that does NOT think d5e6 is the best move
+        let mut max_depth = 1;
+        let max_nodes = loop {
+            let config = SearchConfig {
+                max_depth,
+                ..Default::default()
+            };
+
+            let res = run_search(fen, config);
+            if res.bestmove().unwrap() != "d5e6" {
+                break res.nodes;
+            }
+
+            max_depth += 1;
+        };
+
+        // Now run a search on that position, stopping *just* before we would have found a move better than d5e6
+        let config = SearchConfig {
+            max_nodes: max_nodes - 1,
+            ..Default::default()
+        };
+        let res = run_search(fen, config);
+        assert_eq!(res.bestmove().unwrap(), "d5e6");
+
+        // Do the same, but stop just *after* the node count that lets us find a better move than d5e6
+        let config = SearchConfig {
+            max_nodes: max_nodes + 1,
+            ..Default::default()
+        };
+        let res = run_search(fen, config);
+        assert_ne!(res.bestmove().unwrap(), "d5e6");
     }
 }
