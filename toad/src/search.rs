@@ -453,9 +453,6 @@ impl Default for SearchParameters {
 
 /// Executes a search on a game of chess.
 pub struct Search<'a, Log, V> {
-    /// Number of nodes searched.
-    nodes: u64,
-
     /// An atomic flag to determine if the search should be cancelled at any time.
     ///
     /// If this is ever `false`, the search must exit as soon as possible.
@@ -463,6 +460,9 @@ pub struct Search<'a, Log, V> {
 
     /// Configuration variables for this instance of the search.
     config: SearchConfig,
+
+    /// Result of the search to be returned once concluded.
+    result: SearchResult,
 
     /// Previous positions encountered during search.
     prev_positions: Vec<Position>,
@@ -494,12 +494,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         history: &'a mut HistoryTable,
     ) -> Self {
         Self {
-            nodes: 0,
             is_searching,
             config,
             prev_positions,
             ttable,
             history,
+            result: SearchResult::default(),
             params: SearchParameters::default(),
             variant: PhantomData,
             log: PhantomData,
@@ -536,66 +536,61 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Initialize `bestmove` to the first move available, so we can return *something* if we're low on time.
         let moves = game.get_legal_moves();
-        let mut result = SearchResult::default();
 
         // Get the search result, exiting early if there are fewer than two moves available.
-        let mut result = match moves.len() {
+        match moves.len() {
             // If no legal moves available, the game is over, so return immediately.
             0 => {
                 // It's either a draw or a checkmate
-                result.score = -Score::MATE * game.is_in_check() as i32;
-                result.nodes += 1;
+                self.result.score = -Score::MATE * game.is_in_check() as i32;
+                self.result.nodes += 1;
 
                 if Log::DEBUG {
                     self.send_string(format!(
                         "Position {:?} has no legal moves available, evaluated at {}",
                         game.to_fen(),
-                        result.score.into_uci(),
+                        self.result.score.into_uci(),
                     ));
                 }
-
-                result
             }
 
             // If only 1 legal move available, it is forced, so don't waste time on a full search.
             1 => {
                 // Get a quick, albeit poor, evaluation of the position.
                 // TODO: Replace this with a call to qsearch?
-                result.score = game.eval();
-                result.nodes += 1;
+                self.result.score = game.eval();
+                self.result.nodes += 1;
 
                 // Append the only legal move to the PV
                 let bestmove = moves[0];
-                result.pv.0.push(bestmove);
+                self.result.pv.0.push(bestmove);
 
                 if Log::DEBUG {
                     self.send_string(format!(
                         "Position {:?} has only one legal move available ({bestmove}), evaluated at {}",
                         game.to_fen(),
-                        result.score.into_uci(),
+                        self.result.score.into_uci(),
                     ));
                 }
-
-                result
             }
 
             // Otherwise, start a search like normal.
-            _ => self.iterative_deepening(game, result),
+            _ => self.iterative_deepening(game),
         };
 
         if Log::DEBUG {
             if let Err(reason) = self.search_cancelled() {
-                if let Some(bestmove) = result.bestmove() {
+                if let Some(bestmove) = self.result.bestmove() {
                     self.send_string(format!(
                         "Search cancelled during depth {} while evaluating {} with score {}. Reason: {reason}",
-                        result.depth,
+                        self.result.depth,
                         V::fmt_move(bestmove),
-                        result.score,
+                        self.result.score,
                     ));
                 } else {
                     self.send_string(format!(
                         "Search cancelled during depth {} with score {} and no bestmove. Reason: {reason}",
-                        result.depth, result.score,
+                        self.result.depth, self.result.score,
                     ));
                 }
             }
@@ -610,20 +605,20 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         }
 
         // If no bestmove, but there is a legal move, update bestmove.
-        if result.bestmove().is_none() {
+        if self.result.bestmove().is_none() {
             if let Some(first) = moves.first().copied() {
-                result.pv.0.push(first);
-                result.score = game.eval();
+                self.result.pv.0.push(first);
+                self.result.score = game.eval();
             }
         }
 
         // Search has ended; send bestmove
         if Log::INFO {
-            self.send_search_info(&result); // UCI spec states to send one last `info` before `bestmove`.
+            self.send_search_info(); // UCI spec states to send one last `info` before `bestmove`.
 
             // TODO: On a `go infinite` search, we should *only* send `bestmove` after `stop` is received, regardless of whether the search has concluded
             self.send_response(UciResponse::BestMove {
-                bestmove: result.bestmove().map(V::fmt_move),
+                bestmove: self.result.bestmove().map(V::fmt_move),
                 ponder: None,
             });
         }
@@ -631,7 +626,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Search has concluded, alert other thread(s) that we are no longer searching
         self.is_searching.store(false, Ordering::Relaxed);
 
-        result
+        self.result
     }
 
     /// Sends a [`UciResponse`] to `stdout`.
@@ -651,17 +646,17 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     ///
     /// This is sent at the end of each new search in the iterative deepening loop.
     #[inline(always)]
-    fn send_search_info(&self, result: &SearchResult) {
+    fn send_search_info(&self) {
         let elapsed = self.config.starttime.elapsed();
 
         self.send_info(
             UciInfo::new()
-                .depth(result.depth)
-                .nodes(self.nodes)
-                .score(result.score)
-                .nps((self.nodes as f32 / elapsed.as_secs_f32()).trunc())
+                .depth(self.result.depth)
+                .nodes(self.result.nodes)
+                .score(self.result.score)
+                .nps((self.result.nodes as f32 / elapsed.as_secs_f32()).trunc())
                 .time(elapsed.as_millis())
-                .pv(result.pv.0.iter().map(|&mv| V::fmt_move(mv))),
+                .pv(self.result.pv.0.iter().map(|&mv| V::fmt_move(mv))),
         );
     }
 
@@ -679,7 +674,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     /// However, with features such as move ordering, a/b pruning, and aspiration windows, ID enhances performance.
     ///
     /// After each iteration, we check if we've exceeded our `soft_timeout` and, if we haven't, we run a search at a greater depth.
-    fn iterative_deepening(&mut self, game: &Game<V>, mut result: SearchResult) -> SearchResult {
+    fn iterative_deepening(&mut self, game: &Game<V>) {
         /****************************************************************************************************
          * Iterative Deepening: https://www.chessprogramming.org/Iterative_Deepening
          *
@@ -688,7 +683,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
         'iterative_deepening: while self.config.starttime.elapsed() < self.config.soft_timeout
             && self.is_searching.load(Ordering::Relaxed)
-            && result.depth <= self.config.max_depth
+            && self.result.depth <= self.config.max_depth
         {
             /****************************************************************************************************
              * Aspiration Windows: https://www.chessprogramming.org/Aspiration_Windows
@@ -698,23 +693,23 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
              ****************************************************************************************************/
 
             // Create a new aspiration window for this search
-            let mut window = AspirationWindow::new(result.score, result.depth);
+            let mut window = AspirationWindow::new(self.result.score, self.result.depth);
             let mut pv = PrincipalVariation::EMPTY;
 
             // Get a score from the a/b search while using aspiration windows
             let score = 'aspiration_window: loop {
                 // Start a new search at the current depth, exiting the ID loop if we've ran out of time
                 let Ok(score) =
-                    self.negamax::<RootNode>(game, result.depth, 0, window.bounds, &mut pv)
+                    self.negamax::<RootNode>(game, self.result.depth, 0, window.bounds, &mut pv)
                 else {
                     break 'iterative_deepening;
                 };
 
                 // If the score fell outside of the aspiration window, widen it gradually
                 if window.fails_low(score) {
-                    window.widen_down(score, result.depth);
+                    window.widen_down(score, self.result.depth);
                 } else if window.fails_high(score) {
-                    window.widen_up(score, result.depth);
+                    window.widen_up(score, self.result.depth);
                 } else {
                     // Otherwise, the window is OK and we can use the score
                     break 'aspiration_window score;
@@ -731,29 +726,22 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
              ****************************************************************************************************/
 
             // We need to update our bestmove and score, since this iteration's search completed without timeout.
-            result.score = score;
-            result.pv = pv;
+            self.result.score = score;
+            self.result.pv = pv;
 
             // Hack; if we're on the last iteration, don't send an `info` line, as it gets sent just before `bestmove` anyway.
-            if result.depth == self.config.max_depth {
+            if self.result.depth == self.config.max_depth {
                 break;
             }
 
             // Send search info to the GUI
             if Log::INFO {
-                self.send_search_info(&result);
+                self.send_search_info();
             }
 
             // Increase the depth for the next iteration
-            result.depth += 1;
+            self.result.depth += 1;
         }
-
-        // Transfer the node count
-        result.nodes += self.nodes;
-
-        // ID loop has concluded (either by finishing or timing out),
-        // so we return the result from the last successfully-completed search.
-        result
     }
 
     /// Primary location of search logic.
@@ -903,7 +891,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 self.search_cancelled()?; // Exit early if search is terminated.
 
                 // We've now searched this node
-                self.nodes += 1;
+                self.result.nodes += 1;
 
                 // Pop the move from the history
                 self.prev_positions.pop();
@@ -1040,7 +1028,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                 self.search_cancelled()?; // Exit early if search is terminated.
 
-                self.nodes += 1; // We've now searched this node
+                self.result.nodes += 1; // We've now searched this node
 
                 self.prev_positions.pop();
             }
@@ -1091,7 +1079,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     #[inline(always)]
     fn search_cancelled(&self) -> Result<(), SearchCancelled> {
         // Only check for timeouts every 1024 nodes, because searches are fast and 1k nodes doesn't take too long..
-        if self.nodes % 1024 == 0 {
+        if self.result.nodes % 1024 == 0 {
             // We've exceeded the hard limit of our allotted search time
             if let Some(diff) = self
                 .config
@@ -1105,7 +1093,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // We've exceeded the maximum amount of nodes we're allowed to search
         // This is checked first so that `go nodes` searches terminate properly
-        if let Some(diff) = self.nodes.checked_sub(self.config.max_nodes) {
+        if let Some(diff) = self.result.nodes.checked_sub(self.config.max_nodes) {
             return Err(SearchCancelled::MaxNodes(diff));
         }
 
