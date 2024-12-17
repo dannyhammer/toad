@@ -4,6 +4,28 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+use std::fmt;
+
+use uci_parser::{UciInfo, UciResponse};
+
+pub trait UciOut {
+    /// Sends `message` to an output stream.
+    fn send<T: fmt::Display>(&self, message: T);
+
+    /// Sends a [`UciInfo`] to `stdout`.
+    #[inline(always)]
+    fn send_info(&self, info: UciInfo) {
+        let resp = UciResponse::info(info);
+        self.send(resp);
+    }
+
+    /// Helper to send a [`UciInfo`] containing only a `string` message to `stdout`.
+    #[inline(always)]
+    fn send_string<T: fmt::Display>(&self, string: T) {
+        self.send(UciResponse::info_string(string));
+    }
+}
+
 /// Level of communication to output during search.
 pub trait LogLevel {
     /// Print UCI search info.

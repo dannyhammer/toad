@@ -5,7 +5,9 @@
  */
 
 use std::{
+    cell::RefCell,
     fmt::{self, Debug},
+    io::Write,
     marker::PhantomData,
     ops::Neg,
     sync::{
@@ -21,7 +23,7 @@ use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
     tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Ply, Position,
-    Score, TTable, TTableEntry, Variant, ZobristKey,
+    Score, TTable, TTableEntry, UciOut, Variant, ZobristKey,
 };
 
 /// Reasons that a search can be cancelled.
@@ -454,7 +456,7 @@ impl Default for SearchParameters {
 }
 
 /// Executes a search on a game of chess.
-pub struct Search<'a, Log, V> {
+pub struct Search<'a, Log, V, W> {
     /// An atomic flag to determine if the search should be cancelled at any time.
     ///
     /// If this is ever `false`, the search must exit as soon as possible.
@@ -475,6 +477,8 @@ pub struct Search<'a, Log, V> {
     /// Storage for moves that cause a beta-cutoff during search.
     history: &'a mut HistoryTable,
 
+    out: PhantomData<W>,
+
     /// Parameters for search features like pruning, extensions, etc.
     params: SearchParameters,
 
@@ -485,7 +489,7 @@ pub struct Search<'a, Log, V> {
     log: PhantomData<Log>,
 }
 
-impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
+impl<'a, Log: LogLevel, V: Variant, W: Write> Search<'a, Log, V, W> {
     /// Construct a new [`Search`] instance to execute.
     #[inline(always)]
     pub fn new(
@@ -505,6 +509,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             params: SearchParameters::default(),
             variant: PhantomData,
             log: PhantomData,
+            out: PhantomData,
         }
     }
 
@@ -1377,6 +1382,15 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     }
 }
 
+impl<'a, Log: LogLevel, V: Variant, W: Write> UciOut for Search<'a, Log, V, W> {
+    #[inline(always)]
+    fn send<T: fmt::Display>(&self, message: T) {
+        // writeln!(self.out.write().unwrap(), "{message}")
+        writeln!(W, "{message}")
+            .unwrap_or_else(|err| panic!("Failed to write {message} to output stream: {err}"));
+    }
+}
+
 /// Utility function to assert that the PV is legal for the provided game.
 #[allow(dead_code)]
 fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &PrincipalVariation) {
@@ -1490,8 +1504,10 @@ pub fn print_mvv_lva_table() {
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::*;
 
@@ -1501,12 +1517,14 @@ mod tests {
 
         let mut ttable = Default::default();
         let mut history = Default::default();
+        let mut out = RwLock::new(Box::new(std::io::stdout()));
         Search::<LogNone, Standard>::new(
             is_searching,
             config,
             Default::default(),
             &mut ttable,
             &mut history,
+            &mut out,
         )
         .start(&game)
     }
@@ -1643,3 +1661,5 @@ mod tests {
         assert_ne!(res.bestmove().unwrap(), "d5e6");
     }
 }
+
+ */

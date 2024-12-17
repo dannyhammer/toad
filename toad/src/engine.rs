@@ -5,31 +5,34 @@
  */
 
 use std::{
+    cell::RefCell,
     fmt,
+    fs::OpenOptions,
     io::{self, Write},
     ops::ControlFlow,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{channel, Receiver, Sender},
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
     },
     thread::{self, JoinHandle},
 };
 
 use anyhow::{bail, Context, Result};
-use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
+use uci_parser::{UciCommand, UciOption, UciParseError, UciResponse};
 
 use crate::{
     perft, splitperft, Bitboard, Chess960, EngineCommand, Game, GameVariant, HistoryTable,
     LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Ply, Position, Psqt,
-    Score, Search, SearchConfig, SearchResult, Square, Standard, TTable, Variant, BENCHMARK_FENS,
+    Score, Search, SearchConfig, SearchResult, Square, Standard, TTable, UciOut, Variant,
+    BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
 const BENCH_DEPTH: u8 = 9;
 
 /// The Toad chess engine.
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct Engine {
     /// All previous positions of `self.game`, including the current position.
     ///
@@ -56,6 +59,8 @@ pub struct Engine {
 
     /// Whether to display extra information during execution.
     debug: bool,
+
+    out: Arc<RwLock<Box<dyn Write>>>,
 }
 
 impl Engine {
@@ -74,6 +79,7 @@ impl Engine {
             ttable: Arc::default(),
             history: Arc::default(),
             debug: false,
+            out: Arc::new(RwLock::new(Box::new(std::io::stdout()))),
         }
     }
 
@@ -132,7 +138,7 @@ impl Engine {
             variant = new_variant;
 
             if self.debug {
-                println!("Switching to chess variant: {new_variant:?}");
+                self.send(format!("Switching to chess variant: {new_variant:?}"));
             }
         }
     }
@@ -148,7 +154,7 @@ impl Engine {
         // Execute commands as they are received
         while let Ok(cmd) = self.receiver.recv() {
             // if self.debug {
-            //     println!("info string Received command {cmd:?}");
+            //     self.send(format!("info string Received command {cmd:?}");
             // }
 
             match cmd {
@@ -164,11 +170,11 @@ impl Engine {
                             break;
                         }
                     } else {
-                        println!("Current variant: {:?}", V::variant());
+                        self.send(format!("Current variant: {:?}", V::variant()));
                     }
                 }
 
-                EngineCommand::Display => println!("{game}"),
+                EngineCommand::Display => self.send(game),
 
                 EngineCommand::Eval { pretty } => self.eval(&game, pretty),
 
@@ -182,7 +188,7 @@ impl Engine {
                     break;
                 }
 
-                EngineCommand::Fen => println!("{}", game.to_fen()),
+                EngineCommand::Fen => self.send(game.to_fen()),
 
                 EngineCommand::Flip => game.toggle_side_to_move(),
 
@@ -202,18 +208,18 @@ impl Engine {
 
                 EngineCommand::Option { name } => {
                     if let Some(value) = self.get_option::<V>(&name) {
-                        println!("Option {name:?} := {value}");
+                        self.send(format!("Option {name:?} := {value}"));
                     } else {
-                        println!("{} has no option {name:?}", self.name());
+                        self.send(format!("{} has no option {name:?}", self.name()));
                     }
                 }
 
-                EngineCommand::Perft { depth } => println!("{}", perft(&game, depth)),
+                EngineCommand::Perft { depth } => self.send(perft(&game, depth)),
 
                 EngineCommand::Place { piece, square } => {
                     game.place(piece, square);
                     if self.debug {
-                        println!("Placed {piece} at {square}");
+                        self.send(format!("Placed {piece} at {square}"));
                     }
                 }
 
@@ -224,13 +230,13 @@ impl Engine {
                 } => self.psqt(&game, piece, square, weight),
 
                 EngineCommand::Splitperft { depth } => {
-                    println!("{}", splitperft(&game, depth))
+                    self.send(splitperft(&game, depth));
                 }
 
                 EngineCommand::Take { square } => {
                     if let Some(piece) = game.take(square) {
                         if self.debug {
-                            println!("Removed {piece} at {square}");
+                            self.send(format!("Removed {piece} at {square}"));
                         }
                     }
                 }
@@ -262,17 +268,19 @@ impl Engine {
 
             Debug(status) => self.debug = status,
 
-            IsReady => println!("{}", UciResponse::<&str>::ReadyOk),
+            IsReady => self.send(UciResponse::<&str>::ReadyOk),
 
             SetOption { name, value } => self.set_option(&name, value)?,
 
-            Register { name: _, code: _ } => println!("{} requires no registration", self.name()),
+            Register { name: _, code: _ } => {
+                self.send(format!("{} requires no registration", self.name()))
+            }
 
             UciNewGame => *game = self.new_game(),
 
             Go(options) => {
                 if let Some(depth) = options.perft {
-                    println!("{}", splitperft(game, depth as usize));
+                    self.send(splitperft(game, depth as usize));
                     return Ok(());
                 }
 
@@ -313,15 +321,14 @@ impl Engine {
         // Padding for printing FENs
         let width = benches.iter().map(|fen| fen.len()).max().unwrap();
 
-        println!(
+        self.send(format!(
             "Running fixed-depth search (d={}) on {} positions",
             config.max_depth,
             benches.len()
-        );
+        ));
 
         // Run a fixed search on each position
         for (i, fen) in benches.into_iter().enumerate() {
-            print!("{:>2}/{:>2}: {fen:<width$} := ", i + 1, benches.len());
             std::io::stdout().lock().flush().unwrap(); // flush stdout so the node count will appear on the same line after search concludes
 
             // Set up the game and start the search
@@ -333,7 +340,12 @@ impl Engine {
                 panic!("Search thread panicked while running benchmarks on fen {fen}");
             };
             nodes += res.nodes;
-            println!("{}", res.nodes);
+            self.send(format!(
+                "{:>2}/{:>2}: {fen:<width$} := {}",
+                i + 1,
+                benches.len(),
+                res.nodes
+            ));
 
             // Each bench is essentially a new game, so reset hash tables, etc.
             self.new_game::<Standard>();
@@ -347,15 +359,15 @@ impl Engine {
 
         if pretty {
             // Display the results in a nice table
-            println!();
-            println!("+-- Benchmark Complete --+");
-            println!("| time (ms)  {ms:<12}|");
-            println!("|     nodes  {nodes:<12}|");
-            println!("|       nps  {nps:<12}|");
-            println!("|      Mnps  {m_nps:<12.2}|");
-            println!("+------------------------+");
+            self.send("\n");
+            self.send(format!("+-- Benchmark Complete --+"));
+            self.send(format!("| time (ms)  {ms:<12}|"));
+            self.send(format!("|     nodes  {nodes:<12}|"));
+            self.send(format!("|       nps  {nps:<12}|"));
+            self.send(format!("|      Mnps  {m_nps:<12.2}|"));
+            self.send(format!("+------------------------+"));
         } else {
-            println!("{nodes} nodes / {elapsed:?} := {nps} nps");
+            self.send(format!("{nodes} nodes / {elapsed:?} := {nps} nps"));
         }
 
         // Re-set the internal game state.
@@ -389,12 +401,13 @@ impl Engine {
                 Equal => "N/A",
             };
 
-            println!("{table}");
-            println!("Endgame: {endgame_weight}%");
-            println!("Winning side: {winning}",);
-            println!("Score: {score}");
+            self.send(table);
+            self.send(format!("Endgame: {endgame_weight}%"));
+            self.send(format!("Winning side: {winning}",));
+            self.send(format!("Score: {score}"));
         } else {
-            println!("{}", game.eval());
+            // self.send(format!("{}", game.eval());
+            self.send(game.eval());
         }
     }
 
@@ -406,9 +419,11 @@ impl Engine {
         let num = ttable.num_entries();
         let cap = ttable.capacity();
         let percent = num as f32 / cap as f32 * 100.0;
-        println!("TT info: {size}mb @ {num}/{cap} entries ({percent:.2}% full)");
+        self.send(format!(
+            "TT info: {size}mb @ {num}/{cap} entries ({percent:.2}% full)"
+        ));
 
-        println!("History Tables:\n{}", self.history());
+        self.send(format!("History Tables:\n{}", self.history()));
     }
 
     /// Clears all hash tables in the engine.
@@ -445,7 +460,7 @@ impl Engine {
 
         // If there are none, print "(none)"
         if moves.is_empty() {
-            println!("(none)")
+            self.send("(none)");
         } else {
             // Join by comma-space
             // TODO: I don't love how this code is laid out, but it's UI code, so it doesn't *need* to be fast.
@@ -472,9 +487,9 @@ impl Engine {
             // If pretty-printing, also display a Bitboard of all possible destinations
             if pretty {
                 let bb = moves.iter().map(|mv| mv.to()).collect::<Bitboard>();
-                println!("{bb:?}\n\nmoves: {string}");
+                self.send(format!("{bb:?}\n\nmoves: {string}"));
             } else {
-                println!("{string}");
+                self.send(string);
             }
         }
     }
@@ -534,7 +549,7 @@ impl Engine {
         if let Some(square) = square {
             let (mg_value, eg_value) = Psqt::evals(piece, square);
             let value = mg_value.lerp(eg_value, weight);
-            println!("[{mg_value}, {eg_value}] := {value}");
+            self.send(format!("[{mg_value}, {eg_value}] := {value}"));
         } else {
             // Otherwise, print both the middle-game and end-game tables
             let name = piece.name();
@@ -548,9 +563,8 @@ impl Engine {
                 }
             };
 
-            println!("Mid-game table for {name}:\n{}", f(mg));
-            println!();
-            println!("End-game table for {name}:\n{}", f(eg));
+            self.send(format!("Mid-game table for {name}:\n{}\n", f(mg)));
+            self.send(format!("End-game table for {name}:\n{}", f(eg)));
         }
     }
 
@@ -574,7 +588,7 @@ impl Engine {
     ) -> Option<JoinHandle<SearchResult>> {
         // Cannot start a search if one is already running
         if self.is_searching() {
-            Self::send_string("A search is already running");
+            self.send("A search is already running");
             return None;
         }
         self.set_is_searching(true);
@@ -587,6 +601,7 @@ impl Engine {
         prev_positions.push(*game.position());
         let ttable = Arc::clone(&self.ttable);
         let history = Arc::clone(&self.history);
+        let out = Arc::clone(&self.out);
 
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
@@ -597,6 +612,7 @@ impl Engine {
             let mut history = history
                 .lock()
                 .expect("Failed to acquire History Table at the start of search.");
+            let out = out.write().unwrap();
 
             // Start the search, returning the result when completed.
             Search::<Log, V>::new(
@@ -620,7 +636,7 @@ impl Engine {
         // Attempt to join the thread handle to retrieve the result
         let id = handle.thread().id();
         let Ok(res) = handle.join() else {
-            Self::send_string(format!("Failed to join on thread {id:?}"));
+            self.send(format!("Failed to join on thread {id:?}"));
             return None;
         };
 
@@ -634,15 +650,19 @@ impl Engine {
     ///
     /// Prints engine's ID, version, and authors, and lists all UCI options.
     fn uci(&self) {
-        println!("id name {}\nid author {}\n", self.name(), self.authors());
+        self.send(format!(
+            "id name {}\nid author {}\n",
+            self.name(),
+            self.authors()
+        ));
 
         // Print all UCI options
         for opt in self.options() {
-            println!("{}", UciResponse::Option(opt));
+            self.send(UciResponse::Option(opt));
         }
 
         // We're ready to go!
-        println!("{}", UciResponse::<&str>::UciOk)
+        self.send(UciResponse::<&str>::UciOk);
     }
 
     /// Convenience function to return an iterator over all UCI options this engine supports.
@@ -655,6 +675,7 @@ impl Engine {
                 TTable::MIN_SIZE as i32,
                 TTable::MAX_SIZE as i32,
             ),
+            UciOption::string("Output Stream", "stdout"),
             UciOption::spin("Threads", 1, 1, 1),
             UciOption::check("UCI_Chess960", false),
         ]
@@ -688,6 +709,31 @@ impl Engine {
                 }
 
                 *self.ttable() = TTable::new(mb);
+            }
+
+            "Output Stream" => {
+                let Some(value) = value.as_ref() else {
+                    bail!("usage: setoption name {name} value <value>");
+                };
+
+                match value.as_str() {
+                    "stdout" => {
+                        self.out = Arc::new(RwLock::new(Box::new(std::io::stdout())));
+                    }
+
+                    _ => {
+                        let Ok(file) = OpenOptions::new().write(true).create(true).open(value)
+                        else {
+                            bail!("Could not create file {value:?}");
+                        };
+
+                        if self.debug {
+                            self.send(format!("Redirecting engine output to {value:?}"));
+                        }
+
+                        self.out = Arc::new(RwLock::new(Box::new(file)));
+                    }
+                }
             }
 
             // Set the number of search threads
@@ -726,7 +772,7 @@ impl Engine {
             } else {
                 format!("Option {name} toggled")
             };
-            Self::send_string(info);
+            self.send(info);
         }
 
         Ok(())
@@ -748,13 +794,6 @@ impl Engine {
         Some(value)
     }
 
-    /// Helper to send a [`UciInfo`] containing only a `string` message to `stdout`.
-    #[inline(always)]
-    fn send_string<T: fmt::Display>(info: T) {
-        let resp = UciResponse::<String>::Info(Box::new(UciInfo::new().string(info)));
-        println!("{resp}");
-    }
-
     /// Helper function to fetch the TTable, panicking if impossible.
     #[inline(always)]
     fn ttable(&self) -> std::sync::MutexGuard<'_, TTable> {
@@ -769,6 +808,14 @@ impl Engine {
         self.history
             .lock()
             .expect("A thread holding the History table panicked")
+    }
+}
+
+impl UciOut for Engine {
+    #[inline(always)]
+    fn send<T: fmt::Display>(&self, message: T) {
+        writeln!(self.out.write().unwrap(), "{message}")
+            .unwrap_or_else(|err| panic!("Failed to write {message} to output stream: {err}"));
     }
 }
 
@@ -839,7 +886,7 @@ fn input_handler(sender: Sender<EngineCommand>) -> Result<()> {
                 .context("Failed to send command {buffer:?} to engine")?,
 
             // If an invalid command was received, just print the error and continue running
-            Err(err) => println!("{err}"),
+            Err(err) => self.send(format!("{err}"),
         }
          */
     }
