@@ -560,27 +560,31 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 }
             }
 
-            /*
             // If only 1 legal move available, it is forced, so don't waste time on a full search.
             1 => {
-                // Get a quick, albeit poor, evaluation of the position.
-                // TODO: Replace this with a call to qsearch?
-                self.result.score = game.eval();
-                self.result.nodes += 1;
+                // Get a quick, albeit poor, evaluation of the position, if possible
+                let mut pv = PrincipalVariation::EMPTY;
+                self.result.score = self
+                    .quiescence::<RootNode>(
+                        game,
+                        Ply::ZERO,
+                        SearchBounds::new(-Score::INF, Score::INF),
+                        &mut pv,
+                    )
+                    .unwrap_or_else(|_| game.eval());
 
-                // Append the only legal move to the PV
-                let bestmove = moves[0];
-                self.result.pv.0.push(bestmove);
+                self.result.pv = pv;
 
                 if Log::DEBUG {
                     self.send_string(format!(
-                        "Position {:?} has only one legal move available ({bestmove}), evaluated at {}",
+                        "Position {:?} has only one legal move available ({}), evaluated at {}",
                         game.to_fen(),
+                        self.result.bestmove().unwrap(),
                         self.result.score.into_uci(),
                     ));
                 }
             }
-             */
+
             // Otherwise, start a search like normal.
             _ => self.iterative_deepening(game),
         }
