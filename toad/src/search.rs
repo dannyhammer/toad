@@ -778,8 +778,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Clear any nodes in this PV, since we're searching from a new position
         pv.clear();
 
-        let probe = self.probe_tt(game.key(), depth, ply, bounds);
         // Do not prune in PV nodes
+        let tt_move = self.get_tt_bestmove(game.key());
         if !Node::PV {
             /****************************************************************************************************
              * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
@@ -787,10 +787,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
              * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
              * work by just returning the evaluation stored in the transposition table.
              ****************************************************************************************************/
-            if let Some(tt_score) = probe {
+            if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
                 return Ok(tt_score);
             }
-        } else if probe.is_none() && depth >= 8 {
+        } else if tt_move.is_none() && depth >= 3 {
             depth -= 1;
         }
 
@@ -825,7 +825,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         }
 
         // Sort moves so that we look at "promising" ones first
-        let tt_move = self.get_tt_bestmove(game.key());
         moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         // Start with a *really bad* initial score
