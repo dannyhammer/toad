@@ -21,7 +21,7 @@ use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
     tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Ply, Position,
-    Score, TTable, TTableEntry, Variant, ZobristKey,
+    ProbeResult, Score, TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Reasons that a search can be cancelled.
@@ -762,7 +762,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     fn negamax<Node: NodeType>(
         &mut self,
         game: &Game<V>,
-        depth: Ply,
+        mut depth: Ply,
         ply: Ply,
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
@@ -778,17 +778,28 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Clear any nodes in this PV, since we're searching from a new position
         pv.clear();
 
-        /****************************************************************************************************
-         * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
-         *
-         * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
-         * work by just returning the evaluation stored in the transposition table.
-         ****************************************************************************************************/
-        // Do not prune in PV nodes
-        if !Node::PV {
-            // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
-            if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
-                return Ok(tt_score);
+        // Check the transposition table before we do anything at this node.
+        match self.probe_tt(game.key(), depth, ply, bounds) {
+            /****************************************************************************************************
+             * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
+             *
+             * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
+             * work by just returning the evaluation stored in the transposition table.
+             ****************************************************************************************************/
+            ProbeResult::Cutoff(tt_score) => {
+                // Do not prune in PV nodes
+                if !Node::PV {
+                    return Ok(tt_score);
+                }
+            }
+
+            // ProbeResult::Hit(_entry) => {}
+
+            // internal iterative reduction
+            ProbeResult::Miss => {
+                if Node::PV && depth >= 5 {
+                    depth -= 1;
+                }
             }
         }
 
@@ -1322,7 +1333,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         depth: Ply,
         ply: Ply,
         bounds: SearchBounds,
-    ) -> Option<Score> {
+    ) -> ProbeResult {
         if Log::DEBUG {
             self.ttable.reads += 1;
         }
@@ -1335,7 +1346,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        None
+        ProbeResult::Miss
     }
 
     /// Compute a reduction value (`R`) to apply to a given node's search depth, if possible.

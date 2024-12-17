@@ -47,6 +47,13 @@ impl NodeType {
     }
 }
 
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub enum ProbeResult {
+    Cutoff(Score),
+    // Hit(TTableEntry),
+    Miss,
+}
+
 /// An entry into a hash table
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct TTableEntry {
@@ -103,7 +110,7 @@ impl TTableEntry {
     ///     2. The entry is an upper bound ([`NodeType::All`]) and its score is `<= alpha`.
     ///     3. The entry is a lower bound ([`NodeType::Cut`]) and its score is `>= beta`.
     #[inline(always)]
-    pub fn try_score(&self, bounds: SearchBounds, ply: Ply) -> Option<Score> {
+    pub fn try_score(&self, bounds: SearchBounds, ply: Ply) -> ProbeResult {
         // Adjust mate scores to be relative to current ply
         let score = if self.score.is_mate() {
             self.score.relative(ply)
@@ -112,10 +119,14 @@ impl TTableEntry {
         };
 
         // If we can cutoff, do so
-        (self.node_type == NodeType::Pv
+        if self.node_type == NodeType::Pv
             || ((self.node_type == NodeType::All && score <= bounds.alpha)
-                || (self.node_type == NodeType::Cut && score >= bounds.beta)))
-            .then_some(score)
+                || (self.node_type == NodeType::Cut && score >= bounds.beta))
+        {
+            ProbeResult::Cutoff(score)
+        } else {
+            ProbeResult::Miss
+        }
     }
 
     /// Fetch the depth associated with this entry.
