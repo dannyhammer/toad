@@ -434,21 +434,25 @@ struct SearchParameters {
 
     /// Safety margin when applying reverse futility pruning.
     rfp_margin: Score,
+
+    /// Depth to extend by if the position is in check.
+    check_extensions_depth: Ply,
 }
 
 impl Default for SearchParameters {
     fn default() -> Self {
         Self {
-            min_nmp_depth: Ply::new(tune::min_nmp_depth!()),
-            nmp_reduction: Ply::new(tune::nmp_reduction!()),
-            max_rfp_depth: Ply::new(tune::max_rfp_depth!()),
-            min_lmr_depth: Ply::new(tune::min_lmr_depth!()),
+            min_nmp_depth: Ply::from_raw(tune::min_nmp_depth!()),
+            nmp_reduction: Ply::from_raw(tune::nmp_reduction!()),
+            max_rfp_depth: Ply::from_raw(tune::max_rfp_depth!()),
+            min_lmr_depth: Ply::from_raw(tune::min_lmr_depth!()),
             min_lmr_moves: tune::min_lmr_moves!(),
             lmr_offset: tune::lmr_offset!(),
             lmr_divisor: tune::lmr_divisor!(),
             history_multiplier: Score::new(tune::history_multiplier!()),
             history_offset: Score::new(tune::history_offset!()),
             rfp_margin: Score::new(tune::rfp_margin!()),
+            check_extensions_depth: Ply::from_raw(tune::check_extensions_depth!()),
         }
     }
 }
@@ -1368,12 +1372,18 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     /// Compute an extension value to apply to a given node's search depth.
     #[inline(always)]
     fn extension_value(&self, game: &Game<V>) -> Ply {
+        let mut extension = Ply::ZERO;
+
         /****************************************************************************************************
          * Check Extensions: https://www.chessprogramming.org/Check_Extensions
          *
          * If we're in check, we should extend the search a bit, in hopes to find a good way to escape.
          ****************************************************************************************************/
-        Ply::new(game.is_in_check() as i32)
+        if game.is_in_check() {
+            extension += self.params.check_extensions_depth
+        }
+
+        extension
     }
 }
 

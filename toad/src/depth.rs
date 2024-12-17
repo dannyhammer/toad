@@ -36,6 +36,14 @@ impl Ply {
         Self(n * Self::GRAIN)
     }
 
+    /// Constructs a new [`Ply`] instance containing `n` as the raw internal value.
+    ///
+    /// This does *not* scale according to the granularity of [`Ply`]'s fractional depth.
+    #[inline(always)]
+    pub const fn from_raw(n: i32) -> Self {
+        Self(n)
+    }
+
     /// Returns the number of plies this depth represents, truncating any fractional depth.
     #[inline(always)]
     pub const fn plies(&self) -> i32 {
@@ -49,23 +57,41 @@ impl Ply {
     }
 }
 
-macro_rules! impl_binary_op {
-    ($trait:tt, $fn:ident) => {
-        impl std::ops::$trait for Ply {
-            type Output = Self;
+impl std::ops::Add for Ply {
+    type Output = Self;
 
-            #[inline(always)]
-            fn $fn(self, rhs: Self) -> Self::Output {
-                Self(self.0.$fn(rhs.0))
-            }
-        }
-    };
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0.add(rhs.0))
+    }
 }
 
-impl_binary_op!(Add, add);
-impl_binary_op!(Sub, sub);
-impl_binary_op!(Mul, mul);
-impl_binary_op!(Div, div);
+impl std::ops::Sub for Ply {
+    type Output = Self;
+
+    #[inline(always)]
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0.sub(rhs.0))
+    }
+}
+
+impl std::ops::Mul for Ply {
+    type Output = Self;
+
+    #[inline(always)]
+    fn mul(self, rhs: Self) -> Self::Output {
+        Self(self.0.mul(rhs.plies()))
+    }
+}
+
+impl std::ops::Div for Ply {
+    type Output = Self;
+
+    #[inline(always)]
+    fn div(self, rhs: Self) -> Self::Output {
+        Self(self.0.div(rhs.plies()))
+    }
+}
 
 impl std::ops::Add<i32> for Ply {
     type Output = Ply;
@@ -178,6 +204,19 @@ mod tests {
         assert_eq!(depth, Ply::new(4));
 
         depth = depth - 3;
+        assert_eq!(depth, Ply::new(1));
+
+        // Now for combining depths
+        depth = depth + Ply::new(5);
+        assert_eq!(depth, Ply::new(6));
+
+        depth = depth * Ply::new(2);
+        assert_eq!(depth, Ply::new(12));
+
+        depth = depth / Ply::new(3);
+        assert_eq!(depth, Ply::new(4));
+
+        depth = depth - Ply::new(3);
         assert_eq!(depth, Ply::new(1));
     }
 

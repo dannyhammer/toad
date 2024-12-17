@@ -98,7 +98,7 @@ pub(crate) use history_offset;
 /// Minimum depth at which null move pruning can be applied.
 macro_rules! min_nmp_depth {
     () => {
-        3
+        300
     };
 }
 pub(crate) use min_nmp_depth;
@@ -106,7 +106,7 @@ pub(crate) use min_nmp_depth;
 /// Value to subtract from `depth` when applying null move pruning.
 macro_rules! nmp_reduction {
     () => {
-        3
+        300
     };
 }
 pub(crate) use nmp_reduction;
@@ -114,7 +114,7 @@ pub(crate) use nmp_reduction;
 /// Maximum depth at which to apply reverse futility pruning.
 macro_rules! max_rfp_depth {
     () => {
-        5
+        500
     };
 }
 pub(crate) use max_rfp_depth;
@@ -130,7 +130,7 @@ pub(crate) use rfp_margin;
 /// Minimum depth at which to apply late move reductions.
 macro_rules! min_lmr_depth {
     () => {
-        3
+        300
     };
 }
 pub(crate) use min_lmr_depth;
@@ -174,3 +174,11 @@ macro_rules! razoring_offset {
     };
 }
 pub(crate) use razoring_offset;
+
+/// Depth to extend by for check extensions.
+macro_rules! check_extensions_depth {
+    () => {
+        100
+    };
+}
+pub(crate) use check_extensions_depth;
