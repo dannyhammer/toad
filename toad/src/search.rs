@@ -784,12 +784,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
          * work by just returning the evaluation stored in the transposition table.
          ****************************************************************************************************/
-        // Do not prune in PV nodes
-        if !Node::PV {
-            // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
-            if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
+        // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
+        if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
+            if !Node::PV {
+                // Do not prune in PV nodes
                 return Ok(tt_score);
             }
+        } else
+        // If no TT hit, but we're in a PV node, perform a reduced search
+        if Node::PV && depth > 3 {
+            self.negamax::<Node>(game, depth - 2, ply, bounds, pv)?;
         }
 
         /****************************************************************************************************
