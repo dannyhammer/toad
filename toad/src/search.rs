@@ -5,7 +5,7 @@
  */
 
 use std::{
-    fmt::{self, Debug},
+    fmt,
     marker::PhantomData,
     ops::Neg,
     sync::{
@@ -437,6 +437,9 @@ struct SearchParameters {
 
     /// Depth to extend by if the position is in check.
     check_extensions_depth: Ply,
+
+    /// Minimum depth at which razoring can be performed.
+    min_razoring_depth: Ply,
 }
 
 impl Default for SearchParameters {
@@ -453,6 +456,7 @@ impl Default for SearchParameters {
             history_offset: Score::new(tune::history_offset!()),
             rfp_margin: Score::new(tune::rfp_margin!()),
             check_extensions_depth: Ply::from_raw(tune::check_extensions_depth!()),
+            min_razoring_depth: Ply::from_raw(tune::min_razoring_depth!()),
         }
     }
 }
@@ -540,15 +544,15 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
-        // Initialize `bestmove` to the first move available, so we can return *something* if we're low on time.
+        // Get the legal moves at the root, so we can ensure that there is at least one move we can play.
         let moves = game.get_legal_moves();
 
-        // Get the search result, exiting early if there are fewer than two moves available.
+        // Get the search result, exiting early if possible.
         match moves.len() {
             // If no legal moves available, the game is over, so return immediately.
             0 => {
                 // It's either a draw or a checkmate
-                self.result.score = -Score::MATE * game.is_in_check() as i32;
+                self.result.score = -Score::MATE * game.is_in_check();
                 self.result.nodes += 1;
 
                 if Log::DEBUG {
@@ -585,6 +589,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             _ => self.iterative_deepening(game),
         }
 
+        // Debug info about the termination of the search.
         if Log::DEBUG {
             if let Err(reason) = self.search_cancelled() {
                 if let Some(bestmove) = self.result.bestmove() {
@@ -611,7 +616,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             self.send_string(info);
         }
 
-        // If no bestmove, but there is a legal move, update bestmove.
+        // Sanity check: If no bestmove, but there is a legal move, update bestmove.
         if self.result.bestmove().is_none() {
             if let Some(first) = moves.first().copied() {
                 self.result.pv.0.push(first);
@@ -649,6 +654,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         self.send_response(resp);
     }
 
+    /// Helper to send a [`UciInfo`] containing only a `string` message to `stdout`.
+    #[inline(always)]
+    fn send_string<T: fmt::Display>(&self, string: T) {
+        self.send_response(UciResponse::info_string(string));
+    }
+
     /// Sends UCI info about the conclusion of a search.
     ///
     /// This is sent at the end of each new search in the iterative deepening loop.
@@ -666,12 +677,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 .time(elapsed.as_millis())
                 .pv(self.result.pv.0.iter().map(|&mv| V::fmt_move(mv))),
         );
-    }
-
-    /// Helper to send a [`UciInfo`] containing only a `string` message to `stdout`.
-    #[inline(always)]
-    fn send_string<T: fmt::Display>(&self, string: T) {
-        self.send_response(UciResponse::info_string(string));
     }
 
     /// Performs [iterative deepening](https://www.chessprogramming.org/Iterative_Deepening) (ID) on the Search's position.
@@ -786,8 +791,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
         // Do not prune in PV nodes
         if !Node::PV {
+            if Log::DEBUG {
+                self.ttable.reads += 1;
+            }
+
             // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
-            if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
+            if let Some(tt_score) = self.ttable.probe(game.key(), depth, ply, bounds) {
                 return Ok(tt_score);
             }
         }
@@ -803,7 +812,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             return self.quiescence::<Node>(game, ply, bounds, pv);
         }
 
-        // If we CAN prune this node by means other than the TT, do so
+        // If we CAN prune this node by means other than the TT, do so.
         if let Some(score) =
             self.node_pruning_score::<Node>(game, depth, ply, bounds, pv, &mut local_pv)?
         {
@@ -813,13 +822,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // If there are no legal moves, it's either mate or a draw.
         let mut moves = game.get_legal_moves();
         if moves.is_empty() {
-            return Ok(if game.is_in_check() {
-                // Offset by ply to prefer earlier mates
-                ply - Score::MATE
-            } else {
-                // Drawing is better than losing
-                Score::DRAW
-            });
+            // Offset by ply to prefer earlier checkmates.
+            return Ok((ply - Score::MATE) * game.is_in_check());
         }
 
         // Sort moves so that we look at "promising" ones first
@@ -1106,7 +1110,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         }
 
         // We've exceeded the maximum amount of nodes we're allowed to search
-        // This is checked first so that `go nodes` searches terminate properly
         if let Some(diff) = self.result.nodes.checked_sub(self.config.max_nodes) {
             return Err(SearchCancelled::MaxNodes(diff));
         }
@@ -1243,7 +1246,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * If it can't, we can prune this node.
          ****************************************************************************************************/
         let razoring_margin = Score::RAZORING_OFFSET + Score::RAZORING_MULTIPLIER * depth;
-        if depth <= 2 && static_eval + razoring_margin < bounds.alpha {
+        if depth <= self.params.min_razoring_depth && static_eval + razoring_margin < bounds.alpha {
             let score = self.quiescence::<Node>(game, ply, bounds.null_alpha(), pv)?;
             // If we can't beat alpha (without mating), we can prune.
             if score < bounds.alpha && !score.is_mate() {
@@ -1305,37 +1308,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // If no pruning technique was possible, return no score
         Ok(None)
-    }
-
-    /// Probes the [`TTable`] for an entry at the provided `key`, returning that entry's score, if appropriate.
-    ///
-    /// If an entry is found from a greater depth than `depth`, its score is returned if and only if:
-    ///     1. The entry is exact.
-    ///     2. The entry is an upper bound and its score is `<= alpha`.
-    ///     3. The entry is a lower bound and its score is `>= beta`.
-    ///
-    /// See [`TTableEntry::try_score`] for more.
-    #[inline(always)]
-    fn probe_tt(
-        &mut self,
-        key: ZobristKey,
-        depth: Ply,
-        ply: Ply,
-        bounds: SearchBounds,
-    ) -> Option<Score> {
-        if Log::DEBUG {
-            self.ttable.reads += 1;
-        }
-
-        // if-let chains are set to be stabilized in Rust 2024 (1.85.0): https://rust-lang.github.io/rfcs/2497-if-let-chains.html
-        if let Some(tt_entry) = self.ttable.get(&key) {
-            // Can only cut off if the existing entry came from a greater depth.
-            if tt_entry.depth() >= depth {
-                return tt_entry.try_score(bounds, ply);
-            }
-        }
-
-        None
     }
 
     /// Compute a reduction value (`R`) to apply to a given node's search depth, if possible.

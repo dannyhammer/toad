@@ -182,3 +182,11 @@ macro_rules! check_extensions_depth {
     };
 }
 pub(crate) use check_extensions_depth;
+
+/// Minimum depth at which razoring can be applied.
+macro_rules! min_razoring_depth {
+    () => {
+        200
+    };
+}
+pub(crate) use min_razoring_depth;
