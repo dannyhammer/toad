@@ -762,7 +762,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     fn negamax<Node: NodeType>(
         &mut self,
         game: &Game<V>,
-        depth: Ply,
+        mut depth: Ply,
         ply: Ply,
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
@@ -778,18 +778,20 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Clear any nodes in this PV, since we're searching from a new position
         pv.clear();
 
-        /****************************************************************************************************
-         * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
-         *
-         * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
-         * work by just returning the evaluation stored in the transposition table.
-         ****************************************************************************************************/
+        let probe = self.probe_tt(game.key(), depth, ply, bounds);
         // Do not prune in PV nodes
         if !Node::PV {
-            // If we've seen this position before, and our previously-found score is valid, then don't bother searching anymore.
-            if let Some(tt_score) = self.probe_tt(game.key(), depth, ply, bounds) {
+            /****************************************************************************************************
+             * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
+             *
+             * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
+             * work by just returning the evaluation stored in the transposition table.
+             ****************************************************************************************************/
+            if let Some(tt_score) = probe {
                 return Ok(tt_score);
             }
+        } else if probe.is_none() && depth >= 8 {
+            depth -= 1;
         }
 
         /****************************************************************************************************
