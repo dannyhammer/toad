@@ -806,7 +806,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             if let Some(tt_score) = tt_probe {
                 return Ok(tt_score);
             }
-        } else if tt_probe.is_none() && depth >= 3 {
+        } else if tt_move.is_none() && depth >= 3 {
             depth -= 1;
         }
 
