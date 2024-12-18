@@ -411,7 +411,7 @@ struct SearchParameters {
     /// Value to subtract from `depth` when applying null move pruning.
     nmp_reduction: Ply,
 
-    /// MAximum depth at which to apply reverse futility pruning.
+    /// Maximum depth at which to apply reverse futility pruning.
     max_rfp_depth: Ply,
 
     /// Minimum depth at which to apply late move pruning.
@@ -443,6 +443,15 @@ struct SearchParameters {
 
     /// Minimum depth at which razoring can be performed.
     min_razoring_depth: Ply,
+
+    /// Value to multiply depth by when performing futility pruning.
+    fp_multiplier: i32,
+
+    /// Value to offset depth by when performing futility pruning.
+    fp_offset: i32,
+
+    /// Minium depth at which futility pruning can be applied
+    min_fp_depth: Ply,
 }
 
 impl Default for SearchParameters {
@@ -461,6 +470,9 @@ impl Default for SearchParameters {
             rfp_margin: Score::new(tune::rfp_margin!()),
             check_extensions_depth: Ply::from_raw(tune::check_extensions_depth!()),
             min_razoring_depth: Ply::from_raw(tune::min_razoring_depth!()),
+            fp_multiplier: tune::fp_multiplier!(),
+            fp_offset: tune::fp_offset!(),
+            min_fp_depth: Ply::from_raw(tune::min_fp_depth!()),
         }
     }
 }
@@ -856,6 +868,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // late move pruning
                 let min_lmp_moves = 9 * moves.len() / 10;
                 if depth <= self.params.min_lmp_depth && i >= min_lmp_moves {
+                    break;
+                }
+
+                // futility pruning
+                let fp_margin =
+                    self.params.min_lmp_depth * self.params.fp_multiplier * self.params.fp_offset;
+                if mv.is_quiet()
+                    && depth <= self.params.min_fp_depth
+                    && new.eval() + fp_margin <= bounds.alpha
+                {
                     break;
                 }
             }
