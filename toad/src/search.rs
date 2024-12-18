@@ -784,7 +784,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         pv.clear();
 
         // Do not prune in PV nodes
-        let tt_move = self.get_tt_bestmove(game.key());
+        let mut tt_move = None;
         if !Node::PV {
             /****************************************************************************************************
              * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
@@ -796,7 +796,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 self.ttable.reads += 1;
             }
 
-            if let Some(tt_score) = self.ttable.probe(game.key(), depth, ply, bounds) {
+            if let Some(tt_score) = self
+                .ttable
+                .probe(game.key(), depth, ply, bounds, &mut tt_move)
+            {
                 return Ok(tt_score);
             }
         } else if tt_move.is_none() && depth >= 3 {

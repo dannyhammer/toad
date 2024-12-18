@@ -242,9 +242,13 @@ impl TTable {
         depth: Ply,
         ply: Ply,
         bounds: SearchBounds,
+        tt_move: &mut Option<Move>,
     ) -> Option<Score> {
         // if-let chains are set to be stabilized in Rust 2024 (1.85.0): https://rust-lang.github.io/rfcs/2497-if-let-chains.html
         if let Some(entry) = self.get(&key) {
+            // Assign bestmove
+            *tt_move = entry.bestmove;
+
             // Can only cut off if the existing entry came from a greater depth.
             if entry.depth() >= depth {
                 // Adjust mate scores to be relative to current ply
