@@ -848,7 +848,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             let mut score = Score::DRAW;
 
             // Move pruning techniques
-            if !Node::ROOT && !new.is_in_check() {
+            if !Node::PV && !new.is_in_check() {
                 // late move pruning
                 let min_lmp_moves = 9 * moves.len() / 10;
                 if depth <= self.params.min_lmp_depth && i >= min_lmp_moves {

@@ -130,7 +130,7 @@ pub(crate) use rfp_margin;
 /// Minimum depth at which to apply late move pruning.
 macro_rules! min_lmp_depth {
     () => {
-        500
+        300
     };
 }
 pub(crate) use min_lmp_depth;
