@@ -407,8 +407,8 @@ impl PieceKind {
     pub const fn value(&self) -> i32 {
         match self {
             Self::Pawn => 100,
-            Self::Knight => 320,
-            Self::Bishop => 330,
+            Self::Knight => 300,
+            Self::Bishop => 300,
             Self::Rook => 500,
             Self::Queen => 900,
             Self::King => 0, // King is invaluable, but 0 is easier to work with in computations
