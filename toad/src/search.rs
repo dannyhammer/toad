@@ -414,6 +414,9 @@ struct SearchParameters {
     /// MAximum depth at which to apply reverse futility pruning.
     max_rfp_depth: Ply,
 
+    /// Minimum depth at which to apply late move pruning.
+    min_lmp_depth: Ply,
+
     /// Minimum depth at which to apply late move reductions.
     min_lmr_depth: Ply,
 
@@ -448,6 +451,7 @@ impl Default for SearchParameters {
             min_nmp_depth: Ply::from_raw(tune::min_nmp_depth!()),
             nmp_reduction: Ply::from_raw(tune::nmp_reduction!()),
             max_rfp_depth: Ply::from_raw(tune::max_rfp_depth!()),
+            min_lmp_depth: Ply::from_raw(tune::min_lmp_depth!()),
             min_lmr_depth: Ply::from_raw(tune::min_lmr_depth!()),
             min_lmr_moves: tune::min_lmr_moves!(),
             lmr_offset: tune::lmr_offset!(),
@@ -846,6 +850,15 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             // Copy-make the new position
             let new = game.with_move_made(*mv);
             let mut score = Score::DRAW;
+
+            // Move pruning techniques
+            if !Node::PV && !new.is_in_check() && !best.mated() {
+                // late move pruning
+                let min_lmp_moves = 9 * moves.len() / 10;
+                if depth <= self.params.min_lmp_depth && i >= min_lmp_moves {
+                    break;
+                }
+            }
 
             if Node::ROOT || !self.is_draw(&new) {
                 // Append the move onto the history

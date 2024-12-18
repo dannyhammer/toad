@@ -52,8 +52,20 @@ impl Score {
 
     /// Returns `true` if the score is a mate score.
     #[inline(always)]
-    pub fn is_mate(&self) -> bool {
-        self.abs() >= Self::LOWEST_MATE
+    pub const fn is_mate(&self) -> bool {
+        self.abs().0 >= Self::LOWEST_MATE.0
+    }
+
+    /// Returns `true` if the score represents *being* checkmated.
+    #[inline(always)]
+    pub const fn mated(&self) -> bool {
+        self.0 <= -Self::LOWEST_MATE.0
+    }
+
+    /// Returns `true` if the score represents *giving* checkmated.
+    #[inline(always)]
+    pub const fn mating(&self) -> bool {
+        self.0 >= Self::LOWEST_MATE.0
     }
 
     /// Converts this [`Score`] into a [`UciScore`],
