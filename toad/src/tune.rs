@@ -210,7 +210,7 @@ pub(crate) use lmp_multiplier;
 /// Divisor for the LMP formula.
 macro_rules! lmp_divisor {
     () => {
-        2
+        3
     };
 }
 pub(crate) use lmp_divisor;
