@@ -788,25 +788,25 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         pv.clear();
 
         let mut tt_move = None;
-        /****************************************************************************************************
-         * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
-         *
-         * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
-         * work by just returning the evaluation stored in the transposition table.
-         ****************************************************************************************************/
         if Log::DEBUG {
             self.ttable.reads += 1;
         }
-
-        if let Some(tt_score) = self
+        let tt_probe = self
             .ttable
-            .probe(game.key(), depth, ply, bounds, &mut tt_move)
-        {
-            // Do not prune in PV nodes
-            if !Node::PV {
+            .probe(game.key(), depth, ply, bounds, &mut tt_move);
+
+        // Do not prune in PV nodes
+        if !Node::PV {
+            /****************************************************************************************************
+             * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
+             *
+             * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
+             * work by just returning the evaluation stored in the transposition table.
+             ****************************************************************************************************/
+            if let Some(tt_score) = tt_probe {
                 return Ok(tt_score);
             }
-        } else if Node::PV && tt_move.is_none() && depth >= 5 {
+        } else if tt_probe.is_none() && depth >= 5 {
             depth -= 1;
         }
 
