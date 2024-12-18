@@ -806,7 +806,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             if !Node::PV {
                 return Ok(tt_score);
             }
-        } else if Node::PV && tt_move.is_none() && depth >= 3 {
+        } else if Node::PV && tt_move.is_none() && depth >= 5 {
             depth -= 1;
         }
 
