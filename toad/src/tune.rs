@@ -198,3 +198,19 @@ macro_rules! min_razoring_depth {
     };
 }
 pub(crate) use min_razoring_depth;
+
+/// Multiplier for the LMP formula.
+macro_rules! lmp_multiplier {
+    () => {
+        1
+    };
+}
+pub(crate) use lmp_multiplier;
+
+/// Divisor for the LMP formula.
+macro_rules! lmp_divisor {
+    () => {
+        2
+    };
+}
+pub(crate) use lmp_divisor;
