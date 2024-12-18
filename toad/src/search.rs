@@ -867,7 +867,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                  * We assume our move ordering is so good and that the moves ordered last are so bad that we should
                  * not even bother searching them.
                  ****************************************************************************************************/
-                let min_lmp_moves = 6 * depth.plies() as usize;
+                let min_lmp_moves = 10 * depth.plies() as usize;
                 if i >= min_lmp_moves {
                     break;
                 }
