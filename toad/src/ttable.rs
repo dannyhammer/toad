@@ -80,42 +80,17 @@ impl TTableEntry {
         depth: Ply,
         ply: Ply,
     ) -> Self {
-        let depth = depth.plies() as u8;
-        // Determine what kind of node this is fist, before score adjustment
+        // Determine what kind of node this is first, *before* score adjustment
         let node_type = NodeType::new(score, bounds);
-
-        // Adjust the score (if it was mate) to the ply at which we found it
-        let score = score.absolute(ply);
 
         Self {
             key,
             bestmove,
-            score,
-            depth,
+            // Adjust the score (if it was mate) to the ply at which we found it
+            score: score.absolute(ply),
+            depth: depth.plies() as u8,
             node_type,
         }
-    }
-
-    /// Determine whether the score in this entry can be used and, if so, return it.
-    ///
-    /// An entry's score can be used if and only if:
-    ///     1. The entry is exact ([`NodeType::Pv`]).
-    ///     2. The entry is an upper bound ([`NodeType::All`]) and its score is `<= alpha`.
-    ///     3. The entry is a lower bound ([`NodeType::Cut`]) and its score is `>= beta`.
-    #[inline(always)]
-    pub fn try_score(&self, bounds: SearchBounds, ply: Ply) -> Option<Score> {
-        // Adjust mate scores to be relative to current ply
-        let score = if self.score.is_mate() {
-            self.score.relative(ply)
-        } else {
-            self.score
-        };
-
-        // If we can cutoff, do so
-        (self.node_type == NodeType::Pv
-            || ((self.node_type == NodeType::All && score <= bounds.alpha)
-                || (self.node_type == NodeType::Cut && score >= bounds.beta)))
-            .then_some(score)
     }
 
     /// Fetch the depth associated with this entry.
@@ -250,6 +225,44 @@ impl TTable {
     pub fn store(&mut self, entry: TTableEntry) -> Option<TTableEntry> {
         let index = self.index(&entry.key);
         self.cache[index].replace(entry)
+    }
+
+    /// Probes the [`TTable`] for an entry at the provided `key`, returning that entry's score, if appropriate.
+    ///
+    /// If an entry is found from a greater depth than `depth`, its score is returned if and only if:
+    ///     1. The entry is exact.
+    ///     2. The entry is an upper bound and its score is `<= alpha`.
+    ///     3. The entry is a lower bound and its score is `>= beta`.
+    ///
+    /// See [`TTableEntry::try_score`] for more.
+    #[inline(always)]
+    pub fn probe(
+        &self,
+        key: ZobristKey,
+        depth: Ply,
+        ply: Ply,
+        bounds: SearchBounds,
+    ) -> Option<Score> {
+        // if-let chains are set to be stabilized in Rust 2024 (1.85.0): https://rust-lang.github.io/rfcs/2497-if-let-chains.html
+        if let Some(entry) = self.get(&key) {
+            // Can only cut off if the existing entry came from a greater depth.
+            if entry.depth() >= depth {
+                // Adjust mate scores to be relative to current ply
+                let score = if entry.score.is_mate() {
+                    entry.score.relative(ply)
+                } else {
+                    entry.score
+                };
+
+                // If we can cutoff, do so
+                return (entry.node_type == NodeType::Pv
+                    || ((entry.node_type == NodeType::All && score <= bounds.alpha)
+                        || (entry.node_type == NodeType::Cut && score >= bounds.beta)))
+                    .then_some(score);
+            }
+        }
+
+        None
     }
 }
 

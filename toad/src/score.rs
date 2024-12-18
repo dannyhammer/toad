@@ -198,6 +198,15 @@ macro_rules! impl_binary_op {
                 Score((self.plies() as i32).$fn(rhs.0))
             }
         }
+
+        impl std::ops::$trait<bool> for Score {
+            type Output = Self;
+
+            #[inline(always)]
+            fn $fn(self, rhs: bool) -> Self::Output {
+                Self(self.0.$fn(rhs as i32))
+            }
+        }
     };
 }
 
