@@ -787,26 +787,26 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Clear any nodes in this PV, since we're searching from a new position
         pv.clear();
 
-        // Do not prune in PV nodes
         let mut tt_move = None;
-        if !Node::PV {
-            /****************************************************************************************************
-             * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
-             *
-             * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
-             * work by just returning the evaluation stored in the transposition table.
-             ****************************************************************************************************/
-            if Log::DEBUG {
-                self.ttable.reads += 1;
-            }
+        /****************************************************************************************************
+         * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
+         *
+         * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
+         * work by just returning the evaluation stored in the transposition table.
+         ****************************************************************************************************/
+        if Log::DEBUG {
+            self.ttable.reads += 1;
+        }
 
-            if let Some(tt_score) = self
-                .ttable
-                .probe(game.key(), depth, ply, bounds, &mut tt_move)
-            {
+        if let Some(tt_score) = self
+            .ttable
+            .probe(game.key(), depth, ply, bounds, &mut tt_move)
+        {
+            // Do not prune in PV nodes
+            if !Node::PV {
                 return Ok(tt_score);
             }
-        } else if tt_move.is_none() && depth >= 3 {
+        } else if Node::PV && tt_move.is_none() && depth >= 3 {
             depth -= 1;
         }
 
