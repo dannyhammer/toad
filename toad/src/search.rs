@@ -854,7 +854,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             // Move pruning techniques
             if !Node::PV && !new.is_in_check() && !best.mated() {
                 // late move pruning
-                let min_lmp_moves = 8 * depth.plies() as usize;
+                let min_lmp_moves = 6 * depth.plies() as usize;
                 if i >= min_lmp_moves {
                     break;
                 }
