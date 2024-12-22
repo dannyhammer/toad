@@ -443,12 +443,6 @@ struct SearchParameters {
 
     /// Minimum depth at which razoring can be performed.
     min_razoring_depth: Ply,
-
-    /// Multiplier for the LMP formula.
-    lmp_multiplier: usize,
-
-    /// Divisor for the LMP formula.
-    lmp_divisor: usize,
 }
 
 impl Default for SearchParameters {
@@ -467,8 +461,6 @@ impl Default for SearchParameters {
             rfp_margin: Score::new(tune::rfp_margin!()),
             check_extensions_depth: Ply::from_raw(tune::check_extensions_depth!()),
             min_razoring_depth: Ply::from_raw(tune::min_razoring_depth!()),
-            lmp_multiplier: tune::lmp_multiplier!(),
-            lmp_divisor: tune::lmp_divisor!(),
         }
     }
 }
@@ -867,7 +859,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                  * We assume our move ordering is so good and that the moves ordered last are so bad that we should
                  * not even bother searching them.
                  ****************************************************************************************************/
-                let min_lmp_moves = 10 * depth.plies() as usize;
+                let min_lmp_moves = (self.result.depth.plies() / depth.plies()) as usize;
+                let min_lmp_moves = min_lmp_moves.max(moves.len() / 3);
                 if i >= min_lmp_moves {
                     break;
                 }
