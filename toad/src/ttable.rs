@@ -273,10 +273,11 @@ impl TTable {
                         || (entry.node_type == NodeType::Cut && score >= bounds.beta))
                 {
                     return ProbeResult::Cutoff(score);
-                } else {
-                    return ProbeResult::Hit(entry);
                 }
             }
+
+            // No cutoff was possible, but there was still an entry found.
+            return ProbeResult::Hit(entry);
         }
 
         ProbeResult::Miss
