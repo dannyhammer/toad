@@ -21,7 +21,7 @@ use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
     tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Ply, Position,
-    Score, TTable, TTableEntry, Variant, ZobristKey,
+    ProbeResult, Score, TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Reasons that a search can be cancelled.
@@ -795,26 +795,30 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Clear any nodes in this PV, since we're searching from a new position
         pv.clear();
 
-        let mut tt_move = None;
         if Log::DEBUG {
             self.ttable.reads += 1;
         }
-        let tt_probe = self
-            .ttable
-            .probe(game.key(), depth, ply, bounds, &mut tt_move);
 
-        // Do not prune in PV nodes
-        if !Node::PV {
+        // Probe the TT to see if we can return early or use an existing bestmove.
+        let tt_move = match self.ttable.probe(game.key(), depth, ply, bounds) {
             /****************************************************************************************************
              * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
              *
              * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
-             * work by just returning the evaluation stored in the transposition table.
+             * work by just returning the evaluation stored in the transposition table. However, we must be sure
+             * that we are not in a PV node.
              ****************************************************************************************************/
-            if let Some(tt_score) = tt_probe {
-                return Ok(tt_score);
-            }
-        } else if tt_move.is_none() && depth >= 3 {
+            ProbeResult::Cutoff(tt_score) if !Node::PV => return Ok(tt_score),
+
+            // Entry was found, but could not be used to perform a cutoff
+            ProbeResult::Hit(tt_entry) => tt_entry.bestmove,
+
+            // Miss or otherwise unusable result
+            _ => None,
+        };
+
+        // Internal Iterative Reductions / Transposition Table Reductions
+        if Node::PV && tt_move.is_none() && depth >= 3 {
             depth -= 1;
         }
 

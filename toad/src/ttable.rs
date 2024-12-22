@@ -9,6 +9,19 @@ use crate::{Move, Ply, Score, SearchBounds, ZobristKey};
 /// Number of bytes in a megabyte
 const BYTES_IN_MB: usize = 1024 * 1024;
 
+/// Result of probing the [`TTable`].
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum ProbeResult<'a> {
+    /// An entry was found and can be used to perform a cutoff.
+    Cutoff(Score),
+
+    /// An entry was found, but it could not be used to perform a cutoff.
+    Hit(&'a TTableEntry),
+
+    /// No entry was found for the provided key.
+    Miss,
+}
+
 /// Type of node encountered during search.
 ///
 /// See [CPW](https://www.chessprogramming.org/Node_Types) for more.
@@ -242,13 +255,9 @@ impl TTable {
         depth: Ply,
         ply: Ply,
         bounds: SearchBounds,
-        tt_move: &mut Option<Move>,
-    ) -> Option<Score> {
+    ) -> ProbeResult {
         // if-let chains are set to be stabilized in Rust 2024 (1.85.0): https://rust-lang.github.io/rfcs/2497-if-let-chains.html
         if let Some(entry) = self.get(&key) {
-            // Assign bestmove
-            *tt_move = entry.bestmove;
-
             // Can only cut off if the existing entry came from a greater depth.
             if entry.depth() >= depth {
                 // Adjust mate scores to be relative to current ply
@@ -259,14 +268,18 @@ impl TTable {
                 };
 
                 // If we can cutoff, do so
-                return (entry.node_type == NodeType::Pv
+                if entry.node_type == NodeType::Pv
                     || ((entry.node_type == NodeType::All && score <= bounds.alpha)
-                        || (entry.node_type == NodeType::Cut && score >= bounds.beta)))
-                    .then_some(score);
+                        || (entry.node_type == NodeType::Cut && score >= bounds.beta))
+                {
+                    return ProbeResult::Cutoff(score);
+                } else {
+                    return ProbeResult::Hit(entry);
+                }
             }
         }
 
-        None
+        ProbeResult::Miss
     }
 }
 
