@@ -411,7 +411,7 @@ struct SearchParameters {
     /// Value to subtract from `depth` when applying null move pruning.
     nmp_reduction: Ply,
 
-    /// MAximum depth at which to apply reverse futility pruning.
+    /// Maximum depth at which to apply reverse futility pruning.
     max_rfp_depth: Ply,
 
     /// Minimum depth at which to apply late move pruning.
@@ -443,6 +443,12 @@ struct SearchParameters {
 
     /// Minimum depth at which razoring can be performed.
     min_razoring_depth: Ply,
+
+    /// Multiplier for the LMP formula.
+    lmp_multiplier: usize,
+
+    /// Divisor for the LMP formula.
+    lmp_divisor: usize,
 }
 
 impl Default for SearchParameters {
@@ -461,6 +467,8 @@ impl Default for SearchParameters {
             rfp_margin: Score::new(tune::rfp_margin!()),
             check_extensions_depth: Ply::from_raw(tune::check_extensions_depth!()),
             min_razoring_depth: Ply::from_raw(tune::min_razoring_depth!()),
+            lmp_multiplier: tune::lmp_multiplier!(),
+            lmp_divisor: tune::lmp_divisor!(),
         }
     }
 }
@@ -857,8 +865,14 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Move pruning techniques
             if !Node::PV && !new.is_in_check() && !best.mated() {
-                // late move pruning
-                let min_lmp_moves = moves.len() / 2;
+                /****************************************************************************************************
+                 * Late Move Pruning: https://www.chessprogramming.org/Futility_Pruning#MoveCountBasedPruning
+                 *
+                 * We assume our move ordering is so good and that the moves ordered last are so bad that we should
+                 * not even bother searching them.
+                 ****************************************************************************************************/
+                let min_lmp_moves =
+                    self.params.lmp_multiplier * moves.len() / self.params.lmp_divisor;
                 if depth <= self.params.min_lmp_depth && i >= min_lmp_moves {
                     break;
                 }
