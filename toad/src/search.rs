@@ -859,8 +859,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                  * We assume our move ordering is so good and that the moves ordered last are so bad that we should
                  * not even bother searching them.
                  ****************************************************************************************************/
-                let min_lmp_moves = (self.result.depth.plies() / depth.plies()) as usize;
-                let min_lmp_moves = min_lmp_moves.max(moves.len() / 3);
+                let initial_depth = self.result.depth.plies() as usize;
+                let curr_depth = depth.plies() as usize;
+                let min_lmp_moves = curr_depth * moves.len() / initial_depth; // Prune more aggressively in higher ID depths
+                let min_lmp_moves = min_lmp_moves.max(moves.len() / 3); // Always try at least 1/3rd of the legal moves
                 if i >= min_lmp_moves {
                     break;
                 }
