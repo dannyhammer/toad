@@ -862,7 +862,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 let initial_depth = self.result.depth.plies() as usize;
                 let curr_depth = depth.plies() as usize;
                 let min_lmp_moves = curr_depth * moves.len() / initial_depth; // Prune more aggressively in higher ID depths
-                let min_lmp_moves = min_lmp_moves.max(moves.len() / 3); // Always try at least 1/3rd of the legal moves
                 if i >= min_lmp_moves {
                     break;
                 }
