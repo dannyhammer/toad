@@ -779,7 +779,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     fn negamax<Node: NodeType>(
         &mut self,
         game: &Game<V>,
-        depth: Ply,
+        mut depth: Ply,
         ply: Ply,
         mut bounds: SearchBounds,
         pv: &mut PrincipalVariation,
@@ -818,9 +818,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         };
 
         // Internal Iterative Reductions / Transposition Table Reductions
-        // if Node::PV && tt_move.is_none() && depth >= 3 {
-        //     depth -= 1;
-        // }
+        if Node::PV && tt_move.is_none() && depth >= 5 {
+            depth -= 1;
+        }
 
         /****************************************************************************************************
          * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
