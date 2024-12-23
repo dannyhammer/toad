@@ -818,7 +818,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         };
 
         // Internal Iterative Reductions / Transposition Table Reductions
-        // if Node::PV && tt_move.is_none() && depth >= 3 {
+        // if tt_move.is_none() && depth >= 5 {
         //     depth -= 1;
         // }
 
@@ -868,7 +868,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             let mut score = Score::DRAW;
 
             // Move pruning techniques
-            if !Node::PV && !new.is_in_check() && !best.mated() {
+            if !Node::PV && !best.mated() {
                 /****************************************************************************************************
                  * Late Move Pruning: https://www.chessprogramming.org/Futility_Pruning#MoveCountBasedPruning
                  *
