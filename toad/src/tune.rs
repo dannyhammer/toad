@@ -221,4 +221,28 @@ macro_rules! min_fp_depth {
         300
     };
 }
+
 pub(crate) use min_fp_depth;
+/// Multiplier for the LMP formula.
+macro_rules! lmp_multiplier {
+    () => {
+        1
+    };
+}
+pub(crate) use lmp_multiplier;
+
+/// Divisor for the LMP formula.
+macro_rules! lmp_divisor {
+    () => {
+        3
+    };
+}
+pub(crate) use lmp_divisor;
+
+/// Minimum depth at which IIR can be performed
+macro_rules! min_iir_depth {
+    () => {
+        500
+    };
+}
+pub(crate) use min_iir_depth;
