@@ -214,3 +214,11 @@ macro_rules! lmp_divisor {
     };
 }
 pub(crate) use lmp_divisor;
+
+/// Minimum depth at which IIR can be performed
+macro_rules! min_iir_depth {
+    () => {
+        500
+    };
+}
+pub(crate) use min_iir_depth;

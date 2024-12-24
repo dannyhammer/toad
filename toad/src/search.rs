@@ -449,6 +449,9 @@ struct SearchParameters {
 
     /// Divisor for the LMP formula.
     lmp_divisor: usize,
+
+    /// Minimum depth at which IIR can be applied.
+    min_iir_depth: Ply,
 }
 
 impl Default for SearchParameters {
@@ -469,6 +472,7 @@ impl Default for SearchParameters {
             min_razoring_depth: Ply::from_raw(tune::min_razoring_depth!()),
             lmp_multiplier: tune::lmp_multiplier!(),
             lmp_divisor: tune::lmp_divisor!(),
+            min_iir_depth: Ply::from_raw(tune::min_iir_depth!()),
         }
     }
 }
@@ -791,15 +795,13 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Declare a local principal variation for nodes found during this search.
         let mut local_pv = PrincipalVariation::default();
-
         // Clear any nodes in this PV, since we're searching from a new position
         pv.clear();
 
+        // Probe the TT to see if we can return early or use an existing bestmove.
         if Log::DEBUG {
             self.ttable.reads += 1;
         }
-
-        // Probe the TT to see if we can return early or use an existing bestmove.
         let tt_move = match self.ttable.probe(game.key(), depth, ply, bounds) {
             /****************************************************************************************************
              * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
@@ -817,18 +819,24 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             _ => None,
         };
 
-        // Internal Iterative Reductions / Transposition Table Reductions
-        if tt_move.is_none() && depth >= 5 {
+        /****************************************************************************************************
+         * Internal Iterative Reductions: https://www.chessprogramming.org/Internal_Iterative_Reductions
+         *
+         * Also known as Transposition Table Reductions. If no bestmove was found when probing the TT, we are
+         * likely to spend a lot of time on this search, due to poor move ordering. It is also likely that
+         * this node isn't *that* important, since it wasn't already in the TT. So, we perform a reduced-depth
+         * search to speed things up and hopefully deliver better results.
+         ****************************************************************************************************/
+        if tt_move.is_none() && depth >= self.params.min_iir_depth {
             depth -= 1;
         }
 
         /****************************************************************************************************
          * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
          *
-         * In order to avoid the horizon effect, we don't stop searching at a depth of 0. Instead, we look
-         * at all available moves until we reach a "quiet" (quiescent) position.
+         * In order to avoid the horizon effect, we don't stop searching at a depth of 0. Instead, we
+         * continue searching all "noisy" moves until we reach a "quiet" (quiescent) position.
          ****************************************************************************************************/
-        // If we've reached a terminal node, evaluate the current position
         if depth == 0 {
             return self.quiescence::<Node>(game, ply, bounds, pv);
         }
@@ -867,7 +875,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             let new = game.with_move_made(*mv);
             let mut score = Score::DRAW;
 
-            // Move pruning techniques
+            /****************************************************************************************************
+             * Move-Loop Pruning techniques
+             ****************************************************************************************************/
             if !Node::PV && !best.mated() {
                 /****************************************************************************************************
                  * Late Move Pruning: https://www.chessprogramming.org/Futility_Pruning#MoveCountBasedPruning
@@ -882,8 +892,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 }
             }
 
+            /****************************************************************************************************
+             * Recursion of the search
+             ****************************************************************************************************/
+            // Don't bother searching drawn positions, unless we're in the root node.
             if Node::ROOT || !self.is_draw(&new) {
-                // Append the move onto the history
+                // Append this position onto our stack, so we can detect repetitions
                 self.prev_positions.push(*new.position());
 
                 let new_depth = depth - 1 + self.extension_value(&new);
@@ -1023,6 +1037,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     ) -> Result<Score, SearchCancelled> {
         self.search_cancelled()?; // Exit early if search is terminated.
 
+        // Record the max max height / max ply / seldepth
+        self.result.seldepth = self.result.seldepth.max(ply) * !Node::ROOT as i32;
+
         // Declare a local principal variation for nodes found during this search.
         let mut local_pv = PrincipalVariation::default();
         // Clear any nodes in this PV, since we're searching from a new position
@@ -1033,7 +1050,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Beta cutoff; this position is "too good" and our opponent would never let us get here
         if stand_pat >= bounds.beta {
-            return Ok(stand_pat);
+            return Ok(stand_pat); // fail-soft
         } else if stand_pat > bounds.alpha {
             bounds.alpha = stand_pat;
         }
@@ -1072,9 +1089,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             let new = game.with_move_made(mv);
             let mut score = Score::DRAW;
 
-            // Normally, repetitions can't occur in QSearch, because captures are irreversible.
-            // However, some QSearch extensions (quiet TT moves, all moves when in check, etc.) may be reversible.
+            /****************************************************************************************************
+             * Recursion of the search
+             ****************************************************************************************************/
+            // Don't bother searching drawn positions, unless we're in the root node.
             if Node::ROOT || !self.is_draw(&new) {
+                // Append this position onto our stack, so we can detect repetitions
                 self.prev_positions.push(*new.position());
 
                 score = -self.quiescence::<Node>(&new, ply + 1, -bounds, &mut local_pv)?;
@@ -1321,6 +1341,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         if can_perform_nmp {
             let null_game = game.with_nullmove_made();
+            // Record this position in our stack, for repetition detection
             self.prev_positions.push(*null_game.position());
 
             // Search at a reduced depth with a zero-window
