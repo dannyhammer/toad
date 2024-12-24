@@ -261,11 +261,7 @@ impl TTable {
             // Can only cut off if the existing entry came from a greater depth.
             if entry.depth() >= depth {
                 // Adjust mate scores to be relative to current ply
-                let score = if entry.score.is_mate() {
-                    entry.score.relative(ply)
-                } else {
-                    entry.score
-                };
+                let score = entry.score.relative(ply);
 
                 // If we can cutoff, do so
                 if entry.node_type == NodeType::Pv
