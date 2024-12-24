@@ -1390,7 +1390,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Search at a reduced depth with a zero-window
             let nmp_depth = depth - self.params.nmp_reduction;
-            let score = -self.negamax::<NonPvNode>(
+            let score = -self.negamax::<Node>(
                 &null_game,
                 nmp_depth,
                 ply + 1,
