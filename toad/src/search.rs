@@ -818,7 +818,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         };
 
         // Internal Iterative Reductions / Transposition Table Reductions
-        if Node::PV && tt_move.is_none() && depth >= 5 {
+        if tt_move.is_none() && depth >= 5 {
             depth -= 1;
         }
 
