@@ -222,3 +222,19 @@ macro_rules! min_iir_depth {
     };
 }
 pub(crate) use min_iir_depth;
+
+/// Minimum depth at which IID can be performed
+macro_rules! min_iid_depth {
+    () => {
+        400
+    };
+}
+pub(crate) use min_iid_depth;
+
+/// Offset to subtract from depth during IID.
+macro_rules! iid_offset {
+    () => {
+        200
+    };
+}
+pub(crate) use iid_offset;
