@@ -450,8 +450,8 @@ struct SearchParameters {
     /// Value to offset depth by when performing futility pruning.
     fp_offset: i32,
 
-    /// Minium depth at which futility pruning can be applied
-    min_fp_depth: Ply,
+    /// Maximum depth at which futility pruning can be applied
+    max_fp_depth: Ply,
 
     /// Multiplier for the LMP formula.
     lmp_multiplier: usize,
@@ -486,8 +486,8 @@ impl Default for SearchParameters {
             check_extensions_depth: Ply::from_raw(tune::check_extensions_depth!()),
             fp_multiplier: tune::fp_multiplier!(),
             fp_offset: tune::fp_offset!(),
-            min_fp_depth: Ply::from_raw(tune::min_fp_depth!()),
             max_razoring_depth: Ply::from_raw(tune::max_razoring_depth!()),
+            max_fp_depth: Ply::from_raw(tune::max_fp_depth!()),
             lmp_multiplier: tune::lmp_multiplier!(),
             lmp_divisor: tune::lmp_divisor!(),
             min_iir_depth: Ply::from_raw(tune::min_iir_depth!()),
@@ -927,10 +927,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 }
 
                 // futility pruning
-                let fp_margin =
-                    self.params.min_fp_depth * self.params.fp_multiplier + self.params.fp_offset;
+                let fp_margin = self.params.max_fp_depth.plies() * self.params.fp_multiplier
+                    + self.params.fp_offset;
                 if mv.is_quiet()
-                    && depth <= self.params.min_fp_depth
+                    && depth <= self.params.max_fp_depth
                     && new.eval() + fp_margin <= bounds.alpha
                 {
                     break;

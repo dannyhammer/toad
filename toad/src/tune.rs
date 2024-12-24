@@ -215,14 +215,15 @@ macro_rules! fp_offset {
 }
 pub(crate) use fp_offset;
 
-/// Minimum depth at which futility pruning can be applied.
-macro_rules! min_fp_depth {
+/// Maximum depth at which futility pruning can be applied.
+macro_rules! max_fp_depth {
     () => {
         100
     };
 }
 
-pub(crate) use min_fp_depth;
+pub(crate) use max_fp_depth;
+
 /// Multiplier for the LMP formula.
 macro_rules! lmp_multiplier {
     () => {
