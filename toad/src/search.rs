@@ -905,9 +905,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                 // futility pruning
                 let fp_margin =
-                    self.params.min_lmp_depth * self.params.fp_multiplier + self.params.fp_offset;
+                    self.params.min_lmr_depth * self.params.fp_multiplier + self.params.fp_offset;
                 if mv.is_quiet()
-                    && depth <= self.params.min_fp_depth
+                    && depth < self.params.min_fp_depth
                     && new.eval() + fp_margin <= bounds.alpha
                 {
                     break;
