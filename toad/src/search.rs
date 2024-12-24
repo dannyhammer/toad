@@ -414,8 +414,8 @@ struct SearchParameters {
     /// Maximum depth at which to apply reverse futility pruning.
     max_rfp_depth: Ply,
 
-    /// Minimum depth at which to apply late move pruning.
-    min_lmp_depth: Ply,
+    /// Maximum depth at which to apply late move pruning.
+    max_lmp_depth: Ply,
 
     /// Minimum depth at which to apply late move reductions.
     min_lmr_depth: Ply,
@@ -441,8 +441,8 @@ struct SearchParameters {
     /// Depth to extend by if the position is in check.
     check_extensions_depth: Ply,
 
-    /// Minimum depth at which razoring can be performed.
-    min_razoring_depth: Ply,
+    /// Maximum depth at which razoring can be performed.
+    max_razoring_depth: Ply,
 
     /// Multiplier for the LMP formula.
     lmp_multiplier: usize,
@@ -466,7 +466,7 @@ impl Default for SearchParameters {
             min_nmp_depth: Ply::from_raw(tune::min_nmp_depth!()),
             nmp_reduction: Ply::from_raw(tune::nmp_reduction!()),
             max_rfp_depth: Ply::from_raw(tune::max_rfp_depth!()),
-            min_lmp_depth: Ply::from_raw(tune::min_lmp_depth!()),
+            max_lmp_depth: Ply::from_raw(tune::max_lmp_depth!()),
             min_lmr_depth: Ply::from_raw(tune::min_lmr_depth!()),
             min_lmr_moves: tune::min_lmr_moves!(),
             lmr_offset: tune::lmr_offset!(),
@@ -475,7 +475,7 @@ impl Default for SearchParameters {
             history_offset: Score::new(tune::history_offset!()),
             rfp_margin: Score::new(tune::rfp_margin!()),
             check_extensions_depth: Ply::from_raw(tune::check_extensions_depth!()),
-            min_razoring_depth: Ply::from_raw(tune::min_razoring_depth!()),
+            max_razoring_depth: Ply::from_raw(tune::max_razoring_depth!()),
             lmp_multiplier: tune::lmp_multiplier!(),
             lmp_divisor: tune::lmp_divisor!(),
             min_iir_depth: Ply::from_raw(tune::min_iir_depth!()),
@@ -910,7 +910,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                  ****************************************************************************************************/
                 let min_lmp_moves =
                     self.params.lmp_multiplier * moves.len() / self.params.lmp_divisor;
-                if depth <= self.params.min_lmp_depth && i >= min_lmp_moves {
+                if depth <= self.params.max_lmp_depth && i >= min_lmp_moves {
                     break;
                 }
             }
@@ -1323,7 +1323,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * If it can't, we can prune this node.
          ****************************************************************************************************/
         let razoring_margin = Score::RAZORING_OFFSET + Score::RAZORING_MULTIPLIER * depth;
-        if depth <= self.params.min_razoring_depth && static_eval + razoring_margin < bounds.alpha {
+        if depth <= self.params.max_razoring_depth && static_eval + razoring_margin < bounds.alpha {
             let score = self.quiescence::<Node>(game, ply, bounds.null_alpha(), pv)?;
             // If we can't beat alpha (without mating), we can prune.
             if score < bounds.alpha && !score.is_mate() {
