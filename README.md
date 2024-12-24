@@ -61,6 +61,10 @@ If you are willing to test the installation and execution of Toad on other opera
     -   [Late Move Reductions](https://www.chessprogramming.org/Late_Move_Reductions).
     -   [Check Extensions](https://www.chessprogramming.org/Check_Extensions).
     -   [Razoring](https://www.chessprogramming.org/Razoring).
+    -   [Internal Iterative Reductions / Transposition Table Reductions](https://www.chessprogramming.org/Internal_Iterative_Reductions).
+    -   [Internal Iterative Deepening](https://www.chessprogramming.org/Internal_Iterative_Deepening).
+    -   [Late Move Pruning](https://www.chessprogramming.org/Futility_Pruning#MoveCountBasedPruning).
+    -   Support for [fractional plies](https://www.chessprogramming.org/Depth#Fractional_Plies)
     -   Move Ordering:
         -   [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) with relative piece values `K < P < N < B < R < Q`, so `KxR` is ordered before `PxR`.
         -   [Hash moves](https://www.chessprogramming.org/Hash_Move).
@@ -129,7 +133,6 @@ For specifics on how a command works, run `toad <COMMAND> --help`
 | `Hash`         | `1..=1024`      | `16`    | Set the size (in MB) of the hash table(s)                                         |
 | `Threads`      | `1..=1`         | `1`     | Only implemented for use with [OpenBench](https://github.com/AndyGrant/OpenBench) |
 | `UCI_Chess960` | `true`, `false` | `false` | Enable support for [Chess960](https://en.wikipedia.org/wiki/Fischer_random_chess) |
-
 
 ## Acknowledgements
 
