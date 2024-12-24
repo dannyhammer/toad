@@ -1038,6 +1038,24 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             bounds.alpha = stand_pat;
         }
 
+        // Probe the TT to see if we can return early or use an existing bestmove.
+        let tt_move = match self.ttable.probe(game.key(), Ply::ZERO, ply, bounds) {
+            /****************************************************************************************************
+             * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
+             *
+             * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
+             * work by just returning the evaluation stored in the transposition table. However, we must be sure
+             * that we are not in a PV node.
+             ****************************************************************************************************/
+            ProbeResult::Cutoff(tt_score) if !Node::PV => return Ok(tt_score),
+
+            // Entry was found, but could not be used to perform a cutoff
+            ProbeResult::Hit(tt_entry) => tt_entry.bestmove,
+
+            // Miss or otherwise unusable result
+            _ => None,
+        };
+
         // Generate only the legal captures
         // TODO: Is there a more concise way of doing this?
         // The `game.into_iter().only_captures()` doesn't cover en passant...
@@ -1053,7 +1071,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             return Ok(stand_pat);
         }
 
-        let tt_move = self.get_tt_bestmove(game.key());
         captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
@@ -1208,24 +1225,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             // This was a write, regardless.
             self.ttable.writes += 1;
         }
-    }
-
-    /// Gets the bestmove for the provided position from the TTable, if it exists.
-    #[inline(always)]
-    fn get_tt_bestmove(&mut self, key: ZobristKey) -> Option<Move> {
-        let mv = self.ttable.get(&key).and_then(|entry| entry.bestmove);
-
-        if Log::DEBUG {
-            // Regardless whether this was a hit, it was still an access
-            self.ttable.reads += 1;
-
-            // If a move was found, this was a hit
-            if mv.is_some() {
-                self.ttable.hits += 1;
-            }
-        }
-
-        mv
     }
 
     /// Applies a score to the provided move, intended to be used when ordering moves during search.
