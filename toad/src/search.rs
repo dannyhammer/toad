@@ -816,7 +816,18 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             ProbeResult::Hit(tt_entry) => tt_entry.bestmove,
 
             // Miss or otherwise unusable result
-            _ => None,
+            _ => {
+                // Internal Iterative Deepening
+                // If no TT hit, but we're in a PV node, perform a reduced search
+                if Node::PV && depth > 3 {
+                    self.negamax::<Node>(game, depth - 2, ply, bounds, pv)?;
+                    self.ttable
+                        .get(&game.key())
+                        .and_then(|entry| entry.bestmove)
+                } else {
+                    None
+                }
+            }
         };
 
         /****************************************************************************************************
