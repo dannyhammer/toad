@@ -127,13 +127,13 @@ macro_rules! rfp_margin {
 }
 pub(crate) use rfp_margin;
 
-/// Minimum depth at which to apply late move pruning.
-macro_rules! min_lmp_depth {
+/// Maximum depth at which to apply late move pruning.
+macro_rules! max_lmp_depth {
     () => {
         300
     };
 }
-pub(crate) use min_lmp_depth;
+pub(crate) use max_lmp_depth;
 
 /// Minimum depth at which to apply late move reductions.
 macro_rules! min_lmr_depth {
@@ -191,13 +191,13 @@ macro_rules! check_extensions_depth {
 }
 pub(crate) use check_extensions_depth;
 
-/// Minimum depth at which razoring can be applied.
-macro_rules! min_razoring_depth {
+/// Maximum depth at which razoring can be applied.
+macro_rules! max_razoring_depth {
     () => {
         200
     };
 }
-pub(crate) use min_razoring_depth;
+pub(crate) use max_razoring_depth;
 
 /// Multiplier for the LMP formula.
 macro_rules! lmp_multiplier {
@@ -222,3 +222,19 @@ macro_rules! min_iir_depth {
     };
 }
 pub(crate) use min_iir_depth;
+
+/// Minimum depth at which IID can be performed
+macro_rules! min_iid_depth {
+    () => {
+        400
+    };
+}
+pub(crate) use min_iid_depth;
+
+/// Offset to subtract from depth during IID.
+macro_rules! iid_offset {
+    () => {
+        200
+    };
+}
+pub(crate) use iid_offset;
