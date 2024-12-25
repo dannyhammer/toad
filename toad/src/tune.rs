@@ -122,7 +122,7 @@ pub(crate) use max_rfp_depth;
 /// Safety margin when applying reverse futility pruning.
 macro_rules! rfp_margin {
     () => {
-        75
+        70
     };
 }
 pub(crate) use rfp_margin;
