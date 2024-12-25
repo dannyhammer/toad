@@ -934,7 +934,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     && depth <= self.params.max_fp_depth
                     && new.eval() + fp_margin <= bounds.alpha
                 {
-                    break;
+                    continue;
                 }
             }
 
