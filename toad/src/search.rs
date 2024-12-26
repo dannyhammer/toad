@@ -1099,7 +1099,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Generate only the legal captures
         // TODO: Is there a more concise way of doing this?
         // The `game.into_iter().only_captures()` doesn't cover en passant...
-        let mut captures = game
+        let mut moves = game
             .get_legal_moves()
             .into_iter()
             .filter(Move::is_capture)
@@ -1107,11 +1107,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
         // So, if there are no captures available, just return the current evaluation.
-        if captures.is_empty() {
+        if moves.is_empty() {
             return Ok(stand_pat);
         }
 
-        captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
+        moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
@@ -1121,13 +1121,30 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * Primary move loop
          ****************************************************************************************************/
 
-        for mv in captures {
+        for (i, mv) in moves.iter().enumerate() {
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
             local_pv.clear();
 
             // Copy-make the new position
-            let new = game.with_move_made(mv);
+            let new = game.with_move_made(*mv);
             let mut score = Score::DRAW;
+
+            /****************************************************************************************************
+             * Move-Loop Pruning techniques
+             ****************************************************************************************************/
+            if !Node::PV && !best.mated() {
+                /****************************************************************************************************
+                 * Late Move Pruning: https://www.chessprogramming.org/Futility_Pruning#MoveCountBasedPruning
+                 *
+                 * We assume our move ordering is so good and that the moves ordered last are so bad that we should
+                 * not even bother searching them.
+                 ****************************************************************************************************/
+                let min_lmp_moves =
+                    self.params.lmp_multiplier * moves.len() / self.params.lmp_divisor;
+                if i >= min_lmp_moves {
+                    break;
+                }
+            }
 
             /****************************************************************************************************
              * Recursion of the search
@@ -1156,12 +1173,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // PV found
                 if score > bounds.alpha {
                     bounds.alpha = score;
-                    bestmove = Some(mv);
+                    bestmove = Some(*mv);
 
                     // Only extend the PV if we're in a PV node
                     if Node::PV {
                         // assert_pv_is_legal(game, mv, &local_pv);
-                        pv.extend(mv, &local_pv);
+                        pv.extend(*mv, &local_pv);
                     }
                 }
 
