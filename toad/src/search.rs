@@ -927,9 +927,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 }
 
                 // futility pruning
-                let fp_margin = self.params.max_fp_depth.plies() * self.params.fp_multiplier
-                    + self.params.fp_offset;
-
+                let fp_margin = depth.plies() * self.params.fp_multiplier + self.params.fp_offset;
                 if !game.is_in_check()
                     && mv.is_quiet()
                     && depth <= self.params.max_fp_depth
