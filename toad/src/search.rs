@@ -931,7 +931,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 if !game.is_in_check()
                     && mv.is_quiet()
                     && depth <= self.params.max_fp_depth
-                    && new.eval() + fp_margin <= bounds.alpha
+                    && game.eval() + fp_margin <= bounds.alpha
                 {
                     continue;
                 }
