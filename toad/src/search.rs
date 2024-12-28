@@ -898,6 +898,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             let new = game.with_move_made(*mv);
             let mut score = Score::DRAW;
 
+            // Compute the reduction/extension values to determine what the new depth should be.
+            let reduction = self.reduction_value::<Node>(depth, &new, i);
+            let can_reduce = reduction.is_some();
+            let lmr_reduction = reduction.unwrap_or_default();
+
+            // Default depth to search for all child nodes.
+            let new_depth = depth - 1 + self.extension_value(&new);
+            // Reduced depth should never exceed `new_depth` and should never be less than `1`.
+            let reduced_depth = (new_depth - lmr_reduction).max(Ply::ONE).min(new_depth);
+
             /****************************************************************************************************
              * Move-Loop Pruning techniques
              ****************************************************************************************************/
@@ -910,7 +920,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                  ****************************************************************************************************/
                 let min_lmp_moves =
                     self.params.lmp_multiplier * moves.len() / self.params.lmp_divisor;
-                if depth <= self.params.max_lmp_depth && i >= min_lmp_moves {
+                if reduced_depth <= self.params.max_lmp_depth && i >= min_lmp_moves {
                     break;
                 }
             }
@@ -923,13 +933,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // Append this position onto our stack, so we can detect repetitions
                 self.prev_positions.push(*new.position());
 
-                let new_depth = depth - 1 + self.extension_value(&new);
-
                 // If this node can be reduced, search it with a reduced window.
-                if let Some(lmr_reduction) = self.reduction_value::<Node>(depth, &new, i) {
-                    // Reduced depth should never exceed `new_depth` and should never be less than `1`.
-                    let reduced_depth = (new_depth - lmr_reduction).max(Ply::ONE).min(new_depth);
-
+                // if let Some(lmr_reduction) = self.reduction_value::<Node>(depth, &new, i) {
+                if can_reduce {
                     // Search at a reduced depth with a null window
                     score = -self.negamax::<NonPvNode>(
                         &new,
