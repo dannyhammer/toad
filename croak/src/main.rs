@@ -1,3 +1,4 @@
+/*
 use std::{
     fs::{self, File},
     io::{BufRead, BufReader},
@@ -149,7 +150,7 @@ impl<V: Variant> Tuner<V> {
     }
 
     fn update_weights(&mut self, weights: &[i32]) {
-        self.weights_mut()[..weights.len()].copy_from_slice(&weights[..]);
+        self.weights_mut()[..weights.len()].copy_from_slice(weights);
     }
     fn store_weights(&self, path: impl AsRef<Path>) -> Result<()> {
         println!("Writing weights to {:?}", path.as_ref());
@@ -189,7 +190,8 @@ impl<V: Variant> Tuner<V> {
                     if new_mse < best_mse {
                         best_mse = new_mse;
                         best_params = new_params;
-                        println!("Found better params({sign})");
+                        println!("Found better params({sign}): {best_mse}");
+                        _ = best_params;
                         self.store_weights("tuning_weights.txt")?;
                         break 'improving;
                     }
@@ -218,4 +220,10 @@ impl<V: Variant> Tuner<V> {
 
         sum / n
     }
+}
+
+ */
+
+fn main() {
+    println!("croak!");
 }
