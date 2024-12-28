@@ -21,7 +21,7 @@ use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
     tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Ply, Position,
-    ProbeResult, Score, TTable, TTableEntry, Variant, ZobristKey, MAX_NUM_MOVES,
+    ProbeResult, Score, TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Reasons that a search can be cancelled.
@@ -458,9 +458,10 @@ pub struct SearchParameters {
 
     /// Offset to subtract from depth during IID.
     iid_offset: Ply,
-
+    /*
     /// Pre-computed table for Late Move Reduction values.
     lmr_table: [[i32; MAX_NUM_MOVES]; Ply::MAX.plies() as usize],
+     */
 }
 
 impl Default for SearchParameters {
@@ -468,16 +469,16 @@ impl Default for SearchParameters {
         let lmr_offset = tune::lmr_offset!();
         let lmr_divisor = tune::lmr_divisor!();
 
-        // Initialize the table for Late Move Reductions, so that we don't need to re-do floating-point arithmetic constantly.
-        let mut lmr_table = [[0; MAX_NUM_MOVES]; Ply::MAX.plies() as usize];
-        for (depth, entry) in lmr_table.iter_mut().enumerate() {
-            for (moves_made, reduction) in entry.iter_mut().enumerate() {
-                // Base LMR reduction increases as we go higher in depth and/or make more moves
-                *reduction = (lmr_offset
-                    + (depth as f32).ln() * (moves_made as f32).ln() / lmr_divisor)
-                    as i32;
-            }
-        }
+        // Initialize the table for Late Move Reductions, so that we don't need redo the floating-point arithmetic constantly.
+        // let mut lmr_table = [[0; MAX_NUM_MOVES]; Ply::MAX.plies() as usize];
+        // for (depth, entry) in lmr_table.iter_mut().enumerate() {
+        //     for (moves_made, reduction) in entry.iter_mut().enumerate() {
+        //         // Base LMR reduction increases as we go higher in depth and/or make more moves
+        //         *reduction = (lmr_offset
+        //             + (depth as f32).ln() * (moves_made as f32).ln() / lmr_divisor)
+        //             as i32;
+        //     }
+        // }
 
         Self {
             min_nmp_depth: Ply::from_raw(tune::min_nmp_depth!()),
@@ -498,7 +499,7 @@ impl Default for SearchParameters {
             min_iir_depth: Ply::from_raw(tune::min_iir_depth!()),
             min_iid_depth: Ply::from_raw(tune::min_iid_depth!()),
             iid_offset: Ply::from_raw(tune::iid_offset!()),
-            lmr_table,
+            // lmr_table,
         }
     }
 }
@@ -1426,7 +1427,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             && moves_made >= self.params.min_lmr_moves + Node::PV as usize)
             .then(|| {
                 // Base LMR reduction increases as we go higher in depth and/or make more moves
-                let mut lmr_reduction = self.params.lmr_table[depth.plies() as usize][moves_made];
+                // let mut lmr_reduction = self.params.lmr_table[depth.plies() as usize][moves_made];
+                let mut lmr_reduction = (self.params.lmr_offset
+                    + (depth.plies() as f32).ln() * (moves_made as f32).ln()
+                        / self.params.lmr_divisor) as i32;
 
                 // Increase/decrease the reduction based on current conditions
                 // lmr_reduction += something;
