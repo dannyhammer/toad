@@ -891,20 +891,13 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
 
         for (i, mv) in moves.iter().enumerate() {
-            // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
-            local_pv.clear();
-
-            // Copy-make the new position
-            let new = game.with_move_made(*mv);
-            let mut score = Score::DRAW;
-
             // Compute the reduction/extension values to determine what the new depth should be.
-            let reduction = self.reduction_value::<Node>(depth, &new, i);
+            let reduction = self.reduction_value::<Node>(depth, game, i);
             let can_reduce = reduction.is_some();
             let lmr_reduction = reduction.unwrap_or_default();
 
             // Default depth to search for all child nodes.
-            let new_depth = depth - 1 + self.extension_value(&new);
+            let new_depth = depth - 1 + self.extension_value(game);
             // Reduced depth should never exceed `new_depth` and should never be less than `1`.
             let reduced_depth = (new_depth - lmr_reduction).max(Ply::ONE).min(new_depth);
 
@@ -924,6 +917,13 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     break;
                 }
             }
+
+            // Copy-make the new position
+            let new = game.with_move_made(*mv);
+            let mut score = Score::DRAW;
+
+            // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
+            local_pv.clear();
 
             /****************************************************************************************************
              * Recursion of the search
