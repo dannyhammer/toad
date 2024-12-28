@@ -404,7 +404,7 @@ impl Default for SearchConfig {
 
 /// Parameters for the various features used to enhance the efficiency of a search.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct SearchParameters {
+pub struct SearchParameters {
     /// Minium depth at which null move pruning can be applied.
     min_nmp_depth: Ply,
 
@@ -458,10 +458,27 @@ struct SearchParameters {
 
     /// Offset to subtract from depth during IID.
     iid_offset: Ply,
+
+    /// Pre-computed table for Late Move Reduction values.
+    lmr_table: [[i32; MAX_NUM_MOVES]; Ply::MAX.plies() as usize],
 }
 
 impl Default for SearchParameters {
     fn default() -> Self {
+        let lmr_offset = tune::lmr_offset!();
+        let lmr_divisor = tune::lmr_divisor!();
+
+        // Initialize the table for Late Move Reductions, so that we don't need to re-do floating-point arithmetic constantly.
+        let mut lmr_table = [[0; MAX_NUM_MOVES]; Ply::MAX.plies() as usize];
+        for (depth, entry) in lmr_table.iter_mut().enumerate() {
+            for (moves_made, reduction) in entry.iter_mut().enumerate() {
+                // Base LMR reduction increases as we go higher in depth and/or make more moves
+                *reduction = (lmr_offset
+                    + (depth as f32).ln() * (moves_made as f32).ln() / lmr_divisor)
+                    as i32;
+            }
+        }
+
         Self {
             min_nmp_depth: Ply::from_raw(tune::min_nmp_depth!()),
             nmp_reduction: Ply::from_raw(tune::nmp_reduction!()),
@@ -469,8 +486,8 @@ impl Default for SearchParameters {
             max_lmp_depth: Ply::from_raw(tune::max_lmp_depth!()),
             min_lmr_depth: Ply::from_raw(tune::min_lmr_depth!()),
             min_lmr_moves: tune::min_lmr_moves!(),
-            lmr_offset: tune::lmr_offset!(),
-            lmr_divisor: tune::lmr_divisor!(),
+            lmr_offset,
+            lmr_divisor,
             history_multiplier: Score::new(tune::history_multiplier!()),
             history_offset: Score::new(tune::history_offset!()),
             rfp_margin: Score::new(tune::rfp_margin!()),
@@ -481,6 +498,7 @@ impl Default for SearchParameters {
             min_iir_depth: Ply::from_raw(tune::min_iir_depth!()),
             min_iid_depth: Ply::from_raw(tune::min_iid_depth!()),
             iid_offset: Ply::from_raw(tune::iid_offset!()),
+            lmr_table,
         }
     }
 }
@@ -510,8 +528,6 @@ pub struct Search<'a, Log, V> {
     /// Parameters for search features like pruning, extensions, etc.
     params: SearchParameters,
 
-    lmr_table: [[i32; MAX_NUM_MOVES]; Ply::MAX.plies() as usize],
-
     /// Marker for what variant of Chess is being played.
     variant: PhantomData<V>,
 
@@ -528,27 +544,14 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         prev_positions: Vec<Position>,
         ttable: &'a mut TTable,
         history: &'a mut HistoryTable,
+        params: SearchParameters,
     ) -> Self {
-        let params = SearchParameters::default();
-
-        // Initialize the table for Late Move Reductions, so that we don't need to re-do floating-point arithmetic constantly.
-        let mut lmr_table = [[0; MAX_NUM_MOVES]; Ply::MAX.plies() as usize];
-        for (depth, entry) in lmr_table.iter_mut().enumerate() {
-            for (moves_made, reduction) in entry.iter_mut().enumerate() {
-                // Base LMR reduction increases as we go higher in depth and/or make more moves
-                *reduction = (params.lmr_offset
-                    + (depth as f32).ln() * (moves_made as f32).ln() / params.lmr_divisor)
-                    as i32;
-            }
-        }
-
         Self {
             is_searching,
             config,
             prev_positions,
             ttable,
             history,
-            lmr_table,
             params,
             result: SearchResult::default(),
             variant: PhantomData,
@@ -1423,7 +1426,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             && moves_made >= self.params.min_lmr_moves + Node::PV as usize)
             .then(|| {
                 // Base LMR reduction increases as we go higher in depth and/or make more moves
-                let mut lmr_reduction = self.lmr_table[depth.plies() as usize][moves_made];
+                let mut lmr_reduction = self.params.lmr_table[depth.plies() as usize][moves_made];
 
                 // Increase/decrease the reduction based on current conditions
                 // lmr_reduction += something;
@@ -1581,6 +1584,7 @@ mod tests {
             Default::default(),
             &mut ttable,
             &mut history,
+            Default::default(),
         )
         .start(&game)
     }

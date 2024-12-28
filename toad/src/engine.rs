@@ -22,7 +22,8 @@ use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 use crate::{
     perft, splitperft, Bitboard, Chess960, EngineCommand, Game, GameVariant, HistoryTable,
     LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Ply, Position, Psqt,
-    Score, Search, SearchConfig, SearchResult, Square, Standard, TTable, Variant, BENCHMARK_FENS,
+    Score, Search, SearchConfig, SearchParameters, SearchResult, Square, Standard, TTable, Variant,
+    BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -56,6 +57,9 @@ pub struct Engine {
 
     /// Whether to display extra information during execution.
     debug: bool,
+
+    /// Parameters for search features like pruning, extensions, etc.
+    params: SearchParameters,
 }
 
 impl Engine {
@@ -74,6 +78,7 @@ impl Engine {
             ttable: Arc::default(),
             history: Arc::default(),
             debug: false,
+            params: SearchParameters::default(),
         }
     }
 
@@ -587,6 +592,7 @@ impl Engine {
         prev_positions.push(*game.position());
         let ttable = Arc::clone(&self.ttable);
         let history = Arc::clone(&self.history);
+        let params = self.params;
 
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
@@ -605,6 +611,7 @@ impl Engine {
                 prev_positions,
                 &mut ttable,
                 &mut history,
+                params,
             )
             .start(&game)
         });
