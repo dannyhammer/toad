@@ -891,13 +891,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
 
         for (i, mv) in moves.iter().enumerate() {
-            // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
-            local_pv.clear();
-
-            // Copy-make the new position
-            let new = game.with_move_made(*mv);
-            let mut score = Score::DRAW;
-
             /****************************************************************************************************
              * Move-Loop Pruning techniques
              ****************************************************************************************************/
@@ -914,6 +907,13 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     break;
                 }
             }
+
+            // Copy-make the new position
+            let new = game.with_move_made(*mv);
+            let mut score = Score::DRAW;
+
+            // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
+            local_pv.clear();
 
             /****************************************************************************************************
              * Recursion of the search
