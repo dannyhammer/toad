@@ -8,7 +8,7 @@ use std::fmt;
 
 use uci_parser::UciScore;
 
-use crate::{tune, MAX_DEPTH};
+use crate::{tune, Ply};
 
 /// A numerical representation of the evaluation of a position / move, in units of ["centipawns"](https://www.chessprogramming.org/Score).
 ///
@@ -27,16 +27,10 @@ impl Score {
     /// Score of a draw.
     pub const DRAW: Self = Self(0);
 
-    /// Initial value of alpha in alpha-beta pruning.
-    pub const ALPHA: Self = Self(-Self::INF.0);
-
-    /// Initial value of beta in alpha-beta pruning.
-    pub const BETA: Self = Self::INF;
-
     /// Lowest possible score for mate.
     ///
-    /// This is only obtainable if mate is possible in [`MAX_DEPTH`] moves.
-    pub const LOWEST_MATE: Self = Self(Self::MATE.0 - MAX_DEPTH as i32);
+    /// This is only obtainable if mate is possible in [`Ply::MAX`] moves.
+    pub const LOWEST_MATE: Self = Self(Self::MATE.0 - Ply::MAX.plies());
 
     /// Maximum bonus to apply to moves via history heuristic.
     pub const MAX_HISTORY: Self = Self(tune::max_history_bonus!());
@@ -44,17 +38,17 @@ impl Score {
     /// The base value of a move, used when ordering moves during search.
     pub const BASE_MOVE_SCORE: Self = Self(tune::base_move_score!());
 
-    /// Constructs a new [`Score`] instance.
-    #[inline(always)]
-    pub const fn new(score: i32) -> Self {
-        Self(score)
-    }
-
     /// Value to multiply depth by when computing razoring margin.
     pub const RAZORING_MULTIPLIER: Self = Self(tune::razoring_multiplier!());
 
     /// Value to subtract from alpha bound when computing a razoring margin.
     pub const RAZORING_OFFSET: Self = Self(tune::razoring_offset!());
+
+    /// Constructs a new [`Score`] instance.
+    #[inline(always)]
+    pub const fn new(score: i32) -> Self {
+        Self(score)
+    }
 
     /// Returns the inner value of this [`Score`].
     #[inline(always)]
@@ -64,8 +58,20 @@ impl Score {
 
     /// Returns `true` if the score is a mate score.
     #[inline(always)]
-    pub fn is_mate(&self) -> bool {
-        self.abs() >= Self::LOWEST_MATE
+    pub const fn is_mate(&self) -> bool {
+        self.abs().0 >= Self::LOWEST_MATE.0
+    }
+
+    /// Returns `true` if the score represents *being* checkmated.
+    #[inline(always)]
+    pub const fn mated(&self) -> bool {
+        self.0 <= -Self::LOWEST_MATE.0
+    }
+
+    /// Returns `true` if the score represents *giving* checkmated.
+    #[inline(always)]
+    pub const fn mating(&self) -> bool {
+        self.0 >= Self::LOWEST_MATE.0
     }
 
     /// Converts this [`Score`] into a [`UciScore`],
@@ -105,7 +111,7 @@ impl Score {
     ///
     /// Score will be relative to `ply`.
     #[inline(always)]
-    pub fn relative(self, ply: i32) -> Self {
+    pub fn relative(self, ply: Ply) -> Self {
         if self.is_mate() {
             // Self(self.0 + ply)
             if self > Self::DRAW {
@@ -122,7 +128,7 @@ impl Score {
     ///
     /// Score will be relative to root (0 ply).
     #[inline(always)]
-    pub fn absolute(self, ply: i32) -> Self {
+    pub fn absolute(self, ply: Ply) -> Self {
         if self.is_mate() {
             // Self(self.0 - ply)
             if self > Self::DRAW {
@@ -135,7 +141,7 @@ impl Score {
         }
     }
 
-    /// Returns the absolute value of this [`Score`].`
+    /// Returns the absolute value of this [`Score`].
     #[inline(always)]
     pub const fn abs(self) -> Self {
         Self(self.0.abs())
@@ -190,6 +196,33 @@ macro_rules! impl_binary_op {
             #[inline(always)]
             fn $fn(self, rhs: Score) -> Self::Output {
                 Score(self.$fn(rhs.0))
+            }
+        }
+
+        impl std::ops::$trait<Ply> for Score {
+            type Output = Self;
+
+            #[inline(always)]
+            fn $fn(self, rhs: Ply) -> Self::Output {
+                Self(self.0.$fn(rhs.plies() as i32))
+            }
+        }
+
+        impl std::ops::$trait<Score> for Ply {
+            type Output = Score;
+
+            #[inline(always)]
+            fn $fn(self, rhs: Score) -> Self::Output {
+                Score((self.plies() as i32).$fn(rhs.0))
+            }
+        }
+
+        impl std::ops::$trait<bool> for Score {
+            type Output = Self;
+
+            #[inline(always)]
+            fn $fn(self, rhs: bool) -> Self::Output {
+                Self(self.0.$fn(rhs as i32))
             }
         }
     };
@@ -263,7 +296,7 @@ impl fmt::Debug for Score {
                 self.moves_to_mate()
             )
         } else {
-            write!(f, "{}", self.0)
+            write!(f, "{self} ({})", self.0)
         }
     }
 }
@@ -297,14 +330,14 @@ mod tests {
 
     #[test]
     fn test_relative_absolute() {
-        let plies = 3;
+        let plies = Ply::new(3);
 
         // Plies to mate
         let our_mate = Score::MATE - plies;
-        assert_eq!(our_mate.plies_to_mate(), plies);
+        assert_eq!(our_mate.plies_to_mate(), plies.plies() as i32);
 
         let their_mate = -(Score::MATE - plies);
-        assert_eq!(their_mate.plies_to_mate(), plies);
+        assert_eq!(their_mate.plies_to_mate(), plies.plies() as i32);
 
         // Relative scores
         let our_relative = our_mate.relative(plies);

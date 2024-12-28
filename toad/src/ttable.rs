@@ -4,10 +4,23 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use crate::{Move, Score, SearchBounds, ZobristKey};
+use crate::{Move, Ply, Score, SearchBounds, ZobristKey};
 
 /// Number of bytes in a megabyte
 const BYTES_IN_MB: usize = 1024 * 1024;
+
+/// Result of probing the [`TTable`].
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum ProbeResult<'a> {
+    /// An entry was found and can be used to perform a cutoff.
+    Cutoff(Score),
+
+    /// An entry was found, but it could not be used to perform a cutoff.
+    Hit(&'a TTableEntry),
+
+    /// No entry was found for the provided key.
+    Miss,
+}
 
 /// Type of node encountered during search.
 ///
@@ -57,7 +70,7 @@ pub struct TTableEntry {
     pub depth: u8,
 
     /// Best move found for this position.
-    pub bestmove: Move,
+    pub bestmove: Option<Move>,
 
     /// Best score found for this position.
     pub score: Score,
@@ -74,47 +87,29 @@ impl TTableEntry {
     #[inline(always)]
     pub fn new(
         key: ZobristKey,
-        bestmove: Move,
+        bestmove: Option<Move>,
         score: Score,
         bounds: SearchBounds,
-        depth: u8,
-        ply: i32,
+        depth: Ply,
+        ply: Ply,
     ) -> Self {
-        // Determine what kind of node this is fist, before score adjustment
+        // Determine what kind of node this is first, *before* score adjustment
         let node_type = NodeType::new(score, bounds);
-
-        // Adjust the score (if it was mate) to the ply at which we found it
-        let score = score.absolute(ply);
 
         Self {
             key,
             bestmove,
-            score,
-            depth,
+            // Adjust the score (if it was mate) to the ply at which we found it
+            score: score.absolute(ply),
+            depth: depth.plies() as u8,
             node_type,
         }
     }
 
-    /// Determine whether the score in this entry can be used and, if so, return it.
-    ///
-    /// An entry's score can be used if and only if:
-    ///     1. The entry is exact ([`NodeType::Pv`]).
-    ///     2. The entry is an upper bound ([`NodeType::All`]) and its score is `<= alpha`.
-    ///     3. The entry is a lower bound ([`NodeType::Cut`]) and its score is `>= beta`.
+    /// Fetch the depth associated with this entry.
     #[inline(always)]
-    pub fn try_score(&self, bounds: SearchBounds, ply: i32) -> Option<Score> {
-        // Adjust mate scores to be relative to current ply
-        let score = if self.score.is_mate() {
-            self.score.relative(ply)
-        } else {
-            self.score
-        };
-
-        // If we can cutoff, do so
-        (self.node_type == NodeType::Pv
-            || ((self.node_type == NodeType::All && score <= bounds.alpha)
-                || (self.node_type == NodeType::Cut && score >= bounds.beta)))
-            .then_some(score)
+    pub fn depth(&self) -> Ply {
+        Ply::new(self.depth as i32)
     }
 }
 
@@ -130,8 +125,11 @@ pub struct TTable {
     /// Number of collisions that have occurred since last clearing.
     pub(crate) collisions: usize,
 
-    /// Number of accesses that have occurred since last clearing.
-    pub(crate) accesses: usize,
+    /// Number of reads that have occurred since last clearing.
+    pub(crate) reads: usize,
+
+    /// Number of writes that have occurred since last clearing.
+    pub(crate) writes: usize,
 
     /// Number of hits that have occurred since last clearing.
     pub(crate) hits: usize,
@@ -161,17 +159,21 @@ impl TTable {
         Self {
             cache: vec![None; capacity],
             collisions: 0,
-            accesses: 0,
+            reads: 0,
+            writes: 0,
             hits: 0,
         }
     }
 
     /// Clears the entries of this [`TTable`].
+    ///
+    /// Also resets all collected stats.
     #[inline(always)]
     pub fn clear(&mut self) {
         self.cache.iter_mut().for_each(|entry| *entry = None);
         self.collisions = 0;
-        self.accesses = 0;
+        self.reads = 0;
+        self.writes = 0;
         self.hits = 0;
     }
 
@@ -237,6 +239,45 @@ impl TTable {
         let index = self.index(&entry.key);
         self.cache[index].replace(entry)
     }
+
+    /// Probes the [`TTable`] for an entry at the provided `key`, returning that entry's score, if appropriate.
+    ///
+    /// If an entry is found from a greater depth than `depth`, its score is returned if and only if:
+    ///     1. The entry is exact.
+    ///     2. The entry is an upper bound and its score is `<= alpha`.
+    ///     3. The entry is a lower bound and its score is `>= beta`.
+    ///
+    /// See [`TTableEntry::try_score`] for more.
+    #[inline(always)]
+    pub fn probe(
+        &self,
+        key: ZobristKey,
+        depth: Ply,
+        ply: Ply,
+        bounds: SearchBounds,
+    ) -> ProbeResult {
+        // if-let chains are set to be stabilized in Rust 2024 (1.85.0): https://rust-lang.github.io/rfcs/2497-if-let-chains.html
+        if let Some(entry) = self.get(&key) {
+            // Can only cut off if the existing entry came from a greater depth.
+            if entry.depth() >= depth {
+                // Adjust mate scores to be relative to current ply
+                let score = entry.score.relative(ply);
+
+                // If we can cutoff, do so
+                if entry.node_type == NodeType::Pv
+                    || ((entry.node_type == NodeType::All && score <= bounds.alpha)
+                        || (entry.node_type == NodeType::Cut && score >= bounds.beta))
+                {
+                    return ProbeResult::Cutoff(score);
+                }
+            }
+
+            // No cutoff was possible, but there was still an entry found.
+            return ProbeResult::Hit(entry);
+        }
+
+        ProbeResult::Miss
+    }
 }
 
 impl Default for TTable {
@@ -270,7 +311,7 @@ mod test {
         // Create entries for both positions
         let entry1 = TTableEntry {
             key: key1,
-            bestmove: Move::illegal(),
+            bestmove: None,
             score: Score::DRAW,
             depth: 0,
             node_type: NodeType::Pv,
@@ -278,7 +319,7 @@ mod test {
 
         let entry2 = TTableEntry {
             key: key2,
-            bestmove: Move::illegal(),
+            bestmove: None,
             score: Score::MATE,
             depth: 0,
             node_type: NodeType::Pv,

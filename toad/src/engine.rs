@@ -4,9 +4,9 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use core::fmt;
 use std::{
-    io,
+    fmt,
+    io::{self, Write},
     ops::ControlFlow,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -21,12 +21,12 @@ use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
     perft, splitperft, Bitboard, Chess960, EngineCommand, Game, GameVariant, HistoryTable,
-    LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Position, Psqt, Score,
-    Search, SearchConfig, SearchResult, Square, Standard, TTable, Variant, BENCHMARK_FENS,
+    LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Ply, Position, Psqt,
+    Score, Search, SearchConfig, SearchResult, Square, Standard, TTable, Variant, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
-const BENCH_DEPTH: u8 = 11;
+const BENCH_DEPTH: u8 = 9;
 
 /// The Toad chess engine.
 #[derive(Debug)]
@@ -99,7 +99,9 @@ impl Engine {
         // Safe unwrap: `send` can only fail if it's corresponding receiver doesn't exist,
         //  and the only way our engine's `Receiver` can no longer exist is when our engine
         //  doesn't exist either, so this is always safe.
-        self.sender.send(command).unwrap();
+        self.sender
+            .send(command)
+            .expect("Failed to send a command to the engine via channels.");
     }
 
     /// Entrypoint of the engine.
@@ -145,13 +147,11 @@ impl Engine {
 
         // Execute commands as they are received
         while let Ok(cmd) = self.receiver.recv() {
-            if self.debug {
-                println!("info string Received command {cmd:?}");
-            }
+            // if self.debug {
+            //     println!("info string Received command {cmd:?}");
+            // }
 
             match cmd {
-                EngineCommand::Await => _ = self.stop_search(),
-
                 EngineCommand::Bench { depth, pretty } => self.bench(depth, pretty),
 
                 EngineCommand::ChangeVariant { variant } => {
@@ -186,6 +186,8 @@ impl Engine {
 
                 EngineCommand::Flip => game.toggle_side_to_move(),
 
+                EngineCommand::HashInfo => self.hash_info(),
+
                 EngineCommand::MakeMove { mv_string } => match Move::from_uci(&game, &mv_string) {
                     Ok(mv) => self.make_move(&mut game, mv),
                     Err(e) => eprintln!("{e:#}"),
@@ -208,6 +210,13 @@ impl Engine {
 
                 EngineCommand::Perft { depth } => println!("{}", perft(&game, depth)),
 
+                EngineCommand::Place { piece, square } => {
+                    game.place(piece, square);
+                    if self.debug {
+                        println!("Placed {piece} at {square}");
+                    }
+                }
+
                 EngineCommand::Psqt {
                     piece,
                     square,
@@ -218,7 +227,13 @@ impl Engine {
                     println!("{}", splitperft(&game, depth))
                 }
 
-                EngineCommand::HashInfo => self.hash_info(),
+                EngineCommand::Take { square } => {
+                    if let Some(piece) = game.take(square) {
+                        if self.debug {
+                            println!("Removed {piece} at {square}");
+                        }
+                    }
+                }
 
                 EngineCommand::Uci { cmd } => {
                     // UCI spec states to continue execution if an error occurs
@@ -226,6 +241,8 @@ impl Engine {
                         eprintln!("Error: {e:#}");
                     }
                 }
+
+                EngineCommand::Wait => _ = self.stop_search(),
             };
         }
 
@@ -286,31 +303,40 @@ impl Engine {
     fn bench(&mut self, depth: Option<u8>, pretty: bool) {
         // Set up the benchmarking config
         let config = SearchConfig {
-            max_depth: depth.unwrap_or(BENCH_DEPTH),
+            max_depth: Ply::new(depth.unwrap_or(BENCH_DEPTH) as i32),
             ..Default::default()
         };
 
         let benches = BENCHMARK_FENS;
-        let num_tests = benches.len();
         let mut nodes = 0;
 
-        // Run a fixed search on each position
-        for (i, epd) in benches.into_iter().enumerate() {
-            // Parse the FEN and the total node count
+        // Padding for printing FENs
+        let width = benches.iter().map(|fen| fen.len()).max().unwrap();
 
-            let fen = epd.split(';').next().unwrap();
-            println!("Benchmark position {}/{}: {fen}", i + 1, num_tests);
+        println!(
+            "Running fixed-depth search (d={}) on {} positions",
+            config.max_depth,
+            benches.len()
+        );
+
+        // Run a fixed search on each position
+        for (i, fen) in benches.into_iter().enumerate() {
+            print!("{:>2}/{:>2}: {fen:<width$} := ", i + 1, benches.len());
+            std::io::stdout().lock().flush().unwrap(); // flush stdout so the node count will appear on the same line after search concludes
 
             // Set up the game and start the search
             let game = self.position(Some(fen), []).unwrap();
             self.search_thread = self.start_search::<LogNone, Standard>(game, config);
 
             // Await the search, appending the node count once concluded.
-            let res = self.stop_search().unwrap();
+            let Some(res) = self.stop_search() else {
+                panic!("Search thread panicked while running benchmarks on fen {fen}");
+            };
             nodes += res.nodes;
+            println!("{}", res.nodes);
 
-            // Bench is on different positions, so hash tables are not likely to contain useful info.
-            self.clear_hash_tables();
+            // Each bench is essentially a new game, so reset hash tables, etc.
+            self.new_game::<Standard>();
         }
 
         // Compute results
@@ -322,14 +348,14 @@ impl Engine {
         if pretty {
             // Display the results in a nice table
             println!();
-            println!("+--- Benchmark Complete ---+");
-            println!("| time (ms)  : {ms:<12}|");
-            println!("| nodes      : {nodes:<12}|");
-            println!("| nps        : {nps:<12}|");
-            println!("| Mnps       : {m_nps:<12.2}|");
-            println!("+--------------------------+");
+            println!("+-- Benchmark Complete --+");
+            println!("| time (ms)  {ms:<12}|");
+            println!("|     nodes  {nodes:<12}|");
+            println!("|       nps  {nps:<12}|");
+            println!("|      Mnps  {m_nps:<12.2}|");
+            println!("+------------------------+");
         } else {
-            println!("{nodes} nodes {nps} nps");
+            println!("{nodes} nodes / {elapsed:?} := {nps} nps");
         }
 
         // Re-set the internal game state.
@@ -565,8 +591,12 @@ impl Engine {
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
             // Lock the hash tables at the start of the search so that only the search thread may modify them
-            let mut ttable = ttable.lock().unwrap();
-            let mut history = history.lock().unwrap();
+            let mut ttable = ttable
+                .lock()
+                .expect("Failed to acquire Transposition Table at the start of search.");
+            let mut history = history
+                .lock()
+                .expect("Failed to acquire History Table at the start of search.");
 
             // Start the search, returning the result when completed.
             Search::<Log, V>::new(

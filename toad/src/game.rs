@@ -499,7 +499,7 @@ impl<V: Variant> Game<V> {
     /// A positive/high number is good for the side-to-move, while a negative number is better for the opponent.
     /// A score of 0 is considered equal.
     #[inline(always)]
-    pub fn eval(self) -> Score {
+    pub fn eval(&self) -> Score {
         let stm = self.side_to_move();
         self.evaluator().eval_for(stm)
     }
@@ -526,7 +526,7 @@ impl<V: Variant> Game<V> {
 
         // Increment move counters
         self.position.halfmove += 1; // This is reset if a capture occurs or a pawn moves
-        self.position.fullmove += self.side_to_move().bits();
+        self.position.fullmove += color.is_black() as u16;
 
         // First, deal with special cases like captures and castling
         if mv.is_capture() {
@@ -1214,7 +1214,7 @@ impl<V: Variant> Game<V> {
 
     /// Places a piece at the provided square, updating Zobrist hash information.
     #[inline(always)]
-    fn place(&mut self, piece: Piece, square: Square) {
+    pub fn place(&mut self, piece: Piece, square: Square) {
         self.position.board.place(piece, square);
         self.position.key.hash_piece(square, piece);
         self.evaluator.piece_placed(piece, square);
@@ -1222,7 +1222,7 @@ impl<V: Variant> Game<V> {
 
     /// Removes and returns a piece on the provided square, updating Zobrist hash information.
     #[inline(always)]
-    fn take(&mut self, square: Square) -> Option<Piece> {
+    pub fn take(&mut self, square: Square) -> Option<Piece> {
         let piece = self.position.board.take(square)?;
 
         self.position.key.hash_piece(square, piece);
@@ -1432,12 +1432,12 @@ pub struct Position {
     ///
     /// - Incremented after each move.
     /// - Reset after a capture or a pawn moves.
-    halfmove: u8,
+    halfmove: u16,
 
     /// Number of moves since the beginning of the game.
     ///
     /// A fullmove is a complete turn by white and then by black.
-    fullmove: u8,
+    fullmove: u16,
 
     /// Zobrist hash key of this position
     key: ZobristKey,
@@ -1525,14 +1525,14 @@ impl Position {
 
     /// Returns the half-move counter of the current position.
     #[inline(always)]
-    pub const fn halfmove(&self) -> u8 {
-        self.halfmove
+    pub const fn halfmove(&self) -> usize {
+        self.halfmove as usize
     }
 
     /// Returns the full-move counter of the current position.
     #[inline(always)]
-    pub const fn fullmove(&self) -> u8 {
-        self.fullmove
+    pub const fn fullmove(&self) -> usize {
+        self.fullmove as usize
     }
 
     /// Fetch the Zobrist hash key of this position.
