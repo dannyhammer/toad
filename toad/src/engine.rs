@@ -20,9 +20,10 @@ use anyhow::{bail, Context, Result};
 use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
-    perft, splitperft, Bitboard, Chess960, EngineCommand, Game, GameVariant, HistoryTable,
-    LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Ply, Position, Psqt,
-    Score, Search, SearchConfig, SearchResult, Square, Standard, TTable, Variant, BENCHMARK_FENS,
+    perft, psqt_evals, splitperft, Bitboard, Chess960, EngineCommand, Game, GameVariant,
+    HistoryTable, LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Ply,
+    Position, Score, Search, SearchConfig, SearchResult, SmallDisplayTable, Square, Standard,
+    TTable, Variant, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -372,7 +373,7 @@ impl Engine {
             let table = MediumDisplayTable::from_fn(|sq| {
                 game.piece_at(sq)
                     .map(|piece| {
-                        let (mg, eg) = Psqt::evals(piece, sq);
+                        let (mg, eg) = psqt_evals(piece, sq);
                         let score = mg.lerp(eg, endgame_weight)
                             * piece.color().negation_multiplier() as i32;
 
@@ -527,30 +528,29 @@ impl Engine {
     ) {
         // Compute the current endgame weight, if it wasn't provided
         let weight = endgame_weight.unwrap_or(game.evaluator().endgame_weight());
-        // Fetch the middle-game and end-game tables
-        let (mg, eg) = Psqt::get_tables_for(piece.kind());
 
         // If there was a square provided, print the eval for that square
         if let Some(square) = square {
-            let (mg_value, eg_value) = Psqt::evals(piece, square);
+            let (mg_value, eg_value) = psqt_evals(piece, square);
             let value = mg_value.lerp(eg_value, weight);
             println!("[{mg_value}, {eg_value}] := {value}");
         } else {
             // Otherwise, print both the middle-game and end-game tables
             let name = piece.name();
+            let color = piece.color();
 
-            // If the piece is Black, flip the tables when printing
-            let f = |psqt| {
-                if piece.is_white() {
-                    format!("{psqt}")
-                } else {
-                    format!("{psqt:#}")
-                }
-            };
+            // Fetch the middle-game and end-game tables, flipping the tables for Black
+            // TODO: This is ugly code. Make it less ugly.
+            let mg = SmallDisplayTable::from_fn(|sq| {
+                [psqt_evals(piece, sq.rank_relative_to(color)).0.to_string()]
+            });
+            let eg = SmallDisplayTable::from_fn(|sq| {
+                [psqt_evals(piece, sq.rank_relative_to(color)).1.to_string()]
+            });
 
-            println!("Mid-game table for {name}:\n{}", f(mg));
+            println!("Mid-game table for {name}:\n{mg}");
             println!();
-            println!("End-game table for {name}:\n{}", f(eg));
+            println!("End-game table for {name}:\n{eg}");
         }
     }
 

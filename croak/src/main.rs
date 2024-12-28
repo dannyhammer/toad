@@ -224,6 +224,15 @@ impl<V: Variant> Tuner<V> {
 
  */
 
+use std::path::Path;
+
+use croak::*;
+
 fn main() {
     println!("croak!");
+
+    let params = Parameters::default();
+
+    let path = Path::new(".").join("tuned_eval_params.rs");
+    std::fs::write(&path, params.to_string()).unwrap();
 }

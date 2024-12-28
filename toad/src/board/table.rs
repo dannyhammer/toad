@@ -105,8 +105,9 @@ where
 
         // Special case: Small tables can be printed without borders
         if N == 1 && !f.alternate() {
-            // Small tables need a smaller width, since we don't have file dividers
-            let width = f.width().unwrap_or(1);
+            // Small tables need a smaller width, since we don't have file dividers.
+            // Also, if an entry takes up more than 1 char of space, we need a wider table.
+            let width = f.width().unwrap_or(self.0[0][0].to_string().len());
 
             for rank in Rank::iter().rev() {
                 write!(f, "{rank}| ")?;
