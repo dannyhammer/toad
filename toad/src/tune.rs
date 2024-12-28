@@ -218,7 +218,7 @@ pub(crate) use fp_offset;
 /// Maximum depth at which futility pruning can be applied.
 macro_rules! max_fp_depth {
     () => {
-        300
+        600
     };
 }
 
