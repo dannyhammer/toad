@@ -202,7 +202,7 @@ pub(crate) use max_razoring_depth;
 /// Value to multiply depth by when performing futility pruning.
 macro_rules! fp_multiplier {
     () => {
-        50
+        150
     };
 }
 pub(crate) use fp_multiplier;
@@ -210,7 +210,7 @@ pub(crate) use fp_multiplier;
 /// Value to offset depth by when performing futility pruning.
 macro_rules! fp_offset {
     () => {
-        50
+        100
     };
 }
 pub(crate) use fp_offset;
@@ -218,7 +218,7 @@ pub(crate) use fp_offset;
 /// Maximum depth at which futility pruning can be applied.
 macro_rules! max_fp_depth {
     () => {
-        100
+        300
     };
 }
 
