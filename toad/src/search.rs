@@ -923,7 +923,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // Append this position onto our stack, so we can detect repetitions
                 self.prev_positions.push(*new.position());
 
-                let new_depth = depth - 1 + self.extension_value(game);
+                let new_depth = depth - 1 + self.extension_value(&new);
 
                 // If this node can be reduced, search it with a reduced window.
                 if let Some(lmr_reduction) = self.reduction_value::<Node>(depth, game, i) {
