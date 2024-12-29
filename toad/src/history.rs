@@ -47,8 +47,7 @@ impl Default for HistoryTable {
         for piece in Piece::all() {
             for square in Square::iter() {
                 let (mg, _) = Psqt::evals(piece, square);
-                // Only use the PSQT value- not the piece's value, so that the scores aren't *too* big.
-                history[piece][square] += mg - piece.kind().value();
+                history[piece][square] += mg;
             }
         }
 
