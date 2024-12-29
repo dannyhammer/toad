@@ -6,7 +6,7 @@
 
 use std::{fmt, ops::Deref};
 
-use crate::{Color, File, Game, Move, Piece, PieceKind, Rank, Score, Square, Table, Variant};
+use crate::{Color, File, Game, Move, Piece, PieceKind, Psqt, Rank, Score, Square, Table, Variant};
 /// Stores bonuses and penalties for moving a piece to a square.
 ///
 /// Used to keep track of good/bad moves found during search.
@@ -14,7 +14,7 @@ use crate::{Color, File, Game, Move, Piece, PieceKind, Rank, Score, Square, Tabl
 pub struct HistoryTable([Table<Score>; Piece::COUNT]);
 
 impl HistoryTable {
-    /// Clear the history table, removing all scores.
+    /// Clear the history table, resetting to the default implementation.
     #[inline(always)]
     pub fn clear(&mut self) {
         *self = Self::default();
@@ -41,7 +41,17 @@ impl HistoryTable {
 impl Default for HistoryTable {
     #[inline(always)]
     fn default() -> Self {
-        Self([Table::splat(Score::BASE_MOVE_SCORE); Piece::COUNT])
+        let mut history = [Table::splat(Score::BASE_MOVE_SCORE); Piece::COUNT];
+
+        // Add on the piece's mid-game PSQT values
+        for piece in Piece::all() {
+            for square in Square::iter() {
+                let (mg, _) = Psqt::evals(piece, square);
+                history[piece][square] += mg;
+            }
+        }
+
+        Self(history)
     }
 }
 

@@ -83,6 +83,16 @@ where
         &mut self.0[index]
     }
 }
+
+impl<T> IntoIterator for Table<T> {
+    type Item = T;
+    type IntoIter = <[T; Square::COUNT] as IntoIterator>::IntoIter;
+    #[inline(always)]
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 /// Used to display an arbitrary-sized [`Table`].
 pub type DisplayTable<T, const N: usize> = Table<[T; N]>;
 
