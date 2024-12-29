@@ -1280,7 +1280,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Safe unwrap because we can't move unless there's a piece at `from`
         let piece = game.piece_at(mv.from()).unwrap();
-        let to = mv.to();
+        let to = if mv.is_en_passant() {
+            // Safety: En passant cannot occur on the first or eighth rank, so this is guaranteed to have a square behind it.
+            mv.to().backward_by(piece.color(), 1).unwrap()
+        } else {
+            mv.to()
+        };
         let mut score = Score::BASE_MOVE_SCORE;
 
         // Apply history bonus to quiets
