@@ -1,6 +1,5 @@
-/*
 use std::{
-    fs::{self, File},
+    fs::File,
     io::{BufRead, BufReader},
     path::Path,
     str::FromStr,
@@ -9,6 +8,8 @@ use std::{
 use anyhow::{bail, Result};
 use chrono::Utc;
 use toad::*;
+
+use croak::*;
 
 type Float = f64;
 
@@ -104,27 +105,101 @@ fn sigmoid(e: Float, k: Float) -> Float {
     1.0 / (1.0 + (-k * e).exp())
 }
 
+/*
+fn mean_squared_error(weights: &[i32], k: Float) -> Float {
+    let n = weights.len() as Float;
+
+    let sum: Float = weights
+        .iter()
+        .map(|(game, result)| {
+            let r_i = (game.eval().inner() as Float) / 100.0;
+            let q_i = result.value();
+            (r_i - sigmoid(q_i, k)).powi(2)
+        })
+        .sum();
+
+    sum / n
+}
+ */
+
+fn dot(a: &[i32], b: &[i32]) -> i32 {
+    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+}
+
+fn extract_features<V: Variant>(game: &Game<V>) -> Vec<i32> {
+    let mut features = vec![0; 12];
+
+    // Counting material values
+    let mut i = 0;
+    for kind in PieceKind::all() {
+        let val = game.piece_parts(Color::White, kind).population() as i32
+            - game.piece_parts(Color::Black, kind).population() as i32;
+
+        // Coefficients are equal for midgame and endgame
+        features[i] += val;
+        features[i + 1] += val;
+        i += 2;
+    }
+
+    features
+}
+
+fn foo<V: Variant>(fen: &str, _result: GameResult, weights: &[i32]) -> i32 {
+    let game: Game<V> = Game::from_fen(fen).unwrap();
+    // let weight = game.evaluator().endgame_weight();
+    let features = extract_features(&game);
+    let mg_dot = dot(weights, &features);
+    let eg_dot = dot(weights, &features);
+    eprintln!("Features in {fen}:\n{features:?}");
+    eprintln!("Dot product: {mg_dot} (mg) {eg_dot} (eg)");
+    mg_dot
+}
+
 fn main() {
-    let mut tuner: Tuner<Standard> =
-        Tuner::new("./croak/datasets/sample.txt", vec![1, 2, 3]).unwrap();
-    for (game, res) in tuner.inputs.iter() {
-        println!(
-            "{:<width$} {res:?}",
-            game.to_fen(),
-            width = 85 /* max FEN length */
-        );
+    println!("Starting tuner");
+    let init_params = Parameters::default();
+    let weights = init_params.into_iter().collect::<Vec<_>>();
+    println!("Tuning {} parameters:\n{weights:?}\n", weights.len());
+
+    foo::<Standard>(FEN_STARTPOS, GameResult::Draw, &weights);
+    println!();
+    foo::<Standard>(
+        "rnb1k1nr/pppp1ppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        GameResult::WhiteWin,
+        &weights,
+    );
+    println!();
+    foo::<Standard>(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1",
+        GameResult::BlackWin,
+        &weights,
+    );
+
+    let mut tuner = Tuner::<Standard>::new("./croak/datasets/sample.txt", weights).unwrap();
+    // max FEN length
+    let width = tuner
+        .inputs
+        .iter()
+        .map(|v| v.0.to_fen().len())
+        .max()
+        .unwrap_or(85);
+    for (game, _features, res) in tuner.inputs.iter() {
+        println!("{:<width$} {res:?}", game.to_fen());
     }
 
     tuner.tune(K).unwrap();
+
+    // let path = Path::new(".").join("tuned_eval_params.rs");
+    // std::fs::write(&path, tuned.to_string()).unwrap();
 }
 
 struct Tuner<V: Variant> {
-    inputs: Vec<(Game<V>, GameResult)>,
+    inputs: Vec<(Game<V>, Vec<i32>, GameResult)>,
     weights: Vec<i32>,
 }
 
 impl<V: Variant> Tuner<V> {
-    /// Parses the file at `path` into a list of positions and game results.
+    /// Parses the file at `path` into a list of positions, feature sets, and game results.
     fn new(path: impl AsRef<Path>, weights: Vec<i32>) -> Result<Self> {
         let mut inputs = vec![];
         let reader = BufReader::new(File::open(path)?);
@@ -136,10 +211,16 @@ impl<V: Variant> Tuner<V> {
                 .split_once('[')
                 .expect("Did not find '[' while parsing position");
 
-            inputs.push((fen.parse()?, result.parse()?));
+            let game: Game<V> = fen.parse()?;
+            inputs.push((game, extract_features(&game), result.parse()?));
         }
 
         Ok(Self { inputs, weights })
+    }
+
+    /// Evaluates the provided feature set against the weights stored in this tuner.
+    fn eval(&self, feature_set: &[i32]) -> i32 {
+        dot(&self.weights, feature_set)
     }
 
     fn weights(&self) -> &[i32] {
@@ -154,8 +235,8 @@ impl<V: Variant> Tuner<V> {
     }
     fn store_weights(&self, path: impl AsRef<Path>) -> Result<()> {
         println!("Writing weights to {:?}", path.as_ref());
-        let path = Path::new("tune-outputs").join(path);
-        fs::write(path, format!("{:?}", self.weights()))?;
+        // let path = Path::new("tune-outputs").join(path);
+        // std::fs::write(path, format!("{:?}", self.weights()))?;
         Ok(())
     }
 
@@ -199,7 +280,7 @@ impl<V: Variant> Tuner<V> {
             }
             let now = Utc::now().format("%Y-%m-%d_%H-%M-%S");
             self.store_weights(format!("session_weights_{now}"))?;
-            break;
+            // break;
         }
 
         self.store_weights("final_weights.txt")
@@ -211,8 +292,8 @@ impl<V: Variant> Tuner<V> {
         let sum: Float = self
             .inputs
             .iter()
-            .map(|(game, result)| {
-                let r_i = (game.eval().inner() as f64) / 100.0;
+            .map(|(_, feature_set, result)| {
+                let r_i = (self.eval(feature_set) as Float) / 100.0;
                 let q_i = result.value();
                 (r_i - sigmoid(q_i, k)).powi(2)
             })
@@ -220,19 +301,4 @@ impl<V: Variant> Tuner<V> {
 
         sum / n
     }
-}
-
- */
-
-use std::path::Path;
-
-use croak::*;
-
-fn main() {
-    println!("croak!");
-
-    let params = Parameters::default();
-
-    let path = Path::new(".").join("tuned_eval_params.rs");
-    std::fs::write(&path, params.to_string()).unwrap();
 }
