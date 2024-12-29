@@ -20,8 +20,8 @@ use thiserror::Error;
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Ply, Position,
-    ProbeResult, Score, TTable, TTableEntry, Variant, ZobristKey,
+    bishop_attacks, rook_attacks, tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece,
+    PieceKind, Ply, Position, ProbeResult, Score, TTable, TTableEntry, Variant, ZobristKey,
 };
 
 /// Reasons that a search can be cancelled.
@@ -1289,7 +1289,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         } else
         // Capturing a high-value piece with a low-value piece is a good idea
         if let Some(victim) = game.piece_at(to) {
-            score += MVV_LVA[piece][victim];
+            // let see_score = self.see(game, mv, Score::DRAW);
+            // score += MVV_LVA[piece][victim];
+            score += (10 * victim.kind().value() - piece.kind().value()) << 16;
         }
 
         -score // We're sorting, so a lower number is better
@@ -1434,6 +1436,113 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         }
 
         extension
+    }
+
+    // basic impl ripped straight from Stormphrax: https://github.com/Ciekce/Stormphrax/blob/main/src/see.h#L31
+    #[inline(always)]
+    fn see_value(kind: PieceKind) -> Score {
+        use PieceKind::*;
+        Score::new(match kind {
+            Pawn => 100,
+            Knight => 450,
+            Bishop => 450,
+            Rook => 650,
+            Queen => 1250,
+            King => 0,
+        })
+    }
+
+    // basic impl ripped straight from Viridithas: https://github.com/cosmobobak/viridithas/blob/master/src/search.rs#L1565
+    fn see(&self, game: &Game<V>, mv: &Move, threshold: Score) -> bool {
+        let from = mv.from();
+        let piece = game.piece_at(from).unwrap();
+        let color = piece.color();
+        let to = if mv.is_en_passant() {
+            // Safety: En passant cannot occur on the first or eighth rank, so this is guaranteed to have a square behind it.
+            mv.to().backward_by(color, 1).unwrap()
+        } else {
+            mv.to()
+        };
+
+        let mut estimated_see = game
+            .piece_at(to)
+            .map_or(Score::DRAW, |piece| Self::see_value(piece.kind()));
+        if let Some(promotion) = mv.promotion() {
+            estimated_see += Self::see_value(promotion) - Self::see_value(PieceKind::Pawn);
+        }
+        let mut balance = estimated_see - threshold;
+
+        // if the best case fails, don't bother doing the full search.
+        if balance < 0 {
+            return false;
+        }
+
+        // worse case: we lose the piece
+        let mut next_victim = mv.promotion().unwrap_or_else(|| piece.kind());
+        balance -= Self::see_value(next_victim);
+        if balance >= 0 {
+            return true;
+        }
+
+        let diag_sliders = game.kind(PieceKind::Bishop) | game.kind(PieceKind::Queen);
+        let orth_sliders = game.kind(PieceKind::Rook) | game.kind(PieceKind::Queen);
+        // occupancy *after* making the move
+        let mut occupied = game.occupied() ^ to ^ from;
+        let mut attackers = game.compute_all_attacks_to(to, occupied);
+        let mut color = color.opponent();
+
+        // now iterate over the capture chain
+        loop {
+            let my_attackers = attackers & game.color(color);
+
+            // No attackers? Can't continue the chain.
+            if my_attackers.is_empty() {
+                break;
+            }
+
+            // Find the lowest-value attacker
+            for victim in PieceKind::all() {
+                next_victim = victim;
+                if (my_attackers & game.kind(victim)).is_nonempty() {
+                    break;
+                }
+            }
+
+            // Update the occupancy board
+            occupied ^= (my_attackers & game.kind(next_victim)).lsb().unwrap();
+
+            match next_victim {
+                PieceKind::Pawn | PieceKind::Bishop | PieceKind::Queen => {
+                    attackers |= bishop_attacks(to, occupied) & diag_sliders;
+                }
+                _ => {}
+            }
+
+            match next_victim {
+                PieceKind::Rook | PieceKind::Queen => {
+                    attackers |= rook_attacks(to, occupied) & orth_sliders;
+                }
+                _ => {}
+            }
+
+            attackers &= occupied;
+            color = color.opponent();
+            balance = -balance - 1 - Self::see_value(next_victim);
+
+            if balance >= 0 {
+                // from Ethereal:
+                // As a slight optimization for move legality checking, if our last attacking
+                // piece is a king, and our opponent still has attackers, then we've
+                // lost as the move we followed would be illegal
+                if next_victim == PieceKind::King && (attackers & game.color(color)).is_nonempty() {
+                    color = color.opponent();
+                }
+                break;
+            }
+        }
+
+        // whoever's turn it is to move is the loser of the exchange
+        game.side_to_move() != color
     }
 }
 
