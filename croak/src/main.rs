@@ -1,12 +1,12 @@
 use std::{
     fs::File,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Write},
     path::Path,
     str::FromStr,
 };
 
 use anyhow::{bail, Result};
-use chrono::Utc;
+// use chrono::Utc;
 use toad::*;
 
 use croak::*;
@@ -127,10 +127,15 @@ fn dot(a: &[i32], b: &[i32]) -> i32 {
 }
 
 fn extract_features<V: Variant>(game: &Game<V>) -> Vec<i32> {
-    let mut features = vec![0; 12];
+    let mut features = vec![0; 
+    (PieceKind::COUNT * 2) // piece values
+    + (Square::COUNT * PieceKind::COUNT * 2) // piece square tables
+    ];
+
+    // index of the current feature
+    let mut i = 0;
 
     // Counting material values
-    let mut i = 0;
     for kind in PieceKind::all() {
         let val = game.piece_parts(Color::White, kind).population() as i32
             - game.piece_parts(Color::Black, kind).population() as i32;
@@ -141,9 +146,21 @@ fn extract_features<V: Variant>(game: &Game<V>) -> Vec<i32> {
         i += 2;
     }
 
+    // Now for piece-square tables, in piece order, alternating between MG and EG values
+    let psqt_start_index = i;
+
+    for (square, piece) in game.iter() {
+        let offset = piece.kind().index() * (Square::COUNT * 2) + square.index();
+        let i = psqt_start_index + offset;
+
+        features[i] = piece.color().negation_multiplier() as i32;
+        features[i + 1] = piece.color().negation_multiplier() as i32;
+    }
+
     features
 }
 
+/*
 fn foo<V: Variant>(fen: &str, _result: GameResult, weights: &[i32]) -> i32 {
     let game: Game<V> = Game::from_fen(fen).unwrap();
     // let weight = game.evaluator().endgame_weight();
@@ -154,43 +171,41 @@ fn foo<V: Variant>(fen: &str, _result: GameResult, weights: &[i32]) -> i32 {
     eprintln!("Dot product: {mg_dot} (mg) {eg_dot} (eg)");
     mg_dot
 }
+*/
 
 fn main() {
     println!("Starting tuner");
     let init_params = Parameters::default();
     let weights = init_params.into_iter().collect::<Vec<_>>();
-    println!("Tuning {} parameters:\n{weights:?}\n", weights.len());
+    println!("Tuning {} parameters...", weights.len());
 
-    foo::<Standard>(FEN_STARTPOS, GameResult::Draw, &weights);
-    println!();
-    foo::<Standard>(
-        "rnb1k1nr/pppp1ppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        GameResult::WhiteWin,
-        &weights,
-    );
-    println!();
-    foo::<Standard>(
-        "rnbqkbnr/pppppppp/8/8/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1",
-        GameResult::BlackWin,
-        &weights,
-    );
 
-    let mut tuner = Tuner::<Standard>::new("./croak/datasets/sample.txt", weights).unwrap();
+    // let book = "sample,txt";
+    let book = "lichess-big3-resolved.book";
+    // let mut tuner = Tuner::<Standard>::new(format!("./croak/datasets/{book}"), weights).unwrap();
     // max FEN length
-    let width = tuner
-        .inputs
-        .iter()
-        .map(|v| v.0.to_fen().len())
-        .max()
-        .unwrap_or(85);
-    for (game, _features, res) in tuner.inputs.iter() {
-        println!("{:<width$} {res:?}", game.to_fen());
-    }
+    // let width = tuner
+    //     .inputs
+    //     .iter()
+    //     .map(|v| v.0.to_fen().len())
+    //     .max()
+    //     .unwrap_or(85);
+    // for (game, _features, res) in tuner.inputs.iter() {
+    //     println!("{:<width$} {res:?}", game.to_fen());
+    // }
 
-    tuner.tune(K).unwrap();
+    // if let Ok(tuned) = tuner.tune(K).unwrap() {
+    //     let path = Path::new(".").join("tuned_eval_params.rs");
+    //     std::fs::write(&path, tuned.to_string()).unwrap();
+    // }
 
-    // let path = Path::new(".").join("tuned_eval_params.rs");
-    // std::fs::write(&path, tuned.to_string()).unwrap();
+    let reader = BufReader::new(File::open("tune-outputs/tuning_weights.txt").unwrap());
+    let weights = reader.lines().next().unwrap().unwrap();
+    let weights: Vec<i32> = weights.trim_start_matches('[').trim_end_matches(']').split(',').map(|num| num.trim().parse().unwrap()).collect();
+    let tuned = Parameters::from_iter(weights);
+
+    let path = Path::new(".").join("tuned_eval_params.rs");
+    std::fs::write(&path, tuned.to_string()).unwrap();
 }
 
 struct Tuner<V: Variant> {
@@ -201,10 +216,15 @@ struct Tuner<V: Variant> {
 impl<V: Variant> Tuner<V> {
     /// Parses the file at `path` into a list of positions, feature sets, and game results.
     fn new(path: impl AsRef<Path>, weights: Vec<i32>) -> Result<Self> {
+        println!("Loading dataset: {}", path.as_ref().to_str().unwrap());
+
         let mut inputs = vec![];
+        let len = BufReader::new(File::open(path.as_ref())?).lines().count();
         let reader = BufReader::new(File::open(path)?);
 
-        for line in reader.lines() {
+        // let len = len / 100;
+        let mut old_percent = 0;
+        for (i, line) in reader.lines().enumerate().take(len) {
             let line = line?;
 
             let (fen, result) = line
@@ -213,8 +233,17 @@ impl<V: Variant> Tuner<V> {
 
             let game: Game<V> = fen.parse()?;
             inputs.push((game, extract_features(&game), result.parse()?));
+
+            let percent = (i as f32 / len as f32) * 100.0;
+            let int = percent.trunc() as i32;
+            if int >= old_percent + 5 {
+                print!("{int}%, ");
+                std::io::stdout().flush().unwrap();
+                old_percent = int;
+            }
         }
 
+        println!("\nDataset loaded");
         Ok(Self { inputs, weights })
     }
 
@@ -234,13 +263,13 @@ impl<V: Variant> Tuner<V> {
         self.weights_mut()[..weights.len()].copy_from_slice(weights);
     }
     fn store_weights(&self, path: impl AsRef<Path>) -> Result<()> {
-        println!("Writing weights to {:?}", path.as_ref());
-        // let path = Path::new("tune-outputs").join(path);
-        // std::fs::write(path, format!("{:?}", self.weights()))?;
+        // println!("Writing weights to {:?}", path.as_ref());
+        let path = Path::new("tune-outputs").join(path);
+        std::fs::write(path, format!("{:?}", self.weights()))?;
         Ok(())
     }
 
-    fn tune(&mut self, k: Float) -> Result<()> {
+    fn tune(&mut self, k: Float) -> Result<Vec<i32>> {
         // Get the evaluation parameters
         let mut best_params = self.weights().to_vec();
         let n = best_params.len();
@@ -248,42 +277,60 @@ impl<V: Variant> Tuner<V> {
         // Initial mean squared error
         let mut best_mse = self.mean_squared_error(k);
 
+        let mut cycle = 0;
+        let mut improved = true;
         // Loop until MSE is minimized
-        'improving: loop {
+        while improved {
+            cycle += 1;
+            improved = false;
+
             for i in 0..n {
+                println!("Tuning param {:width$}/n, cycle {cycle}", i+1, width=3);
+                let mut step = 32;
+
                 // Copy params
-                let mut new_params = best_params.to_vec();
+                let new_params = &mut best_params.to_vec();
 
                 // First try incrementing, then try decrementing.
-                for adjust in [1, -2] {
-                    // Adjust current parameter
-                    new_params[i] += adjust;
+                'adjust_step: loop {
+                    for (j, adjust) in [step, -2 * step].into_iter().enumerate() {
+                        // Adjust current parameter
+                        new_params[i] += adjust;
 
-                    // Update evaluation parameters
-                    self.update_weights(&new_params);
+                        // Update evaluation parameters
+                        self.update_weights(new_params);
 
-                    // Recalculate MSE with update params
-                    let new_mse = self.mean_squared_error(k);
-                    let sign = if adjust > 0 { '+' } else { '-' };
-                    println!("Tuning params({sign}) {i}/{n} with MSE := {new_mse}");
+                        // Recalculate MSE with update params
+                        let new_mse = self.mean_squared_error(k);
+                        // println!("Tuning params({adjust:width$}) {}/{n} with MSE := {new_mse}", i + 1, width=3);
 
-                    // If param adjustment reduced the error, record that.
-                    if new_mse < best_mse {
-                        best_mse = new_mse;
-                        best_params = new_params;
-                        println!("Found better params({sign}): {best_mse}");
-                        _ = best_params;
-                        self.store_weights("tuning_weights.txt")?;
-                        break 'improving;
+                        // If param adjustment reduced the error, record that.
+                        if new_mse < best_mse {
+                            best_mse = new_mse;
+                            best_params = new_params.clone();
+                            println!("Improved with({adjust:width$}): {best_mse}", width=3);
+                            self.store_weights("tuning_weights.txt")?;
+                            improved = true;
+                            break 'adjust_step;
+                        } else 
+                        // If this was the decrement attempt, and nothing succeeded, halve the step
+                        if j == 1 {
+                            step /= 2;
+                            // eprintln!("Halving step to {step}");
+                            if step == 0 {
+                                break 'adjust_step;
+                            }
+                        }
                     }
                 }
             }
-            let now = Utc::now().format("%Y-%m-%d_%H-%M-%S");
-            self.store_weights(format!("session_weights_{now}"))?;
-            // break;
+            // let now = Utc::now().format("%Y-%m-%d_%H-%M-%S");
+            // self.store_weights(format!("session_weights_{now}"))?;
         }
 
-        self.store_weights("final_weights.txt")
+        self.store_weights("final_weights.txt")?;
+
+        Ok(self.weights.clone())
     }
 
     fn mean_squared_error(&self, k: Float) -> Float {
