@@ -514,6 +514,44 @@ impl Default for SearchParameters {
     }
 }
 
+/// Parameters for the various features used to enhance the efficiency of a search.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct SearchStats {
+    /// Number of moves searched until a beta cutoff occurred during the a/b search.
+    ///
+    /// This is cumulative, and is increased by `moves_made` on every beta cutoff.
+    beta_cutoff_indices: usize,
+
+    /// Number of beta cutoffs that occurred during the a/b search.
+    num_beta_cutoffs: usize,
+
+    /// Number of moves searched until a beta cutoff occurred during the quiescent search.
+    ///
+    /// This is cumulative, and is increased by `moves_made` on every beta cutoff.
+    qs_beta_cutoff_indices: usize,
+
+    /// Number of beta cutoffs that occurred during the quiescent search.
+    qs_num_beta_cutoffs: usize,
+
+    /// Number of null moves made in attempts to perform NMP.
+    nmp_attempts: usize,
+
+    /// Number of times NMP succeeded in producing a cutoff.
+    nmp_cutoffs: usize,
+
+    /// Number of nodes searched in qsearch.
+    qs_nodes: usize,
+
+    // Number of nodes searched with a zero-window within the a/b search.
+    zw_nodes: usize,
+
+    // Number of nodes searched with a zero-window within the quiescent search.
+    zw_qs_nodes: usize,
+
+    total_moves: usize,
+    moves_searched: usize,
+}
+
 /// Executes a search on a game of chess.
 pub struct Search<'a, Log, V> {
     /// An atomic flag to determine if the search should be cancelled at any time.
@@ -524,8 +562,13 @@ pub struct Search<'a, Log, V> {
     /// Configuration variables for this instance of the search.
     config: SearchConfig,
 
-    /// Information collected that is returned at the conclusion of the search.
+    /// Essential information collected that is returned at the conclusion of the search.
     result: SearchResult,
+
+    /// Non-essential information collected during the search.
+    ///
+    /// This information is printed when the `debug` UCI option is set.
+    stats: SearchStats,
 
     /// Previous positions encountered during search.
     prev_positions: Vec<Position>,
@@ -565,6 +608,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             history,
             params,
             result: SearchResult::default(),
+            stats: SearchStats::default(),
             variant: PhantomData,
             log: PhantomData,
         }
@@ -643,33 +687,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             _ => self.iterative_deepening(game),
         }
 
-        // Debug info about the termination of the search.
-        if Log::DEBUG {
-            if let Err(reason) = self.search_cancelled() {
-                if let Some(bestmove) = self.result.bestmove() {
-                    self.send_string(format!(
-                        "Search cancelled during depth {} while evaluating {} with score {}. Reason: {reason}",
-                        self.result.depth,
-                        V::fmt_move(bestmove),
-                        self.result.score,
-                    ));
-                } else {
-                    self.send_string(format!(
-                        "Search cancelled during depth {} with score {} and no bestmove. Reason: {reason}",
-                        self.result.depth, self.result.score,
-                    ));
-                }
-            }
-
-            let hits = self.ttable.hits;
-            let reads = self.ttable.reads;
-            let writes = self.ttable.writes;
-            let hit_rate = (hits as f32 / reads as f32 * 100.0).min(0.0);
-            let collisions = self.ttable.collisions;
-            let info = format!("TT stats: {hits} hits / {reads} reads ({hit_rate:.2}% hit rate), {writes} writes, {collisions} collisions");
-            self.send_string(info);
-        }
-
         // Sanity check: If no bestmove, but there is a legal move, update bestmove.
         if self.result.bestmove().is_none() {
             if let Some(first) = moves.first().copied() {
@@ -681,6 +698,68 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Search has ended; send bestmove
         if Log::INFO {
             self.send_search_info(); // UCI spec states to send one last `info` before `bestmove`.
+
+            // Debug info about the termination of the search.
+            if Log::DEBUG {
+                if let Err(reason) = self.search_cancelled() {
+                    if let Some(bestmove) = self.result.bestmove() {
+                        self.send_string(format!(
+                        "Search cancelled during depth {} while evaluating {} with score {}. Reason: {reason}",
+                        self.result.depth,
+                        V::fmt_move(bestmove),
+                        self.result.score,
+                    ));
+                    } else {
+                        self.send_string(format!(
+                        "Search cancelled during depth {} with score {} and no bestmove. Reason: {reason}",
+                        self.result.depth, self.result.score,
+                    ));
+                    }
+                }
+
+                let hits = self.ttable.hits;
+                let reads = self.ttable.reads;
+                let writes = self.ttable.writes;
+                let hit_rate = (hits as f32 / reads as f32 * 100.0).min(0.0);
+                let collisions = self.ttable.collisions;
+                let info = format!("TT stats: {hits} hits / {reads} reads ({hit_rate:.2}% hit rate), {writes} writes, {collisions} collisions");
+                self.send_string(info);
+
+                // Send search stats
+                let ebf = self.stats.moves_searched as f32 / self.stats.total_moves as f32;
+                self.send_string(format!("effective branching factor: {ebf:.2}"));
+
+                let ab_bci =
+                    self.stats.beta_cutoff_indices as f32 / self.stats.num_beta_cutoffs as f32;
+                self.send_string(format!("avg beta cutoff index (AB): {ab_bci:.2}"));
+
+                let qs_bci = self.stats.qs_beta_cutoff_indices as f32
+                    / self.stats.qs_num_beta_cutoffs as f32;
+                self.send_string(format!("avg beta cutoff index (QS): {qs_bci:.2}"));
+
+                let nmp_cutoff_rate =
+                    self.stats.nmp_cutoffs as f32 / self.stats.nmp_attempts as f32 * 100.0;
+                self.send_string(format!("nmp cutoff rate: {nmp_cutoff_rate:.1}%"));
+
+                let qs_node_percent = self.stats.qs_nodes as f32 / self.result.nodes as f32 * 100.0;
+                self.send_string(format!(
+                    "qs nodes: {} ({qs_node_percent:.1}%)",
+                    self.stats.qs_nodes
+                ));
+
+                let zw_node_percent = self.stats.zw_nodes as f32 / self.result.nodes as f32 * 100.0;
+                self.send_string(format!(
+                    "zw nodes (AB): {} ({zw_node_percent:.1}%)",
+                    self.stats.zw_nodes
+                ));
+
+                let zw_qs_node_percent =
+                    self.stats.zw_qs_nodes as f32 / self.stats.qs_nodes as f32 * 100.0;
+                self.send_string(format!(
+                    "zw nodes (QS): {} ({zw_qs_node_percent:.1}%)",
+                    self.stats.zw_qs_nodes
+                ));
+            }
 
             // TODO: On a `go infinite` search, we should *only* send `bestmove` after `stop` is received, regardless of whether the search has concluded
             self.send_response(UciResponse::BestMove {
@@ -828,6 +907,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     ) -> Result<Score, SearchCancelled> {
         self.search_cancelled()?; // Exit early if search is terminated.
 
+        if !Node::PV {
+            self.stats.zw_nodes += 1;
+        }
+
         // Record the max max height / max ply / seldepth
         self.result.seldepth = self.result.seldepth.max(ply) * !Node::ROOT as i32;
 
@@ -837,9 +920,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         pv.clear();
 
         // Probe the TT to see if we can return early or use an existing bestmove.
-        if Log::DEBUG {
-            self.ttable.reads += 1;
-        }
         let tt_move = match self.ttable.probe(game.key(), depth, ply, bounds) {
             /****************************************************************************************************
              * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
@@ -915,6 +995,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         let mut best = -Score::INF;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
+        let mut moves_searched = 0;
 
         /****************************************************************************************************
          * Primary move loop
@@ -940,6 +1021,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Copy-make the new position
             let new = game.with_move_made(*mv);
+            moves_searched += 1;
             let mut score = Score::DRAW;
 
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
@@ -1059,10 +1141,17 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     for mv in moves[..i].iter().filter(|mv| mv.is_quiet()) {
                         self.history.update(game, mv, -bonus);
                     }
+
+                    // Record beta cutoff stats
+                    self.stats.beta_cutoff_indices += i;
+                    self.stats.num_beta_cutoffs += 1;
                     break;
                 }
             }
         }
+
+        self.stats.total_moves += moves.len();
+        self.stats.moves_searched += moves_searched;
 
         // Save this node to the TTable.
         self.save_to_tt(
@@ -1146,17 +1235,19 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         let mut best = stand_pat;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
+        let mut moves_searched = 0;
 
         /****************************************************************************************************
          * Primary move loop
          ****************************************************************************************************/
 
-        for mv in captures {
+        for (i, mv) in captures.iter().enumerate() {
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
             local_pv.clear();
 
             // Copy-make the new position
-            let new = game.with_move_made(mv);
+            let new = game.with_move_made(*mv);
+            moves_searched += 1;
             let mut score = Score::DRAW;
 
             /****************************************************************************************************
@@ -1172,6 +1263,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 self.search_cancelled()?; // Exit early if search is terminated.
 
                 self.result.nodes += 1; // We've now searched this node
+                self.stats.qs_nodes += 1;
+                self.stats.zw_qs_nodes += !Node::PV as usize;
 
                 self.prev_positions.pop();
             }
@@ -1186,21 +1279,27 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // PV found
                 if score > bounds.alpha {
                     bounds.alpha = score;
-                    bestmove = Some(mv);
+                    bestmove = Some(*mv);
 
                     // Only extend the PV if we're in a PV node
                     if Node::PV {
                         // assert_pv_is_legal(game, mv, &local_pv);
-                        pv.extend(mv, &local_pv);
+                        pv.extend(*mv, &local_pv);
                     }
                 }
 
                 // Fail high
                 if score >= bounds.beta {
+                    // Record beta cutoff stats
+                    self.stats.qs_beta_cutoff_indices += i;
+                    self.stats.qs_num_beta_cutoffs += 1;
                     break;
                 }
             }
         }
+
+        self.stats.total_moves += captures.len();
+        self.stats.moves_searched += moves_searched;
 
         // Save this node to the TTable.
         self.save_to_tt(
@@ -1392,6 +1491,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         && non_king_pawn_material.is_nonempty(); // Can't play nullmove if insufficient material (only Kings and Pawns)
 
         if can_perform_nmp {
+            self.stats.nmp_attempts += 1;
             let null_game = game.with_nullmove_made();
             // Record this position in our stack, for repetition detection
             self.prev_positions.push(*null_game.position());
@@ -1410,6 +1510,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // If making the nullmove produces a cutoff, we can assume that a full-depth search would also produce a cutoff
             if score >= bounds.beta {
+                self.stats.nmp_cutoffs += 1;
                 return Ok(Some(score));
             }
         }
