@@ -903,10 +903,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // If there are no legal moves, it's either mate or a draw.
         let mut moves = game.get_legal_moves();
-        if moves.is_empty() {
-            // Offset by ply to prefer earlier checkmates.
-            return Ok((ply - Score::MATE) * game.is_in_check());
-        }
 
         // Sort moves so that we look at "promising" ones first
         moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
@@ -915,6 +911,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         let mut best = -Score::INF;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
+        let mut moves_made = 0;
 
         /****************************************************************************************************
          * Primary move loop
@@ -940,6 +937,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Copy-make the new position
             let new = game.with_move_made(*mv);
+            moves_made += 1;
             let mut score = Score::DRAW;
 
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
@@ -1064,6 +1062,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
+        if moves_made == 0 {
+            // Offset by ply to prefer earlier checkmates.
+            return Ok((ply - Score::MATE) * game.is_in_check());
+        }
+
         // Save this node to the TTable.
         self.save_to_tt(
             game.key(),
@@ -1135,28 +1138,24 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             .filter(Move::is_capture)
             .collect::<MoveList>();
 
-        // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
-        // So, if there are no captures available, just return the current evaluation.
-        if captures.is_empty() {
-            return Ok(stand_pat);
-        }
-
         captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
+        let mut moves_made = 0;
 
         /****************************************************************************************************
          * Primary move loop
          ****************************************************************************************************/
 
-        for mv in captures {
+        for mv in captures.iter() {
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
             local_pv.clear();
 
             // Copy-make the new position
-            let new = game.with_move_made(mv);
+            let new = game.with_move_made(*mv);
+            moves_made += 1;
             let mut score = Score::DRAW;
 
             /****************************************************************************************************
@@ -1186,12 +1185,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // PV found
                 if score > bounds.alpha {
                     bounds.alpha = score;
-                    bestmove = Some(mv);
+                    bestmove = Some(*mv);
 
                     // Only extend the PV if we're in a PV node
                     if Node::PV {
                         // assert_pv_is_legal(game, mv, &local_pv);
-                        pv.extend(mv, &local_pv);
+                        pv.extend(*mv, &local_pv);
                     }
                 }
 
@@ -1200,6 +1199,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     break;
                 }
             }
+        }
+
+        // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
+        // So, if there are no captures available, just return the current evaluation.
+        if moves_made == 0 {
+            return Ok(stand_pat);
         }
 
         // Save this node to the TTable.
