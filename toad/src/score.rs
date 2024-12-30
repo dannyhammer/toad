@@ -53,7 +53,7 @@ impl Score {
     /// Constructs a new [`Score`] instance that represents *being* checkmated in `n` plies.
     #[inline(always)]
     pub const fn mated_in(n: Ply) -> Self {
-        Self(n.plies() - Self::MATE.0)
+        Self(-Self::MATE.0 + n.plies())
     }
 
     /// Constructs a new [`Score`] instance that represents *giving* checkmate in `n` plies.
