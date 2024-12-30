@@ -61,9 +61,10 @@ If you are willing to test the installation and execution of Toad on other opera
     -   [Late Move Reductions](https://www.chessprogramming.org/Late_Move_Reductions).
     -   [Check Extensions](https://www.chessprogramming.org/Check_Extensions).
     -   [Razoring](https://www.chessprogramming.org/Razoring).
-    -   [Internal Iterative Reductions / Transposition Table Reductions](https://www.chessprogramming.org/Internal_Iterative_Reductions).
+    -   [Internal Iterative Reductions (Transposition Table Reductions)](https://www.chessprogramming.org/Internal_Iterative_Reductions).
     -   [Internal Iterative Deepening](https://www.chessprogramming.org/Internal_Iterative_Deepening).
     -   [Late Move Pruning](https://www.chessprogramming.org/Futility_Pruning#MoveCountBasedPruning).
+    -   [Mate Distance Pruning](https://www.chessprogramming.org/Mate_Distance_Pruning).
     -   Support for [fractional plies](https://www.chessprogramming.org/Depth#Fractional_Plies)
     -   Move Ordering:
         -   [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) with relative piece values `K < P < N < B < R < Q`, so `KxR` is ordered before `PxR`.
