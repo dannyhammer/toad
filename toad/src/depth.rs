@@ -28,7 +28,7 @@ impl Ply {
     /// Granularity of a single ply.
     ///
     /// The higher this number is, the finer the grain of fractional depth.
-    const GRAIN: i32 = 100;
+    pub const GRAIN: i32 = 100;
 
     /// Constructs a new [`Ply`] instance that is `n` plies deep.
     #[inline(always)]
