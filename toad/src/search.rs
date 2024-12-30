@@ -460,7 +460,7 @@ pub struct SearchParameters {
     iid_offset: Ply,
 
     /// Pre-computed table for Late Move Reduction values.
-    lmr_table: [[i32; MAX_NUM_MOVES + 1]; Ply::MAX.plies() as usize + 1],
+    lmr_table: [[i32; MAX_NUM_MOVES]; Ply::MAX.plies() as usize + 1],
 }
 
 impl Default for SearchParameters {
@@ -469,9 +469,9 @@ impl Default for SearchParameters {
         let lmr_divisor = tune::lmr_divisor!();
 
         // Initialize the table for Late Move Reductions, so that we don't need redo the floating-point arithmetic constantly.
-        let mut lmr_table = [[0; MAX_NUM_MOVES + 1]; Ply::MAX.plies() as usize + 1];
+        let mut lmr_table = [[0; MAX_NUM_MOVES]; Ply::MAX.plies() as usize + 1];
         for (depth, entry) in lmr_table.iter_mut().enumerate().skip(1) {
-            for (moves_made, reduction) in entry.iter_mut().enumerate().skip(1) {
+            for (moves_made, reduction) in entry.iter_mut().enumerate() {
                 let d = (depth as f32).ln();
                 let m = (moves_made as f32).ln();
                 let r = lmr_offset + d * m / lmr_divisor;
@@ -786,11 +786,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     break 'aspiration_window score;
                 }
             };
-
-            // We check this again here for sanity reasons.
-            if self.search_cancelled().is_err() {
-                break 'iterative_deepening;
-            }
 
             /****************************************************************************************************
              * Update current best score
