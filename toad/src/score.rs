@@ -101,44 +101,16 @@ impl Score {
         relative_to_side / 2
     }
 
-    /// Normalize the score to the provided ply.
-    ///
-    /// Score will be relative to `ply`.
-    #[inline(always)]
-    pub fn relative(self, ply: Ply) -> Self {
-        if self.is_mate() {
-            // Self(self.0 + ply)
-            if self > Self::DRAW {
-                self + ply
-            } else {
-                self - ply
-            }
-        } else {
-            self
-        }
-    }
-
-    /// De-normalize the score from the provided ply.
-    ///
-    /// Score will be relative to root (0 ply).
-    #[inline(always)]
-    pub fn absolute(self, ply: Ply) -> Self {
-        if self.is_mate() {
-            // Self(self.0 - ply)
-            if self > Self::DRAW {
-                self - ply
-            } else {
-                self + ply
-            }
-        } else {
-            self
-        }
-    }
-
     /// Returns the absolute value of this [`Score`].
     #[inline(always)]
     pub const fn abs(self) -> Self {
         Self(self.0.abs())
+    }
+
+    /// Returns the sign of this [`Score`].
+    #[inline(always)]
+    pub const fn signum(self) -> Self {
+        Self(self.0.signum())
     }
 
     /// "Normalizes" a score so that it can be printed as a float.
@@ -332,19 +304,5 @@ mod tests {
 
         let their_mate = -(Score::MATE - plies);
         assert_eq!(their_mate.plies_to_mate(), plies.plies() as i32);
-
-        // Relative scores
-        let our_relative = our_mate.relative(plies);
-        assert_eq!(our_relative, Score::MATE);
-
-        let their_relative = their_mate.relative(plies);
-        assert_eq!(their_relative, -Score::MATE);
-
-        // Absolute scores
-        let our_absolute = our_relative.absolute(plies);
-        assert_eq!(our_absolute, our_mate);
-
-        let their_absolute = their_relative.absolute(plies);
-        assert_eq!(their_absolute, their_mate);
     }
 }
