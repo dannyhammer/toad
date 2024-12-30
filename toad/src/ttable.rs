@@ -92,16 +92,12 @@ impl TTableEntry {
         bounds: SearchBounds,
         depth: Ply,
     ) -> Self {
-        // Determine what kind of node this is first, *before* score adjustment
-        let node_type = NodeType::new(score, bounds);
-
         Self {
             key,
             bestmove,
-            // Adjust the score (if it was mate) to the ply at which we found it
-            score: score,
+            score,
             depth: depth.plies() as u8,
-            node_type,
+            node_type: NodeType::new(score, bounds),
         }
     }
 
@@ -248,12 +244,7 @@ impl TTable {
     ///
     /// See [`TTableEntry::try_score`] for more.
     #[inline(always)]
-    pub fn probe(
-        &self,
-        key: ZobristKey,
-        depth: Ply,
-        bounds: SearchBounds,
-    ) -> ProbeResult {
+    pub fn probe(&self, key: ZobristKey, depth: Ply, bounds: SearchBounds) -> ProbeResult {
         // if-let chains are set to be stabilized in Rust 2024 (1.85.0): https://rust-lang.github.io/rfcs/2497-if-let-chains.html
         if let Some(entry) = self.get(&key) {
             // Can only cut off if the existing entry came from a greater depth.
