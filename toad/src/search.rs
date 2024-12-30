@@ -475,7 +475,7 @@ impl Default for SearchParameters {
                 let d = (depth as f32).ln();
                 let m = (moves_made as f32).ln();
                 let r = lmr_offset + d * m / lmr_divisor;
-                *reduction = r as i32;
+                *reduction = r.round() as i32;
 
                 // eprintln!(
                 //     "D: {depth:width$}, M: {moves_made:width$} := {r}",
