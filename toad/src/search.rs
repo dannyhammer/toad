@@ -726,8 +726,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 self.send_string(info);
 
                 // Send search stats
-                let ebf = self.stats.moves_searched as f32 / self.stats.total_moves as f32;
-                self.send_string(format!("effective branching factor: {ebf:.2}"));
+                let ebf = (self.result.nodes as f32).powf(1.0 / self.result.depth.plies() as f32);
+                self.send_string(format!("branching factor: {ebf:.2}"));
 
                 let ab_bci =
                     self.stats.beta_cutoff_indices as f32 / self.stats.num_beta_cutoffs as f32;
