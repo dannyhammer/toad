@@ -470,8 +470,8 @@ impl Default for SearchParameters {
 
         // Initialize the table for Late Move Reductions, so that we don't need redo the floating-point arithmetic constantly.
         let mut lmr_table = [[0; MAX_NUM_MOVES]; Ply::MAX.plies() as usize];
-        for depth in (0..Ply::MAX.plies()).map(Ply::new) {
-            for moves_made in 0..MAX_NUM_MOVES {
+        for depth in (1..Ply::MAX.plies()).map(Ply::new) {
+            for moves_made in 1..MAX_NUM_MOVES {
                 lmr_table[depth.plies() as usize][moves_made] = (lmr_offset
                     + (depth.plies() as f32).ln() * (moves_made as f32).ln() / lmr_divisor)
                     as i32;
