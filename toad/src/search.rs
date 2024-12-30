@@ -460,7 +460,7 @@ pub struct SearchParameters {
     iid_offset: Ply,
 
     /// Pre-computed table for Late Move Reduction values.
-    lmr_table: [[i32; MAX_NUM_MOVES]; Ply::MAX.plies() as usize],
+    lmr_table: [[i32; MAX_NUM_MOVES + 1]; Ply::MAX.plies() as usize + 1],
 }
 
 impl Default for SearchParameters {
@@ -469,12 +469,24 @@ impl Default for SearchParameters {
         let lmr_divisor = tune::lmr_divisor!();
 
         // Initialize the table for Late Move Reductions, so that we don't need redo the floating-point arithmetic constantly.
-        let mut lmr_table = [[0; MAX_NUM_MOVES]; Ply::MAX.plies() as usize];
-        for depth in (1..Ply::MAX.plies()).map(Ply::new) {
-            for moves_made in 1..MAX_NUM_MOVES {
-                lmr_table[depth.plies() as usize][moves_made] = (lmr_offset
-                    + (depth.plies() as f32).ln() * (moves_made as f32).ln() / lmr_divisor)
-                    as i32;
+        let mut lmr_table = [[0; MAX_NUM_MOVES + 1]; Ply::MAX.plies() as usize + 1];
+        for (depth, entry) in lmr_table.iter_mut().enumerate().skip(1) {
+            for (moves_made, reduction) in entry.iter_mut().enumerate().skip(1) {
+                let d = (depth as f32).ln();
+                let m = (moves_made as f32).ln();
+                let r = lmr_offset + d * m / lmr_divisor;
+                *reduction = r as i32;
+
+                // eprintln!(
+                //     "D: {depth:width$}, M: {moves_made:width$} := {r}",
+                //     width = 3
+                // );
+                // assert!(!d.is_nan() && d.is_finite(), "{depth} produced {d}");
+                // assert!(!m.is_nan() && m.is_finite(), "{moves_made} produced {m}");
+                // assert!(
+                //     !r.is_nan() && m.is_finite(),
+                //     "{depth} x {moves_made} produced {r}"
+                // );
             }
         }
 
