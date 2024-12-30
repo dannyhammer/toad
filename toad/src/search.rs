@@ -840,7 +840,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         if Log::DEBUG {
             self.ttable.reads += 1;
         }
-        let tt_move = match self.ttable.probe(game.key(), depth, ply, bounds) {
+        let tt_move = match self.ttable.probe(game.key(), depth, bounds) {
             /****************************************************************************************************
              * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
              *
@@ -904,8 +904,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // If there are no legal moves, it's either mate or a draw.
         let mut moves = game.get_legal_moves();
         if moves.is_empty() {
-            // Offset by ply to prefer earlier checkmates.
-            return Ok((ply - Score::MATE) * game.is_in_check());
+            return Ok(-Score::MATE * game.is_in_check());
         }
 
         // Sort moves so that we look at "promising" ones first
@@ -1071,7 +1070,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             best,
             SearchBounds::new(original_alpha, bounds.beta),
             depth,
-            ply,
         );
 
         Ok(best)
@@ -1109,7 +1107,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         }
 
         // Probe the TT to see if we can return early or use an existing bestmove.
-        let tt_move = match self.ttable.probe(game.key(), Ply::ZERO, ply, bounds) {
+        let tt_move = match self.ttable.probe(game.key(), Ply::ZERO, bounds) {
             /****************************************************************************************************
              * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
              *
@@ -1202,6 +1200,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
+        if best.is_mate() { best -= best.signum(); }
+
         // Save this node to the TTable.
         self.save_to_tt(
             game.key(),
@@ -1209,7 +1209,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             best,
             SearchBounds::new(original_alpha, bounds.beta),
             Ply::ZERO,
-            ply,
         );
 
         Ok(best) // fail-soft
@@ -1284,9 +1283,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         score: Score,
         bounds: SearchBounds,
         depth: Ply,
-        ply: Ply,
     ) {
-        let entry = TTableEntry::new(key, bestmove, score, bounds, depth, ply);
+        let entry = TTableEntry::new(key, bestmove, score, bounds, depth);
         let old = self.ttable.store(entry);
 
         if Log::DEBUG {
