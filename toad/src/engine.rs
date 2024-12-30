@@ -59,7 +59,7 @@ pub struct Engine {
     debug: bool,
 
     /// Parameters for search features like pruning, extensions, etc.
-    params: SearchParameters,
+    params: Arc<Mutex<SearchParameters>>,
 }
 
 impl Engine {
@@ -73,12 +73,12 @@ impl Engine {
             prev_positions: Vec::with_capacity(512),
             sender,
             receiver,
-            is_searching: Arc::default(),
-            search_thread: None,
-            ttable: Arc::default(),
-            history: Arc::default(),
+            is_searching: Default::default(),
+            search_thread: Default::default(),
+            ttable: Default::default(),
+            history: Default::default(),
             debug: false,
-            params: SearchParameters::default(),
+            params: Default::default(),
         }
     }
 
@@ -592,7 +592,7 @@ impl Engine {
         prev_positions.push(*game.position());
         let ttable = Arc::clone(&self.ttable);
         let history = Arc::clone(&self.history);
-        let params = self.params;
+        let params = Arc::clone(&self.params);
 
         // Spawn a thread to conduct the search
         let handle = thread::spawn(move || {
@@ -603,6 +603,9 @@ impl Engine {
             let mut history = history
                 .lock()
                 .expect("Failed to acquire History Table at the start of search.");
+            let params = params
+                .lock()
+                .expect("Failed to acquire parameters at the start of search.");
 
             // Start the search, returning the result when completed.
             Search::<Log, V>::new(
@@ -611,7 +614,7 @@ impl Engine {
                 prev_positions,
                 &mut ttable,
                 &mut history,
-                params,
+                *params,
             )
             .start(&game)
         });
