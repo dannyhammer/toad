@@ -618,27 +618,21 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 }
             }
 
-            /*
             // If only 1 legal move available, it is forced, so don't waste time on a full search.
             1 => {
-                // Get a quick, albeit poor, evaluation of the position.
-                // TODO: Replace this with a call to qsearch?
-                self.result.score = game.eval();
-                self.result.nodes += 1;
-
-                // Append the only legal move to the PV
-                let bestmove = moves[0];
-                self.result.pv.0.push(bestmove);
-
                 if Log::DEBUG {
                     self.send_string(format!(
-                        "Position {:?} has only one legal move available ({bestmove}), evaluated at {}",
+                        "Position {:?} has only one legal move available ({}). Reducing max ID depth to 1",
                         game.to_fen(),
-                        self.result.score.into_uci(),
+                        moves[0],
                     ));
                 }
+
+                // Instead, restrict the max depth to one ply, and conduct the ID search as usual
+                self.config.max_depth = self.config.max_depth.min(Ply::ONE);
+                self.iterative_deepening(game)
             }
-             */
+
             // Otherwise, start a search like normal.
             _ => self.iterative_deepening(game),
         }
