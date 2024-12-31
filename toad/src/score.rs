@@ -50,6 +50,18 @@ impl Score {
         Self(score)
     }
 
+    /// Constructs a new [`Score`] instance that represents *being* checkmated in `n` plies.
+    #[inline(always)]
+    pub const fn mated_in(n: Ply) -> Self {
+        Self(-Self::MATE.0 + n.plies())
+    }
+
+    /// Constructs a new [`Score`] instance that represents *giving* checkmate in `n` plies.
+    #[inline(always)]
+    pub const fn mate_in(n: Ply) -> Self {
+        Self(Self::MATE.0 - n.plies())
+    }
+
     /// Returns `true` if the score is a mate score.
     #[inline(always)]
     pub const fn is_mate(&self) -> bool {

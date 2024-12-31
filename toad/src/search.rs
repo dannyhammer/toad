@@ -836,6 +836,25 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Clear any nodes in this PV, since we're searching from a new position
         pv.clear();
 
+        // Initial node inspection, such as mate-distance pruning, draws, etc.
+        if !Node::ROOT {
+            /****************************************************************************************************
+             * Mate-Distance Pruning: https://www.chessprogramming.org/Mate_Distance_Pruning
+             *
+             * If we've found a mate-in-n, prune all other branches that are not mate-in-m where m < n.
+             * This doesn't really affect playing strength, since it only occurs when the game result is certain,
+             * but helps avoid searching useless nodes.
+             ****************************************************************************************************/
+            // Clamp the bounds to a mate-in-`ply` score, if possible.
+            bounds.alpha = bounds.alpha.max(Score::mated_in(ply));
+            bounds.beta = bounds.beta.min(Score::mate_in(ply + 1));
+
+            // Prune this node if no shorter mate has been found.
+            if bounds.alpha >= bounds.beta {
+                return Ok(bounds.alpha);
+            }
+        }
+
         // Probe the TT to see if we can return early or use an existing bestmove.
         if Log::DEBUG {
             self.ttable.reads += 1;

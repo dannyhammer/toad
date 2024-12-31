@@ -477,7 +477,7 @@ impl Engine {
             // If pretty-printing, also display a Bitboard of all possible destinations
             if pretty {
                 let bb = moves.iter().map(|mv| mv.to()).collect::<Bitboard>();
-                println!("{bb:?}\n\nmoves: {string}");
+                println!("{bb:?}\n\nmoves ({}): {string}", moves.len());
             } else {
                 println!("{string}");
             }
