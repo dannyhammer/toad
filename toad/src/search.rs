@@ -828,6 +828,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     ) -> Result<Score, SearchCancelled> {
         self.search_cancelled()?; // Exit early if search is terminated.
 
+        /****************************************************************************************************
+         * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
+         *
+         * In order to avoid the horizon effect, we don't stop searching at a depth of 0. Instead, we
+         * continue searching all "noisy" moves until we reach a "quiet" (quiescent) position.
+         ****************************************************************************************************/
+        if depth <= 0 {
+            return self.quiescence::<Node>(game, ply, bounds, pv);
+        }
+
         // Record the max max height / max ply / seldepth
         self.result.seldepth = self.result.seldepth.max(ply) * !Node::ROOT as i32;
 
@@ -901,16 +911,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          ****************************************************************************************************/
         if tt_move.is_none() && depth >= self.params.min_iir_depth {
             depth -= 1;
-        }
-
-        /****************************************************************************************************
-         * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
-         *
-         * In order to avoid the horizon effect, we don't stop searching at a depth of 0. Instead, we
-         * continue searching all "noisy" moves until we reach a "quiet" (quiescent) position.
-         ****************************************************************************************************/
-        if depth == 0 {
-            return self.quiescence::<Node>(game, ply, bounds, pv);
         }
 
         // If we CAN prune this node by means other than the TT, do so.
@@ -1121,13 +1121,13 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         pv.clear();
 
         // Evaluate the current position, to serve as our baseline
-        let stand_pat = game.eval();
+        let static_eval = game.eval();
 
         // Beta cutoff; this position is "too good" and our opponent would never let us get here
-        if stand_pat >= bounds.beta {
-            return Ok(stand_pat); // fail-soft
-        } else if stand_pat > bounds.alpha {
-            bounds.alpha = stand_pat;
+        if static_eval >= bounds.beta {
+            return Ok(static_eval); // fail-soft
+        } else if static_eval > bounds.alpha {
+            bounds.alpha = static_eval;
         }
 
         // Probe the TT to see if we can return early or use an existing bestmove.
@@ -1151,7 +1151,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Generate only the legal captures
         // TODO: Is there a more concise way of doing this?
         // The `game.into_iter().only_captures()` doesn't cover en passant...
-        let mut captures = game
+        let mut moves = game
             .get_legal_moves()
             .into_iter()
             .filter(Move::is_capture)
@@ -1159,13 +1159,13 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
         // So, if there are no captures available, just return the current evaluation.
-        if captures.is_empty() {
-            return Ok(stand_pat);
+        if moves.is_empty() {
+            return Ok(static_eval);
         }
 
-        captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
+        moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
-        let mut best = stand_pat;
+        let mut best = static_eval;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
 
@@ -1173,7 +1173,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * Primary move loop
          ****************************************************************************************************/
 
-        for mv in captures {
+        for mv in moves {
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
             local_pv.clear();
 
