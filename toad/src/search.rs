@@ -929,6 +929,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let mut moves_made = 0;
         let mut fail_low_quiets = MoveList::default();
+        let mut beta_cutoff = false;
         let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
@@ -1059,6 +1060,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // If a score beats beta, this node is said to "fail high" and it can be pruned
             if score >= bounds.beta {
+                beta_cutoff = true;
                 break;
             }
 
@@ -1068,6 +1070,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
+        let bonus = self.params.history_multiplier * depth - self.params.history_offset;
         if let Some(bestmove) = bestmove.as_ref() {
             /****************************************************************************************************
              * History Heuristic
@@ -1077,14 +1080,15 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
              * as this one (as they did not cause a beta cutoff).
              ****************************************************************************************************/
             // Simple bonus based on depth
-            let bonus = self.params.history_multiplier * depth - self.params.history_offset;
 
             // Only update quiet moves
             if bestmove.is_quiet() {
                 self.history.update(game, bestmove, bonus);
             }
+        }
 
-            // Apply a penalty to all quiets searched so far
+        // Apply a penalty to all quiets searched so far
+        if beta_cutoff {
             // for mv in moves[..moves_made].iter().filter(|mv| mv.is_quiet()) {
             // for mv in moves[..searched].iter().filter(|mv| mv.is_quiet()) {
             // for mv in moves.iter().filter(|mv| mv.is_quiet()) {
