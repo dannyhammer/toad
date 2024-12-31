@@ -20,8 +20,8 @@ use thiserror::Error;
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Ply, Position,
-    ProbeResult, Score, TTable, TTableEntry, Variant, ZobristKey, MAX_NUM_MOVES,
+    tune, Game, HistoryTable, LogLevel, Move, MoveList, MovePicker, PieceKind, Ply, Position,
+    ProbeResult, Score, TTable, TTableEntry, Variant, ZobristKey, MAX_NUM_MOVES, MVV_LVA,
 };
 
 /// Reasons that a search can be cancelled.
@@ -914,12 +914,17 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         let mut best = -Score::INF;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
+        let num_moves = moves.len();
 
         /****************************************************************************************************
          * Primary move loop
          ****************************************************************************************************/
 
-        for (i, mv) in moves.iter().enumerate() {
+        // let mut picker = MovePicker::new(moves, game, &self.history, tt_move);
+        // let mut i = 0;
+        // while let Some((mv, _)) = picker.next() {
+        // for (i, (mv, _)) in picker.enumerate() {
+        for (i, mv) in moves.iter().copied().enumerate() {
             /****************************************************************************************************
              * Move-Loop Pruning techniques
              ****************************************************************************************************/
@@ -931,14 +936,14 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                  * not even bother searching them.
                  ****************************************************************************************************/
                 let min_lmp_moves =
-                    self.params.lmp_multiplier * moves.len() / self.params.lmp_divisor;
+                    self.params.lmp_multiplier * num_moves / self.params.lmp_divisor;
                 if depth <= self.params.max_lmp_depth && i >= min_lmp_moves {
                     break;
                 }
             }
 
             // Copy-make the new position
-            let new = game.with_move_made(*mv);
+            let new = game.with_move_made(mv);
             let mut score = Score::DRAW;
 
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
@@ -1028,12 +1033,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // PV found
                 if score > bounds.alpha {
                     bounds.alpha = score;
-                    bestmove = Some(*mv);
+                    bestmove = Some(mv);
 
                     // Only extend the PV if we're in a PV node
                     if Node::PV {
                         // assert_pv_is_legal(game, *mv, &local_pv);
-                        pv.extend(*mv, &local_pv);
+                        pv.extend(mv, &local_pv);
                     }
                 }
 
@@ -1051,16 +1056,19 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                     // Only update quiet moves
                     if mv.is_quiet() {
-                        self.history.update(game, mv, bonus);
+                        self.history.update(game, &mv, bonus);
                     }
 
                     // Apply a penalty to all quiets searched so far
                     for mv in moves[..i].iter().filter(|mv| mv.is_quiet()) {
+                        // for mv in picker.moves_so_far().iter().filter(|mv| mv.is_quiet()) {
                         self.history.update(game, mv, -bonus);
                     }
                     break;
                 }
             }
+
+            // i += 1;
         }
 
         // Adjust mate score by 1 ply, since we're returning up the call stack
@@ -1132,7 +1140,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Generate only the legal captures
         // TODO: Is there a more concise way of doing this?
         // The `game.into_iter().only_captures()` doesn't cover en passant...
-        let mut captures = game
+        let captures = game
             .get_legal_moves()
             .into_iter()
             .filter(Move::is_capture)
@@ -1144,7 +1152,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             return Ok(stand_pat);
         }
 
-        captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
+        // captures.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         let mut best = stand_pat;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
@@ -1154,7 +1162,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * Primary move loop
          ****************************************************************************************************/
 
-        for mv in captures {
+        let mut picker = MovePicker::new(captures, game, self.history, tt_move);
+        while let Some((mv, _)) = picker.next() {
+            // for mv in captures {
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
             local_pv.clear();
 
@@ -1493,97 +1503,6 @@ fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &Principal
             game.to_fen()
         );
         game.make_move(*local_pv_mv);
-    }
-}
-
-/// This table represents values for [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) move ordering.
-///
-/// It is indexed by `[attacker][victim]`, and yields a "score" that is used when sorting moves.
-///
-/// The following table is produced:
-/// ```text
-///                     VICTIM
-/// A       P     N     B     R     Q     K     
-/// T    +---------------------------------+
-/// T   P| 900   3100  3200  4900  8900  0     
-/// A   N| 680   2880  2980  4680  8680  0     
-/// C   B| 670   2870  2970  4670  8670  0     
-/// K   R| 500   2700  2800  4500  8500  0     
-/// E   Q| 100   2300  2400  4100  8100  0     
-/// R   K| 1000  3200  3300  5000  9000  0     
-/// ```
-///
-/// Note that the actual table is different, as it has size `12x12` instead of `6x6`
-/// to account for the fact that castling is denoted as `KxR`.
-/// The values are also all left-shifted by 16 bits, to ensure that captures are ranked above quiets in all cases.
-///
-/// See [`print_mvv_lva_table`] to display this table.
-const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
-    let mut matrix = [[0; Piece::COUNT]; Piece::COUNT];
-    let count = Piece::COUNT;
-
-    let mut attacker = 0;
-    while attacker < count {
-        let mut victim = 0;
-        let atk_color = Color::from_bool(attacker < PieceKind::COUNT);
-
-        while victim < count {
-            let atk = PieceKind::from_bits_unchecked(attacker as u8 % 6);
-            let vtm = PieceKind::from_bits_unchecked(victim as u8 % 6);
-
-            let vtm_color = Color::from_bool(victim < PieceKind::COUNT);
-
-            // Remove scores for capturing the King and friendly pieces (KxR for castling)
-            let can_capture = (atk_color.index() != vtm_color.index()) // Different colors
-                && victim != count - 1 // Can't capture White King
-                && victim != PieceKind::COUNT - 1; // Can't capture Black King
-
-            // Rustic's way of doing things; Arbitrary increasing numbers for capturing pairs
-            // bench: 27609398 nodes 5716479 nps
-            // let score = (victim * 10 + (count - attacker)) as i32;
-
-            // Default MVV-LVA except that the King is assigned a value of 0 if he is attacking
-            // bench: 27032804 nodes 8136592 nps
-            let score = 10 * vtm.value() - atk.value();
-
-            // If the attacker is the King, the score is half the victim's value.
-            // This encourages the King to attack, but not as strongly as other pieces.
-            // bench: 27107011 nodes 5647285 nps
-            // let score = if attacker == count - 1 {
-            //     value_of(vtm) / 2
-            // } else {
-            //     // Standard MVV-LVA computation
-            //     10 * value_of(vtm) - value_of(atk)
-            // };
-
-            // Shift the value by a large amount so that captures are always ranked very highly
-            matrix[attacker][victim] = (score * can_capture as i32) << 16;
-            victim += 1;
-        }
-        attacker += 1;
-    }
-    matrix
-};
-
-/// Utility function to print the MVV-LVA table
-#[allow(dead_code)]
-pub fn print_mvv_lva_table() {
-    print!("\nX  ");
-    for victim in Piece::all() {
-        print!("{victim}     ");
-    }
-    print!("\n +");
-    for _ in Piece::all() {
-        print!("------");
-    }
-    println!("-+");
-    for attacker in Piece::all() {
-        print!("{attacker}| ");
-        for victim in Piece::all() {
-            let score = MVV_LVA[attacker][victim];
-            print!("{score:<4}  ")
-        }
-        println!();
     }
 }
 
