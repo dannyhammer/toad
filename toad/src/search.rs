@@ -920,18 +920,14 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             return Ok(score);
         }
 
-        // If there are no legal moves, it's either mate or a draw.
-        let mut moves = game.get_legal_moves();
-        if moves.is_empty() {
-            return Ok(-Score::MATE * game.is_in_check());
-        }
-
         // Sort moves so that we look at "promising" ones first
+        let mut moves = game.get_legal_moves();
         moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         // Start with a *really bad* initial score
         let mut best = -Score::INF;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
+        let mut moves_made = 0;
         let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
@@ -958,6 +954,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Copy-make the new position
             let new = game.with_move_made(*mv);
+            moves_made += 1;
             let mut score = Score::DRAW;
 
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
@@ -1082,6 +1079,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             }
         }
 
+        // If no legal moves were made, we're either in checkmate or stalemate.
+        if moves_made == 0 {
+            return Ok(-Score::MATE * game.is_in_check());
+        }
+
         // Adjust mate score by 1 ply, since we're returning up the call stack
         if best.is_mate() {
             best -= best.signum();
@@ -1156,17 +1158,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             .into_iter()
             .filter(Move::is_capture)
             .collect::<MoveList>();
-
-        // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
-        // So, if there are no captures available, just return the current evaluation.
-        if moves.is_empty() {
-            return Ok(static_eval);
-        }
-
         moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         let mut best = static_eval;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
+        let mut moves_made = 0;
         let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
@@ -1179,6 +1175,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Copy-make the new position
             let new = game.with_move_made(mv);
+            moves_made += 1;
             let mut score = Score::DRAW;
 
             /****************************************************************************************************
@@ -1222,6 +1219,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     break;
                 }
             }
+        }
+
+        // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
+        // So, if there are no captures available, just return the current evaluation.
+        if moves_made == 0 {
+            return Ok(static_eval);
         }
 
         // Adjust mate score by 1 ply, since we're returning up the call stack
