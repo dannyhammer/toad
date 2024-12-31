@@ -27,7 +27,7 @@ use crate::{
 };
 
 /// Default depth at which to run the benchmark searches.
-const BENCH_DEPTH: u8 = 9;
+const BENCH_DEPTH: u8 = 13;
 
 /// The Toad chess engine.
 #[derive(Debug)]
