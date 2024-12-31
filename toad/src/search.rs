@@ -943,7 +943,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * methods like RFP, and less aggressive with forward pruning methods like FP.
          ****************************************************************************************************/
         let improving = if ply > 2 && !game.is_in_check() {
-            self.stack[ply]
+            self.stack[ply - 2]
                 .map(|ss_entry| game.eval() > ss_entry.eval)
                 .unwrap_or(false)
         } else {
