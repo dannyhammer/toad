@@ -114,7 +114,7 @@ pub(crate) use nmp_reduction;
 /// Maximum depth at which to apply reverse futility pruning.
 macro_rules! max_rfp_depth {
     () => {
-        500
+        600
     };
 }
 pub(crate) use max_rfp_depth;
@@ -122,7 +122,7 @@ pub(crate) use max_rfp_depth;
 /// Safety margin when applying reverse futility pruning.
 macro_rules! rfp_margin {
     () => {
-        75
+        70
     };
 }
 pub(crate) use rfp_margin;
