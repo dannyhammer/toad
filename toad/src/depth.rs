@@ -4,7 +4,10 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use std::{fmt, ops::AddAssign};
+use std::{
+    fmt,
+    ops::{AddAssign, Index, IndexMut},
+};
 
 /// A representation of the vertical distance between nodes in a search tree.
 ///
@@ -54,6 +57,28 @@ impl Ply {
     #[inline(always)]
     pub fn rounded(&self) -> i32 {
         (self.0 as f32 / Self::GRAIN as f32).round() as i32
+    }
+}
+
+impl<T, const N: usize> Index<Ply> for [T; N] {
+    type Output = T;
+    #[inline(always)]
+    fn index(&self, index: Ply) -> &Self::Output {
+        self.index(index.plies() as usize)
+    }
+}
+
+impl<T, const N: usize> IndexMut<Ply> for [T; N] {
+    #[inline(always)]
+    fn index_mut(&mut self, index: Ply) -> &mut Self::Output {
+        self.index_mut(index.plies() as usize)
+    }
+}
+
+impl From<bool> for Ply {
+    #[inline(always)]
+    fn from(value: bool) -> Self {
+        Self::new(value as i32)
     }
 }
 

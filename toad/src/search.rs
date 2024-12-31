@@ -514,6 +514,14 @@ impl Default for SearchParameters {
     }
 }
 
+/// An entry in the search stack which collects information about each ply in the search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SearchStackEntry {
+    /// Static evaluation of the node.
+    eval: Score,
+    // mv: Move,
+}
+
 /// Executes a search on a game of chess.
 pub struct Search<'a, Log, V> {
     /// An atomic flag to determine if the search should be cancelled at any time.
@@ -538,6 +546,9 @@ pub struct Search<'a, Log, V> {
 
     /// Parameters for search features like pruning, extensions, etc.
     params: SearchParameters,
+
+    /// Information gathered at different levels of the search tree.
+    stack: [Option<SearchStackEntry>; Ply::MAX.plies() as usize],
 
     /// Marker for what variant of Chess is being played.
     variant: PhantomData<V>,
@@ -564,6 +575,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             ttable,
             history,
             params,
+            stack: [const { None }; Ply::MAX.plies() as usize],
             result: SearchResult::default(),
             variant: PhantomData,
             log: PhantomData,
@@ -913,9 +925,34 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             return self.quiescence::<Node>(game, ply, bounds, pv);
         }
 
+        // Store the static eval of this ply in the search stack.
+        let static_eval = game.eval();
+        if let Some(ss_entry) = &mut self.stack[ply] {
+            ss_entry.eval = static_eval;
+        } else {
+            self.stack[ply] = Some(SearchStackEntry { eval: static_eval });
+        }
+
+        /****************************************************************************************************
+         * Improving: https://www.chessprogramming.org/Improving
+         *
+         * Check if our static eval has improved since our last turn.
+         * This is a useful factor in many heuristics throughout the search, as it tells us if we can be more
+         * aggressive (or need to be less aggressive) with some pruning techniques.
+         * Generally speaking, if `improving := true`, we want to be more aggressive with reverse pruning
+         * methods like RFP, and less aggressive with forward pruning methods like FP.
+         ****************************************************************************************************/
+        let improving = if ply > 2 && !game.is_in_check() {
+            self.stack[ply]
+                .map(|ss_entry| game.eval() > ss_entry.eval)
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
         // If we CAN prune this node by means other than the TT, do so.
         if let Some(score) =
-            self.node_pruning_score::<Node>(game, depth, ply, bounds, pv, &mut local_pv)?
+            self.node_pruning_score::<Node>(game, depth, ply, bounds, improving, pv, &mut local_pv)?
         {
             return Ok(score);
         }
@@ -1354,12 +1391,14 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     ///
     /// If we cannot prune the node, this function returns `None`.
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn node_pruning_score<Node: NodeType>(
         &mut self,
         game: &Game<V>,
         depth: Ply,
         ply: Ply,
         bounds: SearchBounds,
+        _improving: bool,
         pv: &mut PrincipalVariation,
         local_pv: &mut PrincipalVariation,
     ) -> Result<Option<Score>, SearchCancelled> {
