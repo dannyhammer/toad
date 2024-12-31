@@ -928,12 +928,14 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         let mut best = -Score::INF;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let mut moves_made = 0;
+        let mut fail_low_quiets = MoveList::default();
         let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
          * Primary move loop
          ****************************************************************************************************/
 
+        // let mut searched = 0;
         for (i, mv) in moves.iter().enumerate() {
             /****************************************************************************************************
              * Move-Loop Pruning techniques
@@ -1031,6 +1033,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                 // Pop the move from the history
                 self.prev_positions.pop();
+                // searched += 1;
             }
 
             /****************************************************************************************************
@@ -1040,42 +1043,53 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             // If we've found a better move than our current best, update the results
             if score > best {
                 best = score;
+            }
 
-                // PV found
-                if score > bounds.alpha {
-                    bounds.alpha = score;
-                    bestmove = Some(*mv);
+            // If we've found something that beats alpha, it becomes our new principal variation.
+            if score > bounds.alpha {
+                bounds.alpha = score;
+                bestmove = Some(*mv);
 
-                    // Only extend the PV if we're in a PV node
-                    if Node::PV {
-                        // assert_pv_is_legal(game, *mv, &local_pv);
-                        pv.extend(*mv, &local_pv);
-                    }
+                // Only extend the PV if we're in a PV node
+                if Node::PV {
+                    // assert_pv_is_legal(game, *mv, &local_pv);
+                    pv.extend(*mv, &local_pv);
                 }
+            }
 
-                // Fail high
-                if score >= bounds.beta {
-                    /****************************************************************************************************
-                     * History Heuristic
-                     *
-                     * If a quiet move fails high, it is probably a good move. Therefore we want to look at it early on
-                     * in future searches. We also penalize previously-searched quiets, since they are clearly not as good
-                     * as this one (as they did not cause a beta cutoff).
-                     ****************************************************************************************************/
-                    // Simple bonus based on depth
-                    let bonus = self.params.history_multiplier * depth - self.params.history_offset;
+            // If a score beats beta, this node is said to "fail high" and it can be pruned
+            if score >= bounds.beta {
+                break;
+            }
 
-                    // Only update quiet moves
-                    if mv.is_quiet() {
-                        self.history.update(game, mv, bonus);
-                    }
+            // Track all moves that failed low
+            if Some(*mv) != bestmove && mv.is_quiet() {
+                fail_low_quiets.push(*mv);
+            }
+        }
 
-                    // Apply a penalty to all quiets searched so far
-                    for mv in moves[..i].iter().filter(|mv| mv.is_quiet()) {
-                        self.history.update(game, mv, -bonus);
-                    }
-                    break;
-                }
+        if let Some(bestmove) = bestmove.as_ref() {
+            /****************************************************************************************************
+             * History Heuristic
+             *
+             * If a quiet move fails high, it is probably a good move. Therefore we want to look at it early on
+             * in future searches. We also penalize previously-searched quiets, since they are clearly not as good
+             * as this one (as they did not cause a beta cutoff).
+             ****************************************************************************************************/
+            // Simple bonus based on depth
+            let bonus = self.params.history_multiplier * depth - self.params.history_offset;
+
+            // Only update quiet moves
+            if bestmove.is_quiet() {
+                self.history.update(game, bestmove, bonus);
+            }
+
+            // Apply a penalty to all quiets searched so far
+            // for mv in moves[..moves_made].iter().filter(|mv| mv.is_quiet()) {
+            // for mv in moves[..searched].iter().filter(|mv| mv.is_quiet()) {
+            // for mv in moves.iter().filter(|mv| mv.is_quiet()) {
+            for mv in fail_low_quiets.iter() {
+                self.history.update(game, mv, -bonus);
             }
         }
 
