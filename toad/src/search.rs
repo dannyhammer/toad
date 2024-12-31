@@ -988,6 +988,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                  ****************************************************************************************************/
                 let min_lmp_moves =
                     self.params.lmp_multiplier * moves.len() / self.params.lmp_divisor;
+                let min_lmp_moves = min_lmp_moves
+                    // .checked_add(improving as usize) // Prune fewer late moves when improving
+                    .checked_sub(!improving as usize) // Prune more late moves when NOT improving
+                    .unwrap_or(min_lmp_moves);
                 if depth <= self.params.max_lmp_depth && i >= min_lmp_moves {
                     break;
                 }
@@ -1398,7 +1402,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         depth: Ply,
         ply: Ply,
         bounds: SearchBounds,
-        improving: bool,
+        _improving: bool,
         pv: &mut PrincipalVariation,
         local_pv: &mut PrincipalVariation,
     ) -> Result<Option<Score>, SearchCancelled> {
@@ -1431,7 +1435,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * If our static eval is too good (better than beta), we can prune this branch. Multiplying our
          * margin by depth makes this pruning process less risky for higher depths.
          ****************************************************************************************************/
-        let rfp_score = static_eval - self.params.rfp_margin * (depth + Ply::from(improving));
+        let rfp_score = static_eval - self.params.rfp_margin * depth;
         if depth <= self.params.max_rfp_depth && rfp_score >= bounds.beta {
             return Ok(Some(rfp_score));
         }
