@@ -847,7 +847,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
              ****************************************************************************************************/
             // Clamp the bounds to a mate-in-`ply` score, if possible.
             bounds.alpha = bounds.alpha.max(Score::mated_in(ply));
-            bounds.beta = bounds.beta.min(Score::mate_in(ply - 1));
+            bounds.beta = bounds.beta.min(Score::mate_in(ply + 1));
 
             // Prune this node if no shorter mate has been found.
             if bounds.alpha >= bounds.beta {
