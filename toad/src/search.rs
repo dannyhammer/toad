@@ -515,7 +515,7 @@ impl Default for SearchParameters {
 }
 
 /// An entry in the search stack which collects information about each ply in the search.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct SearchStackEntry {
     /// Static evaluation of the node.
     eval: Score,
@@ -548,7 +548,7 @@ pub struct Search<'a, Log, V> {
     params: SearchParameters,
 
     /// Information gathered at different levels of the search tree.
-    stack: [Option<SearchStackEntry>; Ply::MAX.plies() as usize],
+    stack: [SearchStackEntry; Ply::MAX.plies() as usize],
 
     /// Marker for what variant of Chess is being played.
     variant: PhantomData<V>,
@@ -575,7 +575,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             ttable,
             history,
             params,
-            stack: [const { None }; Ply::MAX.plies() as usize],
+            stack: [SearchStackEntry::default(); Ply::MAX.plies() as usize],
             result: SearchResult::default(),
             variant: PhantomData,
             log: PhantomData,
@@ -927,11 +927,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Store the static eval of this ply in the search stack.
         let static_eval = game.eval();
-        if let Some(ss_entry) = &mut self.stack[ply] {
-            ss_entry.eval = static_eval;
-        } else {
-            self.stack[ply] = Some(SearchStackEntry { eval: static_eval });
-        }
+        self.stack[ply].eval = static_eval;
 
         /****************************************************************************************************
          * Improving: https://www.chessprogramming.org/Improving
@@ -943,9 +939,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * methods like RFP, and less aggressive with forward pruning methods like FP.
          ****************************************************************************************************/
         let improving = if ply > 2 && !game.is_in_check() {
-            self.stack[ply - 2]
-                .map(|ss_entry| game.eval() > ss_entry.eval)
-                .unwrap_or(false)
+            static_eval > self.stack[ply - 2].eval
         } else {
             false
         };
