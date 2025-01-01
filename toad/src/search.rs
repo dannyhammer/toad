@@ -927,9 +927,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Start with a *really bad* initial score
         let mut best = -Score::INF;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
+        let mut beta_cutoff_move = None;
         let mut moves_made = 0;
-        let mut fail_low_quiets = MoveList::default();
-        let mut beta_cutoff = false;
+        let mut low_failing_quiets = MoveList::default();
         let original_alpha = bounds.alpha;
 
         /****************************************************************************************************
@@ -1060,39 +1060,37 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // If a score beats beta, this node is said to "fail high" and it can be pruned
             if score >= bounds.beta {
-                beta_cutoff = true;
+                beta_cutoff_move = Some(*mv);
                 break;
             }
 
-            // Track all moves that failed low
+            // // Track all moves that failed low
             if Some(*mv) != bestmove && mv.is_quiet() {
-                fail_low_quiets.push(*mv);
+                low_failing_quiets.push(*mv);
             }
         }
 
-        let bonus = self.params.history_multiplier * depth - self.params.history_offset;
-        if let Some(bestmove) = bestmove.as_ref() {
-            /****************************************************************************************************
-             * History Heuristic
-             *
-             * If a quiet move fails high, it is probably a good move. Therefore we want to look at it early on
-             * in future searches. We also penalize previously-searched quiets, since they are clearly not as good
-             * as this one (as they did not cause a beta cutoff).
-             ****************************************************************************************************/
+        /****************************************************************************************************
+         * History Heuristic
+         *
+         * If a quiet move fails high, it is probably a good move. Therefore we want to look at it early on
+         * in future searches. We also penalize previously-searched quiets, since they are clearly not as good
+         * as this one (as they did not cause a beta cutoff).
+         ****************************************************************************************************/
+        if let Some(bco_mv) = beta_cutoff_move.as_ref() {
             // Simple bonus based on depth
+            let bonus = self.params.history_multiplier * depth - self.params.history_offset;
 
             // Only update quiet moves
-            if bestmove.is_quiet() {
-                self.history.update(game, bestmove, bonus);
+            if bco_mv.is_quiet() {
+                self.history.update(game, bco_mv, bonus);
             }
-        }
 
-        // Apply a penalty to all quiets searched so far
-        if beta_cutoff {
+            // Apply a penalty to all quiets searched so far
             // for mv in moves[..moves_made].iter().filter(|mv| mv.is_quiet()) {
             // for mv in moves[..searched].iter().filter(|mv| mv.is_quiet()) {
             // for mv in moves.iter().filter(|mv| mv.is_quiet()) {
-            for mv in fail_low_quiets.iter() {
+            for mv in low_failing_quiets.iter() {
                 self.history.update(game, mv, -bonus);
             }
         }
