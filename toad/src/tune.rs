@@ -23,7 +23,7 @@ pub(crate) use soft_timeout_divisor;
 /// Divisor for computing the hard timeout of a search.
 macro_rules! hard_timeout_divisor {
     () => {
-        5
+        3
     };
 }
 pub(crate) use hard_timeout_divisor;
@@ -98,23 +98,23 @@ pub(crate) use history_offset;
 /// Minimum depth at which null move pruning can be applied.
 macro_rules! min_nmp_depth {
     () => {
-        3
+        300
     };
 }
 pub(crate) use min_nmp_depth;
 
 /// Value to subtract from `depth` when applying null move pruning.
-macro_rules! nmp_reduction_value {
+macro_rules! nmp_reduction {
     () => {
-        3
+        300
     };
 }
-pub(crate) use nmp_reduction_value;
+pub(crate) use nmp_reduction;
 
 /// Maximum depth at which to apply reverse futility pruning.
 macro_rules! max_rfp_depth {
     () => {
-        5
+        600
     };
 }
 pub(crate) use max_rfp_depth;
@@ -122,15 +122,23 @@ pub(crate) use max_rfp_depth;
 /// Safety margin when applying reverse futility pruning.
 macro_rules! rfp_margin {
     () => {
-        75
+        70
     };
 }
 pub(crate) use rfp_margin;
 
+/// Maximum depth at which to apply late move pruning.
+macro_rules! max_lmp_depth {
+    () => {
+        300
+    };
+}
+pub(crate) use max_lmp_depth;
+
 /// Minimum depth at which to apply late move reductions.
 macro_rules! min_lmr_depth {
     () => {
-        3
+        300
     };
 }
 pub(crate) use min_lmr_depth;
@@ -158,3 +166,75 @@ macro_rules! lmr_divisor {
     };
 }
 pub(crate) use lmr_divisor;
+
+/// Value to multiply depth by when computing razoring margin.
+macro_rules! razoring_multiplier {
+    () => {
+        128
+    };
+}
+pub(crate) use razoring_multiplier;
+
+/// Value to subtract from alpha bound when computing a razoring margin.
+macro_rules! razoring_offset {
+    () => {
+        256
+    };
+}
+pub(crate) use razoring_offset;
+
+/// Depth to extend by for check extensions.
+macro_rules! check_extensions_depth {
+    () => {
+        100
+    };
+}
+pub(crate) use check_extensions_depth;
+
+/// Maximum depth at which razoring can be applied.
+macro_rules! max_razoring_depth {
+    () => {
+        200
+    };
+}
+pub(crate) use max_razoring_depth;
+
+/// Multiplier for the LMP formula.
+macro_rules! lmp_multiplier {
+    () => {
+        1
+    };
+}
+pub(crate) use lmp_multiplier;
+
+/// Divisor for the LMP formula.
+macro_rules! lmp_divisor {
+    () => {
+        3
+    };
+}
+pub(crate) use lmp_divisor;
+
+/// Minimum depth at which IIR can be performed
+macro_rules! min_iir_depth {
+    () => {
+        500
+    };
+}
+pub(crate) use min_iir_depth;
+
+/// Minimum depth at which IID can be performed
+macro_rules! min_iid_depth {
+    () => {
+        400
+    };
+}
+pub(crate) use min_iid_depth;
+
+/// Offset to subtract from depth during IID.
+macro_rules! iid_offset {
+    () => {
+        200
+    };
+}
+pub(crate) use iid_offset;

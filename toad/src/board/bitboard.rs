@@ -12,7 +12,7 @@ use std::{
 
 use anyhow::{anyhow, bail};
 
-use super::{Color, File, Rank, SmallDisplayTable, Square};
+use crate::{Color, File, Rank, SmallDisplayTable, Square};
 
 /// A [`Bitboard`] represents the game board as a set of bits.
 /// They are used for various computations, such as fetching valid moves or computing move costs.

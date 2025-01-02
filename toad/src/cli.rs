@@ -19,12 +19,6 @@ use uci_parser::UciCommand;
     override_usage("<ENGINE COMMAND> | <UCI COMMAND>")
 )]
 pub enum EngineCommand {
-    /// Await the current search, blocking until it completes.
-    ///
-    /// This is primarily used when executing searches on startup,
-    /// to await their results before doing something else.
-    Await,
-
     /// Run a benchmark with the provided parameters.
     Bench {
         /// If set, the benchmarking results will be printed in a well-formatted table.
@@ -104,6 +98,9 @@ pub enum EngineCommand {
     /// Performs a perft on the current position at the supplied depth, printing total node count.
     Perft { depth: usize },
 
+    /// Place a piece on the provided square.
+    Place { piece: Piece, square: Square },
+
     /// Outputs the Piece-Square table value for the provided piece at the provided square, scaled with the endgame weight.
     ///
     /// If no square was provided, the entire table(s) will be printed.
@@ -124,9 +121,18 @@ pub enum EngineCommand {
     #[command(alias = "sperft")]
     Splitperft { depth: usize },
 
+    /// Remove the piece at the provided square.
+    Take { square: Square },
+
     /// Wrapper over UCI commands sent to the engine.
     #[command(skip)]
     Uci { cmd: UciCommand },
+
+    /// Await the current search, blocking until it completes.
+    ///
+    /// This is primarily used when executing searches on startup,
+    /// to await their results before doing something else.
+    Wait,
 }
 
 impl FromStr for EngineCommand {

@@ -6,12 +6,16 @@
 
 /// Commands to be sent to the engine, and how to parse them.
 mod cli;
+/// Types and utilities for measuring the vertical distance between nodes in a search.
+mod depth;
 /// Code related to the engine's functionality, such as user input handling.
 mod engine;
+/// Static evaluation of a given board state and the types used to compute it, such as piece-square tables.
+mod eval;
+/// A chessboard, complete with piece placements, game state, legality checks, etc.
+mod game;
 /// Hash table for History Heuristic.
 mod history;
-/// Piece-Square tables.
-mod psqt;
 /// Types and utilities for rating how good/bad a position is.
 mod score;
 /// Main engine logic; all search related code.
@@ -35,8 +39,6 @@ mod board {
     mod perft;
     /// Enums for piece kinds, colors, and a struct for a chess piece.
     mod piece;
-    /// A chessboard, complete with piece placements, game state, legality checks, etc.
-    mod position;
     /// Pseudo-random number generation, written to be usable in `const` settings.
     ///
     /// Primarily for Zobrist hashing and magic generation.
@@ -53,7 +55,6 @@ mod board {
     pub use moves::*;
     pub use perft::*;
     pub use piece::*;
-    pub use position::*;
     pub use prng::*;
     pub use square::*;
     pub use table::*;
@@ -62,9 +63,11 @@ mod board {
 
 pub use board::*;
 pub use cli::*;
+use depth::*;
 pub use engine::*;
+pub use eval::*;
+pub use game::*;
 use history::*;
-use psqt::*;
 use score::*;
 use search::*;
 use ttable::*;
