@@ -1,9 +1,14 @@
 {
     "packages": {
         "toad": {
-            "release-type": "rust"
+            "release-type": "rust",
+            "component": "toad"
         }
     },
-    "plugins": ["cargo-workspace"],
-    "release-type": "rust"
+    "plugins": [
+        {
+            "type": "cargo-workspace",
+            "merge": false
+        }
+    ]
 }
