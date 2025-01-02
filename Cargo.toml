@@ -1,12 +1,11 @@
 [workspace]
 members = ["toad"]
 resolver = "2"
-name = "toad-chess-engine"
+name = "toad-chess"
 version = "2.0.0"
 edition = "2021"
 authors = ["Danny Hammer <hammerapi@gmail.com>"]
 license = "MPL-2.0"
-description = "A toy chess engine, and extra utilities"
 repository = "https://github.com/dannyhammer/toad"
 homepage = "https://github.com/dannyhammer/toad"
 keywords = ["chess", "chess-engine", "uci"]
