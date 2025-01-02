@@ -1,0 +1,7 @@
+{
+    "packages": {
+        "toad": {}
+    },
+    "plugins": ["cargo-workspace"],
+    "release-type": "rust"
+}
