@@ -823,6 +823,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     ) -> Result<Score, SearchCancelled> {
         self.search_cancelled()?; // Exit early if search is terminated.
 
+        // Don't bother searching drawn positions, unless we're at the root node.
+        if !Node::ROOT && self.is_draw(game) {
+            return Ok(Score::DRAW);
+        }
+
         /****************************************************************************************************
          * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
          *
@@ -961,39 +966,27 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             /****************************************************************************************************
              * Recursion of the search
              ****************************************************************************************************/
-            // Don't bother searching drawn positions.
-            if !self.is_draw(&new) {
-                // Append this position onto our stack, so we can detect repetitions
-                self.prev_positions.push(*new.position());
+            // Append this position onto our stack, so we can detect repetitions
+            self.prev_positions.push(*new.position());
 
-                let new_depth = depth - 1 + self.extension_value(&new);
+            let new_depth = depth - 1 + self.extension_value(&new);
 
-                // If this node can be reduced, search it with a reduced window.
-                if let Some(lmr_reduction) = self.reduction_value::<Node>(depth, &new, i) {
-                    // Reduced depth should never exceed `new_depth` and should never be less than `1`.
-                    let reduced_depth = (new_depth - lmr_reduction).max(Ply::ONE).min(new_depth);
+            // If this node can be reduced, search it with a reduced window.
+            if let Some(lmr_reduction) = self.reduction_value::<Node>(depth, &new, i) {
+                // Reduced depth should never exceed `new_depth` and should never be less than `1`.
+                let reduced_depth = (new_depth - lmr_reduction).max(Ply::ONE).min(new_depth);
 
-                    // Search at a reduced depth with a null window
-                    score = -self.negamax::<NonPvNode>(
-                        &new,
-                        reduced_depth,
-                        ply + 1,
-                        -bounds.null_alpha(),
-                        &mut local_pv,
-                    )?;
+                // Search at a reduced depth with a null window
+                score = -self.negamax::<NonPvNode>(
+                    &new,
+                    reduced_depth,
+                    ply + 1,
+                    -bounds.null_alpha(),
+                    &mut local_pv,
+                )?;
 
-                    // If that failed *high* (raised alpha), re-search at the full depth with the null window
-                    if score > bounds.alpha && reduced_depth < new_depth {
-                        score = -self.negamax::<NonPvNode>(
-                            &new,
-                            new_depth,
-                            ply + 1,
-                            -bounds.null_alpha(),
-                            &mut local_pv,
-                        )?;
-                    }
-                } else if !Node::PV || i > 0 {
-                    // All non-PV nodes get searched with a null window
+                // If that failed *high* (raised alpha), re-search at the full depth with the null window
+                if score > bounds.alpha && reduced_depth < new_depth {
                     score = -self.negamax::<NonPvNode>(
                         &new,
                         new_depth,
@@ -1002,34 +995,38 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                         &mut local_pv,
                     )?;
                 }
-
-                /****************************************************************************************************
-                 * Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
-                 *
-                 * We assume our move ordering is so good that the first move searched is then best available. So,
-                 * for every other move, we search with a null window and thus prune nodes easier. If we find
-                 * something that beats the null window, we have to do a costly re-search. However, this happens so
-                 * infrequently in practice that it ends up being an overall speedup.
-                 ****************************************************************************************************/
-                // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
-                if Node::PV && (i == 0 || score > bounds.alpha) {
-                    score = -self.negamax::<PvNode>(
-                        &new,
-                        new_depth,
-                        ply + 1,
-                        -bounds,
-                        &mut local_pv,
-                    )?;
-                }
-
-                self.search_cancelled()?; // Exit early if search is terminated.
-
-                // We've now searched this node
-                self.result.nodes += 1;
-
-                // Pop the move from the history
-                self.prev_positions.pop();
+            } else if !Node::PV || i > 0 {
+                // All non-PV nodes get searched with a null window
+                score = -self.negamax::<NonPvNode>(
+                    &new,
+                    new_depth,
+                    ply + 1,
+                    -bounds.null_alpha(),
+                    &mut local_pv,
+                )?;
             }
+
+            /****************************************************************************************************
+             * Principal Variation Search: https://en.wikipedia.org/wiki/Principal_variation_search#Pseudocode
+             *
+             * We assume our move ordering is so good that the first move searched is then best available. So,
+             * for every other move, we search with a null window and thus prune nodes easier. If we find
+             * something that beats the null window, we have to do a costly re-search. However, this happens so
+             * infrequently in practice that it ends up being an overall speedup.
+             ****************************************************************************************************/
+            // If searching the PV, or if a reduced search failed *high*, we search with a full depth and window
+            if Node::PV && (i == 0 || score > bounds.alpha) {
+                score =
+                    -self.negamax::<PvNode>(&new, new_depth, ply + 1, -bounds, &mut local_pv)?;
+            }
+
+            self.search_cancelled()?; // Exit early if search is terminated.
+
+            // We've now searched this node
+            self.result.nodes += 1;
+
+            // Pop the move from the history
+            self.prev_positions.pop();
 
             /****************************************************************************************************
              * Score evaluation & bounds adjustments
@@ -1107,6 +1104,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
     ) -> Result<Score, SearchCancelled> {
         self.search_cancelled()?; // Exit early if search is terminated.
 
+        // Don't bother searching drawn positions, unless we're at the root node.
+        if !Node::ROOT && self.is_draw(game) {
+            return Ok(Score::DRAW);
+        }
+
         // Record the max max height / max ply / seldepth
         self.result.seldepth = self.result.seldepth.max(ply) * !Node::ROOT as i32;
 
@@ -1174,24 +1176,20 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // Copy-make the new position
             let new = game.with_move_made(mv);
-            let mut score = Score::DRAW;
 
             /****************************************************************************************************
              * Recursion of the search
              ****************************************************************************************************/
-            // Don't bother searching drawn positions.
-            if !self.is_draw(&new) {
-                // Append this position onto our stack, so we can detect repetitions
-                self.prev_positions.push(*new.position());
+            // Append this position onto our stack, so we can detect repetitions
+            self.prev_positions.push(*new.position());
 
-                score = -self.quiescence::<Node>(&new, ply + 1, -bounds, &mut local_pv)?;
+            let score = -self.quiescence::<Node>(&new, ply + 1, -bounds, &mut local_pv)?;
 
-                self.search_cancelled()?; // Exit early if search is terminated.
+            self.search_cancelled()?; // Exit early if search is terminated.
 
-                self.result.nodes += 1; // We've now searched this node
+            self.result.nodes += 1; // We've now searched this node
 
-                self.prev_positions.pop();
-            }
+            self.prev_positions.pop();
 
             /****************************************************************************************************
              * Score evaluation & bounds adjustments
