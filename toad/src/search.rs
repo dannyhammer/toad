@@ -961,8 +961,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             /****************************************************************************************************
              * Recursion of the search
              ****************************************************************************************************/
-            // Don't bother searching drawn positions, unless we're in the root node.
-            if Node::ROOT || !self.is_draw(&new) {
+            // Don't bother searching drawn positions.
+            if !self.is_draw(&new) {
                 // Append this position onto our stack, so we can detect repetitions
                 self.prev_positions.push(*new.position());
 
@@ -1179,8 +1179,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             /****************************************************************************************************
              * Recursion of the search
              ****************************************************************************************************/
-            // Don't bother searching drawn positions, unless we're in the root node.
-            if Node::ROOT || !self.is_draw(&new) {
+            // Don't bother searching drawn positions.
+            if !self.is_draw(&new) {
                 // Append this position onto our stack, so we can detect repetitions
                 self.prev_positions.push(*new.position());
 
