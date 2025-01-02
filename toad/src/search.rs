@@ -824,6 +824,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         self.search_cancelled()?; // Exit early if search is terminated.
 
         /****************************************************************************************************
+         * Check Extensions: https://www.chessprogramming.org/Check_Extensions
+         *
+         * If we're in check, we should extend the search a bit, in hopes to find a good way to escape.
+         * We do this now instead of in the moves loop because we may want to avoid dropping into qsearch.
+         ****************************************************************************************************/
+        if game.is_in_check() {
+            depth += self.params.check_extensions_depth
+        }
+
+        /****************************************************************************************************
          * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
          *
          * In order to avoid the horizon effect, we don't stop searching at a depth of 0. Instead, we
@@ -966,7 +976,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // Append this position onto our stack, so we can detect repetitions
                 self.prev_positions.push(*new.position());
 
-                let new_depth = depth - 1 + self.extension_value(&new);
+                let new_depth = depth - 1;
 
                 // If this node can be reduced, search it with a reduced window.
                 if let Some(lmr_reduction) = self.reduction_value::<Node>(depth, &new, i) {
@@ -1468,23 +1478,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                 lmr_reduction
             })
-    }
-
-    /// Compute an extension value to apply to a given node's search depth.
-    #[inline(always)]
-    fn extension_value(&self, game: &Game<V>) -> Ply {
-        let mut extension = Ply::ZERO;
-
-        /****************************************************************************************************
-         * Check Extensions: https://www.chessprogramming.org/Check_Extensions
-         *
-         * If we're in check, we should extend the search a bit, in hopes to find a good way to escape.
-         ****************************************************************************************************/
-        if game.is_in_check() {
-            extension += self.params.check_extensions_depth
-        }
-
-        extension
     }
 }
 
