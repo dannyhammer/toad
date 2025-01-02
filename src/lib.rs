@@ -16,6 +16,8 @@ mod eval;
 mod game;
 /// Hash table for History Heuristic.
 mod history;
+/// Used to choose the next move to examine during a search.
+mod movepicker;
 /// Types and utilities for rating how good/bad a position is.
 mod score;
 /// Main engine logic; all search related code.
@@ -68,6 +70,7 @@ pub use engine::*;
 pub use eval::*;
 pub use game::*;
 use history::*;
+use movepicker::*;
 use score::*;
 use search::*;
 use ttable::*;

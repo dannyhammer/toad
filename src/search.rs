@@ -20,8 +20,8 @@ use thiserror::Error;
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Ply, Position,
-    ProbeResult, Score, TTable, TTableEntry, Variant, ZobristKey, MAX_NUM_MOVES,
+    tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, MovePicker, Piece, PieceKind, Ply,
+    Position, ProbeResult, Score, TTable, TTableEntry, Variant, ZobristKey, MAX_NUM_MOVES,
 };
 
 /// Reasons that a search can be cancelled.
@@ -928,12 +928,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         let mut best = -Score::INF;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
+        let num_moves = moves.len();
 
         /****************************************************************************************************
          * Primary move loop
          ****************************************************************************************************/
-
-        for (i, mv) in moves.iter().enumerate() {
+        // let mut picker = MovePicker::new(moves, game, &self.history, tt_move);
+        // let mut i = 0;
+        // while let Some((mv, _)) = picker.next() {
+        // for (i, (mv, _)) in picker.enumerate() {
+        for (i, mv) in moves.iter().copied().enumerate() {
             /****************************************************************************************************
              * Move-Loop Pruning techniques
              ****************************************************************************************************/
@@ -945,14 +949,14 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                  * not even bother searching them.
                  ****************************************************************************************************/
                 let min_lmp_moves =
-                    self.params.lmp_multiplier * moves.len() / self.params.lmp_divisor;
+                    self.params.lmp_multiplier * num_moves / self.params.lmp_divisor;
                 if depth <= self.params.max_lmp_depth && i >= min_lmp_moves {
                     break;
                 }
             }
 
             // Copy-make the new position
-            let new = game.with_move_made(*mv);
+            let new = game.with_move_made(mv);
             let mut score = Score::DRAW;
 
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
@@ -1042,12 +1046,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 // PV found
                 if score > bounds.alpha {
                     bounds.alpha = score;
-                    bestmove = Some(*mv);
+                    bestmove = Some(mv);
 
                     // Only extend the PV if we're in a PV node
                     if Node::PV {
                         // assert_pv_is_legal(game, *mv, &local_pv);
-                        pv.extend(*mv, &local_pv);
+                        pv.extend(mv, &local_pv);
                     }
                 }
 
@@ -1065,11 +1069,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                     // Only update quiet moves
                     if mv.is_quiet() {
-                        self.history.update(game, mv, bonus);
+                        self.history.update(game, &mv, bonus);
                     }
 
                     // Apply a penalty to all quiets searched so far
                     for mv in moves[..i].iter().filter(|mv| mv.is_quiet()) {
+                        // for mv in picker.moves_so_far().iter().filter(|mv| mv.is_quiet()) {
                         self.history.update(game, mv, -bonus);
                     }
                     break;
@@ -1146,29 +1151,25 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Generate only the legal captures
         // TODO: Is there a more concise way of doing this?
         // The `game.into_iter().only_captures()` doesn't cover en passant...
-        let mut moves = game
+        let moves = game
             .get_legal_moves()
             .into_iter()
             .filter(Move::is_capture)
             .collect::<MoveList>();
 
-        // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
-        // So, if there are no captures available, just return the current evaluation.
-        if moves.is_empty() {
-            return Ok(static_eval);
-        }
-
-        moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
+        // moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
 
         let mut best = static_eval;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
+        let num_moves = moves.len();
 
         /****************************************************************************************************
          * Primary move loop
          ****************************************************************************************************/
-
-        for mv in moves {
+        let mut picker = MovePicker::new(moves, game, self.history, tt_move);
+        while let Some((mv, _)) = picker.next() {
+            // for mv in moves {
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
             local_pv.clear();
 
@@ -1217,6 +1218,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     break;
                 }
             }
+        }
+
+        // Can't check for mates in normal qsearch, since we're not looking at *all* moves.
+        // So, if there are no captures available, just return the current evaluation.
+        if num_moves == 0 {
+            return Ok(static_eval);
         }
 
         // Adjust mate score by 1 ply, since we're returning up the call stack
