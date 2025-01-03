@@ -6,15 +6,14 @@
 
 use std::{
     fmt,
-    marker::PhantomData,
     ops::{Deref, DerefMut},
 };
 
-use crate::{Color, Piece, PieceKind, Score, SmallDisplayTable, Square, Table, Variant};
+use crate::{Color, Game, Piece, PieceKind, Score, SmallDisplayTable, Square, Table, Variant};
 
 /// Piece-Square tables copied from [PeSTO](https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function#Source_Code)
 #[rustfmt::skip]
-const PAWN_MG: Psqt = Psqt::new(PieceKind::Pawn, [
+const PAWN_MG: Psqt = Psqt::new(PieceKind::Pawn, MG_PIECE_VALUES,[
       0,   0,   0,   0,   0,   0,  0,   0,
      98, 134,  61,  95,  68, 126, 34, -11,
      -6,   7,  26,  31,  65,  56, 25, -20,
@@ -26,7 +25,7 @@ const PAWN_MG: Psqt = Psqt::new(PieceKind::Pawn, [
 ]);
 
 #[rustfmt::skip]
-const PAWN_EG: Psqt = Psqt::new(PieceKind::Pawn, [
+const PAWN_EG: Psqt = Psqt::new(PieceKind::Pawn, EG_PIECE_VALUES, [
       0,   0,   0,   0,   0,   0,   0,   0,
     178, 173, 158, 134, 147, 132, 165, 187,
      94, 100,  85,  67,  56,  53,  82,  84,
@@ -38,7 +37,7 @@ const PAWN_EG: Psqt = Psqt::new(PieceKind::Pawn, [
 ]);
 
 #[rustfmt::skip]
-const KNIGHT_MG: Psqt = Psqt::new(PieceKind::Knight, [
+const KNIGHT_MG: Psqt = Psqt::new(PieceKind::Knight, MG_PIECE_VALUES, [
     -167, -89, -34, -49,  61, -97, -15, -107,
      -73, -41,  72,  36,  23,  62,   7,  -17,
      -47,  60,  37,  65,  84, 129,  73,   44,
@@ -50,7 +49,7 @@ const KNIGHT_MG: Psqt = Psqt::new(PieceKind::Knight, [
 ]);
 
 #[rustfmt::skip]
-const KNIGHT_EG: Psqt = Psqt::new(PieceKind::Knight, [
+const KNIGHT_EG: Psqt = Psqt::new(PieceKind::Knight, EG_PIECE_VALUES, [
     -58, -38, -13, -28, -31, -27, -63, -99,
     -25,  -8, -25,  -2,  -9, -25, -24, -52,
     -24, -20,  10,   9,  -1,  -9, -19, -41,
@@ -62,7 +61,7 @@ const KNIGHT_EG: Psqt = Psqt::new(PieceKind::Knight, [
 ]);
 
 #[rustfmt::skip]
-const BISHOP_MG: Psqt = Psqt::new(PieceKind::Bishop, [
+const BISHOP_MG: Psqt = Psqt::new(PieceKind::Bishop, MG_PIECE_VALUES, [
     -29,   4, -82, -37, -25, -42,   7,  -8,
     -26,  16, -18, -13,  30,  59,  18, -47,
     -16,  37,  43,  40,  35,  50,  37,  -2,
@@ -74,7 +73,7 @@ const BISHOP_MG: Psqt = Psqt::new(PieceKind::Bishop, [
 ]);
 
 #[rustfmt::skip]
-const BISHOP_EG: Psqt = Psqt::new(PieceKind::Bishop, [
+const BISHOP_EG: Psqt = Psqt::new(PieceKind::Bishop, EG_PIECE_VALUES, [
     -14, -21, -11,  -8, -7,  -9, -17, -24,
      -8,  -4,   7, -12, -3, -13,  -4, -14,
       2,  -8,   0,  -1, -2,   6,   0,   4,
@@ -86,7 +85,7 @@ const BISHOP_EG: Psqt = Psqt::new(PieceKind::Bishop, [
 ]);
 
 #[rustfmt::skip]
-const ROOK_MG: Psqt = Psqt::new(PieceKind::Rook, [
+const ROOK_MG: Psqt = Psqt::new(PieceKind::Rook, MG_PIECE_VALUES, [
      32,  42,  32,  51, 63,  9,  31,  43,
      27,  32,  58,  62, 80, 67,  26,  44,
      -5,  19,  26,  36, 17, 45,  61,  16,
@@ -98,7 +97,7 @@ const ROOK_MG: Psqt = Psqt::new(PieceKind::Rook, [
 ]);
 
 #[rustfmt::skip]
-const ROOK_EG: Psqt = Psqt::new(PieceKind::Rook, [
+const ROOK_EG: Psqt = Psqt::new(PieceKind::Rook, EG_PIECE_VALUES, [
     13, 10, 18, 15, 12,  12,   8,   5,
     11, 13, 13, 11, -3,   3,   8,   3,
      7,  7,  7,  5,  4,  -3,  -5,  -3,
@@ -110,7 +109,7 @@ const ROOK_EG: Psqt = Psqt::new(PieceKind::Rook, [
 ]);
 
 #[rustfmt::skip]
-const QUEEN_MG: Psqt = Psqt::new(PieceKind::Queen, [
+const QUEEN_MG: Psqt = Psqt::new(PieceKind::Queen, MG_PIECE_VALUES, [
     -28,   0,  29,  12,  59,  44,  43,  45,
     -24, -39,  -5,   1, -16,  57,  28,  54,
     -13, -17,   7,   8,  29,  56,  47,  57,
@@ -122,7 +121,7 @@ const QUEEN_MG: Psqt = Psqt::new(PieceKind::Queen, [
 ]);
 
 #[rustfmt::skip]
-const QUEEN_EG: Psqt = Psqt::new(PieceKind::Queen, [
+const QUEEN_EG: Psqt = Psqt::new(PieceKind::Queen, EG_PIECE_VALUES, [
      -9,  22,  22,  27,  27,  19,  10,  20,
     -17,  20,  32,  41,  58,  25,  30,   0,
     -20,   6,   9,  49,  47,  35,  19,   9,
@@ -134,7 +133,7 @@ const QUEEN_EG: Psqt = Psqt::new(PieceKind::Queen, [
 ]);
 
 #[rustfmt::skip]
-const KING_MG: Psqt = Psqt::new(PieceKind::King, [
+const KING_MG: Psqt = Psqt::new(PieceKind::King, MG_PIECE_VALUES, [
     -65,  23,  16, -15, -56, -34,   2,  13,
      29,  -1, -20,  -7,  -8,  -4, -38, -29,
      -9,  24,   2, -16, -20,   6,  22, -22,
@@ -146,7 +145,7 @@ const KING_MG: Psqt = Psqt::new(PieceKind::King, [
 ]);
 
 #[rustfmt::skip]
-const KING_EG: Psqt = Psqt::new(PieceKind::King, [
+const KING_EG: Psqt = Psqt::new(PieceKind::King, EG_PIECE_VALUES, [
     -74, -35, -18, -18, -11,  15,   4, -17,
     -12,  17,  14,  17,  17,  38,  23,  11,
      10,  17,  23,  15,  20,  45,  44,  13,
@@ -157,90 +156,69 @@ const KING_EG: Psqt = Psqt::new(PieceKind::King, [
     -53, -34, -21, -11, -28, -14, -24, -43
 ]);
 
-#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
-pub struct Evaluator<V> {
-    /// Material remaining on the board, for each side.
-    pub(crate) material: [i32; Color::COUNT],
+/// Piece values copied from [PeSTO](https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function#Source_Code)
+const MG_PIECE_VALUES: [i32; PieceKind::COUNT] = [82, 337, 365, 477, 1025, 0];
+const EG_PIECE_VALUES: [i32; PieceKind::COUNT] = [94, 281, 297, 512, 936, 0];
+const GAME_PHASE_INC: [i32; Piece::COUNT] = [
+    0, 1, 1, 2, 4, 0, // White
+    0, 1, 1, 2, 4, 0, // Black
+];
 
-    /// Mid-game and end-game evaluations of the board.
-    pub(crate) evals: (Score, Score),
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct Evaluator {}
 
-    /// Variant of chess being played.
-    variant: PhantomData<V>,
-}
-
-impl<V: Variant> Evaluator<V> {
-    /// Construct a new [`Evaluator`] instance.
-    #[inline(always)]
-    pub const fn new() -> Self {
-        Self {
-            material: [0; Color::COUNT],
-            evals: (Score::DRAW, Score::DRAW),
-            variant: PhantomData,
-        }
-    }
-
-    /// Evaluate this position from `color`'s perspective.
+impl Evaluator {
+    /// Evaluate the current position.
     ///
-    /// A positive/high number is good for the `color`, while a negative number is better for the opponent.
-    /// A score of 0 is considered equal.
+    /// Internally uses [PeSTO's evaluation function](https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function#Source_Code).
     #[inline(always)]
-    pub fn eval_for(&self, color: Color) -> Score {
-        self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color.negation_multiplier() as i32
+    pub fn eval_for<V: Variant>(game: &Game<V>, color: Color) -> Score {
+        let mut mg = [Score::DRAW; Color::COUNT];
+        let mut eg = [Score::DRAW; Color::COUNT];
+        let mut phase = 0;
+
+        // Evaluate each piece
+        for (square, piece) in game.iter() {
+            let (mg_psqt, eg_psqt) = Psqt::evals(piece, square);
+            mg[piece.color()] += mg_psqt;
+            eg[piece.color()] += eg_psqt;
+            phase += GAME_PHASE_INC[piece];
+        }
+
+        // Tapered eval
+        let mg_score = mg[color] - mg[color.opponent()];
+        let eg_score = eg[color] - eg[color.opponent()];
+        let mg_phase = phase.min(24); // in case of early promotion
+        let eg_phase = 24 - mg_phase;
+
+        // Interpolate the score
+        (mg_score * mg_phase + eg_score * eg_phase) / 24
     }
 
     /// Divides the original material value of the board by the current material value, yielding an `i32` in the range `[0, 100]`
     ///
     /// Lower numbers are closer to the beginning of the game. Higher numbers are closer to the end of the game.
     ///
-    /// The King is ignored when performing this calculation.
+    /// The King and Pawns are ignored when performing this calculation.
     #[inline(always)]
-    pub fn endgame_weight(&self) -> i32 {
-        let remaining = V::INITIAL_MATERIAL_VALUE - self.material_remaining();
-        (remaining * 100 / V::INITIAL_MATERIAL_VALUE * 100) / 100
+    pub fn endgame_weight<V: Variant>(game: &Game<V>) -> i32 {
+        let mut phase = 0;
+        for (_, piece) in game.iter() {
+            phase += GAME_PHASE_INC[piece];
+        }
+
+        100 - ((phase * 100 / 24 * 100) / 100)
     }
 
-    /// Returns the current mid-game and end-game evaluations.
-    #[inline(always)]
-    pub fn evals(&self) -> (Score, Score) {
-        self.evals
-    }
-
-    /// Called when a piece is placed on a square to update the eval of the board.
-    #[inline(always)]
-    pub(crate) fn piece_placed(&mut self, piece: Piece, square: Square) {
-        let color = piece.color();
-        let multiplier = color.negation_multiplier() as i32;
-
-        self.material[color] += piece.kind().value();
-
-        // Update PSQT contributions
-        let (mg, eg) = Psqt::evals(piece, square);
-        self.evals.0 += mg * multiplier;
-        self.evals.1 += eg * multiplier;
-    }
-
-    /// Called when a piece is removed from a square to update the eval of the board.
-    #[inline(always)]
-    pub(crate) fn piece_taken(&mut self, piece: Piece, square: Square) {
-        let color = piece.color();
-        let multiplier = color.negation_multiplier() as i32;
-
-        self.material[piece.color()] -= piece.kind().value();
-
-        // Update PSQT contributions
-        let (mg, eg) = Psqt::evals(piece, square);
-        self.evals.0 -= mg * multiplier;
-        self.evals.1 -= eg * multiplier;
-    }
-
+    /*
     /// Counts the material value of all pieces on the board
     ///
     /// The King is not included in this count
     #[inline(always)]
-    fn material_remaining(&self) -> i32 {
+    pub fn material(&self) -> i32 {
         self.material[Color::White.index()] + self.material[Color::Black.index()]
     }
+     */
 }
 
 /// A [Piece-Square Table](https://www.chessprogramming.org/Piece-Square_Tables) for use in evaluation.
@@ -273,14 +251,18 @@ impl Psqt {
     }
 
     /// Creates a new [`Psqt`] for the provided [`PieceKind`] and array of values.
-    const fn new(kind: PieceKind, psqt: [i32; Square::COUNT]) -> Self {
+    const fn new(
+        kind: PieceKind,
+        piece_values: [i32; PieceKind::COUNT],
+        psqt: [i32; Square::COUNT],
+    ) -> Self {
         let mut flipped = [Score::DRAW; Square::COUNT];
 
         let mut i = 0;
         while i < psqt.len() {
             // Flip the rank, not the file, so it can be used from White's perspective without modification
             // Also add in the value of this piece
-            flipped[i] = Score::new(psqt[i ^ 56] + kind.value());
+            flipped[i] = Score::new(psqt[i ^ 56] + piece_values[kind.index()]);
             // flipped[i] = value_of(kind); // Functions like a material-only eval
             i += 1;
         }

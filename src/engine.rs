@@ -20,10 +20,10 @@ use anyhow::{bail, Context, Result};
 use uci_parser::{UciCommand, UciInfo, UciOption, UciParseError, UciResponse};
 
 use crate::{
-    perft, splitperft, Bitboard, Chess960, EngineCommand, Game, GameVariant, HistoryTable,
-    LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Ply, Position, Psqt,
-    Score, Search, SearchConfig, SearchParameters, SearchResult, Square, Standard, TTable, Variant,
-    BENCHMARK_FENS,
+    perft, splitperft, Bitboard, Chess960, EngineCommand, Evaluator, Game, GameVariant,
+    HistoryTable, LogDebug, LogInfo, LogLevel, LogNone, MediumDisplayTable, Move, Piece, Ply,
+    Position, Psqt, Score, Search, SearchConfig, SearchParameters, SearchResult, Square, Standard,
+    TTable, Variant, BENCHMARK_FENS,
 };
 
 /// Default depth at which to run the benchmark searches.
@@ -372,7 +372,7 @@ impl Engine {
         use std::cmp::Ordering::*;
         if pretty {
             let color = game.side_to_move();
-            let endgame_weight = game.evaluator().endgame_weight();
+            let endgame_weight = Evaluator::endgame_weight(game);
 
             let table = MediumDisplayTable::from_fn(|sq| {
                 game.piece_at(sq)
@@ -386,7 +386,7 @@ impl Engine {
                     .unwrap_or_default()
             });
 
-            let score = game.evaluator().eval_for(color);
+            let score = Evaluator::eval_for(game, color);
 
             let winning = match score.cmp(&Score::DRAW) {
                 Greater => color.name(),
@@ -531,7 +531,7 @@ impl Engine {
         endgame_weight: Option<i32>,
     ) {
         // Compute the current endgame weight, if it wasn't provided
-        let weight = endgame_weight.unwrap_or(game.evaluator().endgame_weight());
+        let weight = endgame_weight.unwrap_or(Evaluator::endgame_weight(game));
         // Fetch the middle-game and end-game tables
         let (mg, eg) = Psqt::get_tables_for(piece.kind());
 

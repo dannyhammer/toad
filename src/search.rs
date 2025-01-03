@@ -1510,6 +1510,9 @@ fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &Principal
     }
 }
 
+/// Values are obtained from here: <https://www.chessprogramming.org/Simplified_Evaluation_Function>
+const MVV_LVA_PIECE_VALUES: [i32; PieceKind::COUNT] = [100, 320, 330, 500, 900, 0];
+
 /// This table represents values for [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) move ordering.
 ///
 /// It is indexed by `[attacker][victim]`, and yields a "score" that is used when sorting moves.
@@ -1517,14 +1520,14 @@ fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &Principal
 /// The following table is produced:
 /// ```text
 ///                     VICTIM
-/// A       P     N     B     R     Q     K     
+/// A       P     N     B     R     Q     K
 /// T    +---------------------------------+
-/// T   P| 900   3100  3200  4900  8900  0     
-/// A   N| 680   2880  2980  4680  8680  0     
-/// C   B| 670   2870  2970  4670  8670  0     
-/// K   R| 500   2700  2800  4500  8500  0     
-/// E   Q| 100   2300  2400  4100  8100  0     
-/// R   K| 1000  3200  3300  5000  9000  0     
+/// T   P| 900   3100  3200  4900  8900  0
+/// A   N| 680   2880  2980  4680  8680  0
+/// C   B| 670   2870  2970  4670  8670  0
+/// K   R| 500   2700  2800  4500  8500  0
+/// E   Q| 100   2300  2400  4100  8100  0
+/// R   K| 1000  3200  3300  5000  9000  0
 /// ```
 ///
 /// Note that the actual table is different, as it has size `12x12` instead of `6x6`
@@ -1558,7 +1561,7 @@ const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
 
             // Default MVV-LVA except that the King is assigned a value of 0 if he is attacking
             // bench: 27032804 nodes 8136592 nps
-            let score = 10 * vtm.value() - atk.value();
+            let score = 10 * MVV_LVA_PIECE_VALUES[vtm.index()] - MVV_LVA_PIECE_VALUES[atk.index()];
 
             // If the attacker is the King, the score is half the victim's value.
             // This encourages the King to attack, but not as strongly as other pieces.
