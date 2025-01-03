@@ -1,5 +1,24 @@
 # Changelog
 
+## [3.0.0](https://github.com/dannyhammer/toad/compare/v2.0.0...v3.0.0) (2025-01-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* updated README for 3.0.0 release
+
+### Features
+
+* major improvements to search logic, several bug fixes, and multiple new search features. ([#99](https://github.com/dannyhammer/toad/issues/99)) ([6eb100f](https://github.com/dannyhammer/toad/commit/6eb100f4a392c2ec8bb19f5661f0d4cbfcc10f4c))
+* updated README for 3.0.0 release ([9d92844](https://github.com/dannyhammer/toad/commit/9d92844a4ccdb4ac89b732325937ae0416e609d9))
+
+
+### Bug Fixes
+
+* hopefully fixed release-please manifest details ([6fde085](https://github.com/dannyhammer/toad/commit/6fde085d584a7b7855887d66cd09d2643c4297eb))
+* removed draw detection at ply 1 ([#101](https://github.com/dannyhammer/toad/issues/101)) ([feb4cc3](https://github.com/dannyhammer/toad/commit/feb4cc3da726f48792baf92e61fddbf9927128ea))
+* removed release-type from manifest root ([76b4d47](https://github.com/dannyhammer/toad/commit/76b4d474122b0f9447a91bbb4b46987648200fc2))
+
 ## [2.0.0](https://github.com/dannyhammer/toad/compare/v1.4.0...v2.0.0) (2024-11-22)
 
 
