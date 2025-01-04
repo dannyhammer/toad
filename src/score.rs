@@ -19,7 +19,7 @@ pub struct Score(i32);
 
 impl Score {
     /// Largest possible score ever achievable.
-    pub const INF: Self = Self(i16::MAX as i32);
+    pub const INF: Self = Self(i32::MAX - 512);
 
     /// Score of mate in the current position.
     pub const MATE: Self = Self(Self::INF.0 - 1);
