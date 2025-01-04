@@ -25,4 +25,4 @@ uci-parser = { git = "https://github.com/dannyhammer/uci-parser.git", features =
 #lto = true
 #opt-level = 3
 #codegen-units = 1
-overflow-checks = true
+#overflow-checks = true
