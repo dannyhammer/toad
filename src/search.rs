@@ -787,6 +787,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 }
             };
 
+            // We check this again here for sanity reasons.
+            if self.search_cancelled().is_err() {
+                break 'iterative_deepening;
+            }
+
             /****************************************************************************************************
              * Update current best score
              ****************************************************************************************************/
