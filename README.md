@@ -127,12 +127,13 @@ For specifics on how a command works, run `toad <COMMAND> --help`
 
 ### UCI Options
 
-| Name           | Values          | Default | Description                                                                       |
-| -------------- | --------------- | ------- | --------------------------------------------------------------------------------- |
-| `Clear Hash`   |                 |         | Clear the hash table(s)                                                           |
-| `Hash`         | `1..=1024`      | `16`    | Set the size (in MB) of the hash table(s)                                         |
-| `Threads`      | `1..=1`         | `1`     | Only implemented for use with [OpenBench](https://github.com/AndyGrant/OpenBench) |
-| `UCI_Chess960` | `true`, `false` | `false` | Enable support for [Chess960](https://en.wikipedia.org/wiki/Fischer_random_chess) |
+| Name            | Values          | Default | Description                                                                                                          |
+| --------------- | --------------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
+| `Clear Hash`    |                 |         | Clear the hash table(s)                                                                                              |
+| `Hash`          | `1..=1024`      | `16`    | Set the size (in MB) of the hash table(s)                                                                            |
+| `Threads`       | `1..=1`         | `1`     | Only implemented for use with [OpenBench](https://github.com/AndyGrant/OpenBench)                                    |
+| `UCI_Chess960`  | `true`, `false` | `false` | Enable support for [Chess960](https://en.wikipedia.org/wiki/Fischer_random_chess)                                    |
+| `Move Overhead` | `0..=2000`      | `20`    | Expected communication delay between engine and arbiter. Increase if you notice the engine loses on time frequently. |
 
 ## Acknowledgements
 

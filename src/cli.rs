@@ -93,7 +93,9 @@ pub enum EngineCommand {
     },
 
     /// Display the current value of the specified option.
-    Option { name: String },
+    Option {
+        name: Vec<String>, // This is a vector in order to support multi-word options
+    },
 
     /// Performs a perft on the current position at the supplied depth, printing total node count.
     Perft { depth: usize },
