@@ -1628,42 +1628,20 @@ mod tests {
         .start(&game)
     }
 
-    fn ensure_is_mate_in(fen: &str, config: SearchConfig, moves: i32) -> SearchResult {
-        let res = run_search(fen, config);
-        assert!(
-            res.score.is_mate(),
-            "Search on {fen:?} with config {config:#?} produced result that is not mate.\nResult: {res:#?}"
-        );
-        assert_eq!(
-            res.score.moves_to_mate(),
-            moves,
-            "Search on {fen:?} with config {config:#?} produced result not mate in {moves}.\nResult: {res:#?}"
-        );
-        res
-    }
+    fn run_search_tests(tests: &[(&str, &str)], config: SearchConfig) {
+        for (fen, mv) in tests {
+            let res = run_search(fen, config);
 
-    #[test]
-    fn test_white_mate_in_1() {
-        let fen = "k7/8/KQ6/8/8/8/8/8 w - - 0 1";
-        let config = SearchConfig {
-            max_depth: Ply::new(2),
-            ..Default::default()
-        };
-
-        let res = ensure_is_mate_in(fen, config, 1);
-        assert_eq!(res.bestmove().unwrap(), "b6a7", "Result: {res:#?}");
-    }
-
-    #[test]
-    fn test_black_mated_in_1() {
-        let fen = "2k5/7Q/8/2K5/8/8/8/6Q1 b - - 0 1";
-        let config = SearchConfig {
-            max_depth: Ply::new(3),
-            ..Default::default()
-        };
-
-        let res = ensure_is_mate_in(fen, config, -1);
-        assert!(["c8b8", "c8d8"].contains(&res.bestmove().unwrap().to_string().as_str()));
+            assert!(
+                res.bestmove().is_some(),
+                "Search on fen {fen} found no bestmove. Expected {mv}"
+            );
+            let bestmove = res.bestmove().unwrap();
+            assert_eq!(
+                bestmove, mv,
+                "Search on fen {fen} found {bestmove} as bestmove. Expected {mv}"
+            );
+        }
     }
 
     #[test]
@@ -1677,25 +1655,12 @@ mod tests {
     }
 
     #[test]
-    fn test_obvious_capture_promote() {
-        // Pawn should take queen and also promote to queen
-        let fen = "3q1n2/4P3/8/8/8/8/k7/7K w - - 0 1";
-        let config = SearchConfig {
-            max_depth: Ply::new(1),
-            ..Default::default()
-        };
-
-        let res = run_search(fen, config);
-        assert_eq!(res.bestmove().unwrap(), "e7d8q");
-    }
-
-    #[test]
     fn test_quick_search_finds_move() {
         // If *any* legal move is available, it should be found, regardless of how much time was given.
         let fen = FEN_STARTPOS;
         let config = SearchConfig {
-            soft_timeout: Duration::from_nanos(1),
-            hard_timeout: Duration::from_nanos(1),
+            soft_timeout: Duration::from_nanos(0),
+            hard_timeout: Duration::from_nanos(0),
             ..Default::default()
         };
 
@@ -1758,5 +1723,107 @@ mod tests {
         };
         let res = run_search(fen, config);
         assert_ne!(res.bestmove().unwrap(), "d5e6");
+    }
+
+    /// From https://github.com/kz04px/rawr/blob/master/tests/search.rs
+    #[test]
+    fn test_search_mate_in_one() {
+        let tests = [
+            ("6k1/R7/6K1/8/8/8/8/8 w - - 0 1", "a7a8"),
+            ("8/8/8/8/8/6k1/r7/6K1 b - - 0 1", "a2a1"),
+            ("6k1/4R3/6K1/q7/8/8/8/8 w - - 0 1", "e7e8"),
+            ("8/8/8/8/Q7/6k1/4r3/6K1 b - - 0 1", "e2e1"),
+            ("6k1/8/6K1/q3R3/8/8/8/8 w - - 0 1", "e5e8"),
+            ("8/8/8/8/Q3r3/6k1/8/6K1 b - - 0 1", "e4e1"),
+            ("k7/6R1/5R1P/8/8/8/8/K7 w - - 0 1", "f6f8"),
+            ("k7/8/8/8/8/5r1p/6r1/K7 b - - 0 1", "f3f1"),
+        ];
+
+        let config = SearchConfig {
+            max_depth: Ply::new(3),
+            ..Default::default()
+        };
+        run_search_tests(&tests, config);
+    }
+
+    /// From https://github.com/kz04px/rawr/blob/master/tests/search.rs
+    #[test]
+    fn test_search_obvious_captures() {
+        let tests = [
+            ("5k2/8/8/b7/2N5/r7/8/5K2 w - - 0 1", "c4a3"),
+            ("5k2/8/8/B7/2n5/R7/8/5K2 b - - 0 1", "c4a3"),
+            ("5k2/8/8/b7/2N5/r7/8/5K2 w - - 0 1", "c4a3"),
+            ("5k2/8/8/B7/2n5/R7/8/5K2 b - - 0 1", "c4a3"),
+            ("4k3/8/8/1n1p4/2P5/8/8/4K3 w - - 0 1", "c4b5"),
+            ("4k3/8/8/2p5/1N1P4/8/8/4K3 b - - 0 1", "c5b4"),
+        ];
+
+        let config = SearchConfig {
+            max_depth: Ply::new(3),
+            ..Default::default()
+        };
+        run_search_tests(&tests, config);
+    }
+
+    /// From https://github.com/kz04px/rawr/blob/master/tests/search.rs
+    #[test]
+    fn test_search_finds_3_fold() {
+        let tests = [
+            ("7k/2QQ4/8/8/8/PPP5/2q5/K7 b - - 0 1", "c2c1"),
+            ("k7/2Q5/ppp5/8/8/8/2qq4/7K w - - 0 1", "c7c8"),
+        ];
+
+        let config = SearchConfig {
+            max_depth: Ply::new(3),
+            ..Default::default()
+        };
+        run_search_tests(&tests, config);
+    }
+
+    /// From https://github.com/kz04px/rawr/blob/master/tests/search.rs
+    #[test]
+    fn test_search_avoids_50_move() {
+        let tests = [
+            ("7k/8/R7/1R6/7K/8/7P/8 w - - 99 1", "h2h3"),
+            ("8/7p/8/7k/1r6/r7/8/7K b - - 99 1", "h7h6"),
+            ("8/8/8/P7/8/6n1/3R4/R3K2k w Q - 99 1", "a5a6"),
+            ("r3k2K/3r4/6N1/8/p7/8/8/8 b q - 99 1", "a4a3"),
+        ];
+
+        let config = SearchConfig {
+            max_depth: Ply::new(3),
+            ..Default::default()
+        };
+        run_search_tests(&tests, config);
+    }
+
+    /// From https://github.com/kz04px/rawr/blob/master/tests/search.rs
+    #[test]
+    fn test_search_finds_stalemate() {
+        let tests = [
+            ("k5q1/p7/8/6q1/6q1/6q1/8/Q6K w - - 0 1", "a1a7"),
+            ("q6k/8/6Q1/6Q1/6Q1/8/P7/K5Q1 b - - 0 1", "a8a2"),
+        ];
+
+        let config = SearchConfig {
+            max_depth: Ply::new(3),
+            ..Default::default()
+        };
+        run_search_tests(&tests, config);
+    }
+
+    /// From https://github.com/kz04px/rawr/blob/master/tests/search.rs
+    #[test]
+    fn test_search_finds_under_promotion() {
+        let tests = [
+            ("8/5P1k/8/4B1K1/8/1B6/2N5/8 w - - 0 1", "f7f8n"),
+            ("8/2n5/1b6/8/4b1k1/8/5p1K/8 b - - 0 1", "f2f1n"),
+        ];
+
+        let config = SearchConfig {
+            max_depth: Ply::new(3),
+            ..Default::default()
+        };
+        run_search_tests(&tests, config);
     }
 }
