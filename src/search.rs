@@ -1083,9 +1083,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         }
 
         // Adjust mate score by 1 ply, since we're returning up the call stack
-        if best.is_mate() {
-            best -= best.signum();
-        }
+        best.adjust_mate();
 
         // Save this node to the TTable.
         self.save_to_tt(
@@ -1225,9 +1223,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         }
 
         // Adjust mate score by 1 ply, since we're returning up the call stack
-        if best.is_mate() {
-            best -= best.signum();
-        }
+        best.adjust_mate();
 
         // Save this node to the TTable.
         self.save_to_tt(

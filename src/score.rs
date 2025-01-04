@@ -119,10 +119,12 @@ impl Score {
         Self(self.0.abs())
     }
 
-    /// Returns the sign of this [`Score`].
+    /// If this [`Score`] is a mate score, adjust it by 1 to propagate up the search tree.
+    ///
+    /// This helps with mate score adjustments, ensuring that a mate score is always relative to the current ply.
     #[inline(always)]
-    pub const fn signum(self) -> Self {
-        Self(self.0.signum())
+    pub const fn adjust_mate(&mut self) {
+        self.0 -= self.0.signum() * self.is_mate() as i32
     }
 
     /// "Normalizes" a score so that it can be printed as a float.
