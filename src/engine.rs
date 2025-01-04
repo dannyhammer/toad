@@ -755,9 +755,6 @@ impl Engine {
                     bail!("expected bool. got {value:?}");
                 };
 
-                if ms < MS_MOVE_OVERHEAD_MIN {
-                    bail!("Minimum value for {name} is {}sb", MS_MOVE_OVERHEAD_MIN);
-                }
                 if ms > MS_MOVE_OVERHEAD_MAX {
                     bail!("Maximum value for {name} is {}sb", MS_MOVE_OVERHEAD_MAX);
                 }
