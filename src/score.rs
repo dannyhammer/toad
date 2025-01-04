@@ -8,10 +8,15 @@ use std::fmt;
 
 use uci_parser::UciScore;
 
-use crate::{tune, Ply};
+use crate::{tune, Color, Ply};
 
 /// Internal representation for a [`Score`].
 type ScoreInner = i16;
+
+/// Internal type that is larger than [`ScoreInner`].
+///
+/// This is used during linear interpolation between scores.
+type ScoreInnerLarger = i32;
 
 /// A numerical representation of the evaluation of a position / move, in units of ["centipawns"](https://www.chessprogramming.org/Score).
 ///
@@ -146,8 +151,25 @@ impl Score {
     /// Performs linear interpolation between `self` and `other` by `t` where `t` is `[0, 100]`.
     #[inline(always)]
     pub fn lerp(self, other: Self, t: u8) -> Self {
-        // eprintln!("SELF: {self:?}, OTHER: {other:?}, T: {t:?}");
-        Self((self.0 + (other.0 - self.0) * (t as ScoreInner)) / 100)
+        // Cast these to larger types to prevent overflow during the arithmetic.
+        // TODO: Is there a nicer way of doing this? Perhaps with some of the std saturating/overflowing functions?
+        let overflow = self.0 as ScoreInnerLarger
+            + (other.0 as ScoreInnerLarger - self.0 as ScoreInnerLarger) * t as ScoreInnerLarger
+                / 100;
+
+        Self(overflow as ScoreInner)
+    }
+
+    /// Wrapper for `saturating_add` on a [`Score`]'s internal representation.
+    #[inline(always)]
+    pub const fn saturating_add(&self, other: Self) -> Self {
+        Self(self.0.saturating_add(other.0))
+    }
+
+    /// Wrapper for `saturating_sub` on a [`Score`]'s internal representation.
+    #[inline(always)]
+    pub const fn saturating_sub(&self, other: Self) -> Self {
+        Self(self.0.saturating_sub(other.0))
     }
 }
 
@@ -165,64 +187,12 @@ impl From<i32> for Score {
     }
 }
 
-impl From<i16> for Score {
-    #[inline(always)]
-    fn from(value: i16) -> Self {
-        Self(value as ScoreInner)
-    }
-}
-
-impl From<i8> for Score {
-    #[inline(always)]
-    fn from(value: i8) -> Self {
-        Self(value as ScoreInner)
-    }
-}
-
-/*
-macro_rules! impl_binary_op {
-    ($trait:tt, $fn:ident, $checked_fn:ident, $name:tt) => {
-        impl std::ops::$trait for Score {
-            type Output = Self;
-
-            #[inline(always)]
-            fn $fn(self, rhs: Self) -> Self::Output {
-                Self(
-                    self.0
-                        .$checked_fn(rhs.0)
-                        .unwrap_or_else(|| panic!("{} failed between {self:?} and {rhs:?}", $name)),
-                )
-            }
-        }
-
-        impl std::ops::$trait<ScoreInner> for Score {
-            type Output = Self;
-
-            #[inline(always)]
-            fn $fn(self, rhs: ScoreInner) -> Self::Output {
-                Self(
-                    self.0
-                        .$checked_fn(rhs)
-                        .unwrap_or_else(|| panic!("{} failed between {self:?} and {rhs:?}", $name)),
-                )
-            }
-        }
-
-        impl std::ops::$trait<Ply> for Score {
-            type Output = Self;
-
-            #[inline(always)]
-            fn $fn(self, rhs: Ply) -> Self::Output {
-                Self(
-                    self.0
-                        .$checked_fn(rhs.plies() as ScoreInner)
-                        .unwrap_or_else(|| panic!("{} failed between {self:?} and {rhs:?}", $name)),
-                )
-            }
-        }
-    };
-}
- */
+// impl From<i16> for Score {
+//     #[inline(always)]
+//     fn from(value: i16) -> Self {
+//         Self(value as ScoreInner)
+//     }
+// }
 
 impl std::ops::Mul<bool> for Score {
     type Output = Self;
@@ -233,6 +203,15 @@ impl std::ops::Mul<bool> for Score {
     }
 }
 
+impl std::ops::Mul<Color> for Score {
+    type Output = Self;
+
+    #[inline(always)]
+    fn mul(self, rhs: Color) -> Self::Output {
+        Self(self.0 * rhs.negation_multiplier() as ScoreInner)
+    }
+}
+
 macro_rules! impl_binary_op {
     ($trait:tt, $fn:ident) => {
         impl std::ops::$trait for Score {
@@ -240,6 +219,10 @@ macro_rules! impl_binary_op {
 
             #[inline(always)]
             fn $fn(self, rhs: Self) -> Self::Output {
+                let overflow = (self.0 as i32).$fn(rhs.0 as i32);
+                if overflow > i16::MAX as i32 {
+                    panic!("SELF: {self:?}, OTHER: {rhs:?} := {overflow}");
+                }
                 Self(self.0.$fn(rhs.0))
             }
         }
@@ -249,7 +232,7 @@ macro_rules! impl_binary_op {
 
             #[inline(always)]
             fn $fn(self, rhs: ScoreInner) -> Self::Output {
-                Self(self.0.$fn(rhs))
+                self.$fn(Self(rhs))
             }
         }
 
@@ -267,7 +250,7 @@ macro_rules! impl_binary_op {
 
             #[inline(always)]
             fn $fn(self, rhs: Ply) -> Self::Output {
-                Self(self.0.$fn(rhs.plies() as ScoreInner))
+                self.$fn(Self::from(rhs.plies()))
             }
         }
 
@@ -381,3 +364,37 @@ impl MoveScore {
     }
 }
  */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lerp() {
+        assert_eq!(Score::new(0).lerp(Score::new(0), 0), Score::new(0));
+        assert_eq!(Score::new(0).lerp(Score::new(100), 0), Score::new(0));
+        assert_eq!(Score::new(0).lerp(Score::new(100), 50), Score::new(50));
+        assert_eq!(Score::new(0).lerp(Score::new(100), 65), Score::new(65));
+        assert_eq!(Score::new(10).lerp(Score::new(20), 50), Score::new(15));
+
+        assert_eq!(
+            Score::new(0).lerp(Score::new(ScoreInner::MAX), 0),
+            Score::new(0)
+        );
+
+        assert_eq!(
+            Score::new(0).lerp(Score::new(ScoreInner::MAX), 100),
+            Score::new(ScoreInner::MAX)
+        );
+
+        assert_eq!(
+            Score::new(ScoreInner::MAX).lerp(Score::new(ScoreInner::MAX), 100),
+            Score::new(ScoreInner::MAX)
+        );
+
+        assert_eq!(
+            Score::INF.lerp(Score::new(ScoreInner::MAX), 100),
+            Score::INF
+        );
+    }
+}

@@ -73,7 +73,7 @@ pub struct TTableEntry {
     pub bestmove: Option<Move>,
 
     /// Best score found for this position.
-    pub score: i16,
+    pub score: Score,
 
     /// Node type of this entry.
     pub node_type: NodeType,
@@ -95,7 +95,7 @@ impl TTableEntry {
         Self {
             key,
             bestmove,
-            score: score.inner() as i16,
+            score,
             depth: depth.plies() as u8,
             node_type: NodeType::new(score, bounds),
         }
@@ -241,15 +241,13 @@ impl TTable {
     ///     1. The entry is exact.
     ///     2. The entry is an upper bound and its score is `<= alpha`.
     ///     3. The entry is a lower bound and its score is `>= beta`.
-    ///
-    /// See [`TTableEntry::try_score`] for more.
     #[inline(always)]
     pub fn probe(&self, key: ZobristKey, depth: Ply, bounds: SearchBounds) -> ProbeResult {
         // if-let chains are set to be stabilized in Rust 2024 (1.85.0): https://rust-lang.github.io/rfcs/2497-if-let-chains.html
         if let Some(entry) = self.get(&key) {
             // Can only cut off if the existing entry came from a greater depth.
             if entry.depth() >= depth {
-                let score = Score::from(entry.score);
+                let score = entry.score;
 
                 // If we can cutoff, do so
                 if entry.node_type == NodeType::Pv
@@ -300,7 +298,7 @@ mod test {
         let entry1 = TTableEntry {
             key: key1,
             bestmove: None,
-            score: 0,
+            score: Default::default(),
             depth: 0,
             node_type: NodeType::Pv,
         };
@@ -308,7 +306,7 @@ mod test {
         let entry2 = TTableEntry {
             key: key2,
             bestmove: None,
-            score: 0,
+            score: Default::default(),
             depth: 0,
             node_type: NodeType::Pv,
         };

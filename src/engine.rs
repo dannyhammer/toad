@@ -378,8 +378,7 @@ impl Engine {
                 game.piece_at(sq)
                     .map(|piece| {
                         let (mg, eg) = Psqt::evals(piece, sq);
-                        let score = mg.lerp(eg, endgame_weight)
-                            * Score::from(piece.color().negation_multiplier());
+                        let score = mg.lerp(eg, endgame_weight) * piece.color();
 
                         [piece.to_string(), format!("{:+}", score.normalize())]
                     })

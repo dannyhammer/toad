@@ -186,8 +186,7 @@ impl<V: Variant> Evaluator<V> {
     /// A score of 0 is considered equal.
     #[inline(always)]
     pub fn eval_for(&self, color: Color) -> Score {
-        self.evals.0.lerp(self.evals.1, self.endgame_weight())
-            * Score::from(color.negation_multiplier())
+        self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color
     }
 
     /// Divides the original material value of the board by the current material value, yielding an `i32` in the range `[0, 100]`
@@ -211,28 +210,26 @@ impl<V: Variant> Evaluator<V> {
     #[inline(always)]
     pub(crate) fn piece_placed(&mut self, piece: Piece, square: Square) {
         let color = piece.color();
-        let multiplier = Score::from(color.negation_multiplier());
 
         self.material[color] += piece.kind().value();
 
         // Update PSQT contributions
         let (mg, eg) = Psqt::evals(piece, square);
-        self.evals.0 += mg * multiplier;
-        self.evals.1 += eg * multiplier;
+        self.evals.0 += mg * color;
+        self.evals.1 += eg * color;
     }
 
     /// Called when a piece is removed from a square to update the eval of the board.
     #[inline(always)]
     pub(crate) fn piece_taken(&mut self, piece: Piece, square: Square) {
         let color = piece.color();
-        let multiplier = Score::from(color.negation_multiplier());
 
         self.material[piece.color()] -= piece.kind().value();
 
         // Update PSQT contributions
         let (mg, eg) = Psqt::evals(piece, square);
-        self.evals.0 -= mg * multiplier;
-        self.evals.1 -= eg * multiplier;
+        self.evals.0 -= mg * color;
+        self.evals.1 -= eg * color;
     }
 
     /// Counts the material value of all pieces on the board

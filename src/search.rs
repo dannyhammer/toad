@@ -239,7 +239,7 @@ impl AspirationWindow {
 
         // By convention, we widen both bounds on a fail low.
         self.bounds.beta = ((self.bounds.alpha + self.bounds.beta) / 2).min(Score::INF);
-        self.bounds.alpha = (score - delta).max(-Score::INF);
+        self.bounds.alpha = score.saturating_sub(delta).max(-Score::INF);
 
         // Increase number of failures
         self.alpha_fails += 1;
@@ -252,7 +252,7 @@ impl AspirationWindow {
         let delta = Self::delta(depth) * (1 << (self.beta_fails + 1));
 
         // Widen the beta bound
-        self.bounds.beta = (score + delta).min(Score::INF);
+        self.bounds.beta = score.saturating_add(delta).min(Score::INF);
 
         // Increase number of failures
         self.beta_fails += 1;
