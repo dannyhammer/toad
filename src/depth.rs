@@ -4,7 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use std::{fmt, ops::AddAssign};
+use std::fmt;
 
 /// A representation of the vertical distance between nodes in a search tree.
 ///
@@ -125,7 +125,7 @@ impl std::ops::Div<i32> for Ply {
     }
 }
 
-impl AddAssign for Ply {
+impl std::ops::AddAssign for Ply {
     #[inline(always)]
     fn add_assign(&mut self, rhs: Self) {
         self.0.add_assign(rhs.0);

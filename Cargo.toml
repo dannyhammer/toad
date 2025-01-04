@@ -17,3 +17,13 @@ thiserror = "2.0.7"
 #uci-parser = { path = "../../uci-parser", features = ["parse-go-perft", "parse-position-kiwipete", "clamp-negatives", "err-on-unused-input"] }
 uci-parser = { git = "https://github.com/dannyhammer/uci-parser.git", features = ["parse-go-perft", "parse-position-kiwipete", "clamp-negatives", "err-on-unused-input"] }
 #uci-parser = { version = "0.2.0", features = ["parse-go-perft", "parse-position-kiwipete", "clamp-negatives", "err-on-unused-input"] }
+
+
+[profile.release]
+#panic = 'abort'
+#strip = true
+#lto = true
+#opt-level = 3
+#codegen-units = 1
+overflow-checks = true
+debuginfo = 'full'

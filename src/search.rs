@@ -200,11 +200,10 @@ impl AspirationWindow {
     #[inline(always)]
     fn delta(depth: Ply) -> Score {
         let initial_delta = tune::initial_aspiration_window_delta!();
-
         let min_delta = tune::min_aspiration_window_delta!();
 
         // Gradually decrease the window size from `8*init` to `min`
-        Score::new(((initial_delta << 3) / depth.plies()).max(min_delta))
+        Score::from(((initial_delta << 3) / depth.plies()).max(min_delta))
     }
 
     /// Creates a new [`AspirationWindow`] centered around `score`.
@@ -262,13 +261,22 @@ impl AspirationWindow {
     /// Returns `true` if `score` fails low, meaning it is below `alpha` and the window must be expanded downwards.
     #[inline(always)]
     fn fails_low(&self, score: Score) -> bool {
-        self.bounds.alpha != -Score::INF && score <= self.bounds.alpha
+        self.bounds.alpha > -Score::INF && score <= self.bounds.alpha
     }
 
     /// Returns `true` if `score` fails high, meaning it is above `beta` and the window must be expanded upwards.
     #[inline(always)]
     fn fails_high(&self, score: Score) -> bool {
-        self.bounds.beta != Score::INF && score >= self.bounds.beta
+        self.bounds.beta < Score::INF && score >= self.bounds.beta
+    }
+}
+
+impl fmt::Display for AspirationWindow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("AspirationWindow")
+            .field(&self.bounds.alpha)
+            .field(&self.bounds.beta)
+            .finish()
     }
 }
 
@@ -430,10 +438,10 @@ pub struct SearchParameters {
     lmr_divisor: f32,
 
     /// Value to multiply depth by when computing history scores.
-    history_multiplier: Score,
+    history_multiplier: i32,
 
     /// Value to subtract from a history score at a given depth.
-    history_offset: Score,
+    history_offset: i32,
 
     /// Safety margin when applying reverse futility pruning.
     rfp_margin: Score,
@@ -499,8 +507,8 @@ impl Default for SearchParameters {
             min_lmr_moves: tune::min_lmr_moves!(),
             lmr_offset,
             lmr_divisor,
-            history_multiplier: Score::new(tune::history_multiplier!()),
-            history_offset: Score::new(tune::history_offset!()),
+            history_multiplier: tune::history_multiplier!(),
+            history_offset: tune::history_offset!(),
             rfp_margin: Score::new(tune::rfp_margin!()),
             check_extensions_depth: Ply::from_raw(tune::check_extensions_depth!()),
             max_razoring_depth: Ply::from_raw(tune::max_razoring_depth!()),
@@ -778,8 +786,14 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                 // If the score fell outside of the aspiration window, widen it gradually
                 if window.fails_low(score) {
+                    if Log::DEBUG {
+                        self.send_string(format!("{window} failed low for score {score}"));
+                    }
                     window.widen_down(score, self.result.depth);
                 } else if window.fails_high(score) {
+                    if Log::DEBUG {
+                        self.send_string(format!("{window} failed high for score {score}"));
+                    }
                     window.widen_up(score, self.result.depth);
                 } else {
                     // Otherwise, the window is OK and we can use the score
@@ -1066,7 +1080,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                      * as this one (as they did not cause a beta cutoff).
                      ****************************************************************************************************/
                     // Simple bonus based on depth
-                    let bonus = self.params.history_multiplier * depth - self.params.history_offset;
+                    let bonus =
+                        self.params.history_multiplier * depth.plies() - self.params.history_offset;
 
                     // Only update quiet moves
                     if mv.is_quiet() {
@@ -1327,16 +1342,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
     /// Applies a score to the provided move, intended to be used when ordering moves during search.
     #[inline(always)]
-    fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> Score {
+    fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> i32 {
         // TT move should be looked at first, so assign it the best possible score and immediately exit.
         if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
-            return Score::new(i32::MIN);
+            return i32::MIN;
         }
 
         // Safe unwrap because we can't move unless there's a piece at `from`
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
-        let mut score = Score::BASE_MOVE_SCORE;
+        let mut score = 0;
 
         // Apply history bonus to quiets
         if mv.is_quiet() {

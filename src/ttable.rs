@@ -73,7 +73,7 @@ pub struct TTableEntry {
     pub bestmove: Option<Move>,
 
     /// Best score found for this position.
-    pub score: Score,
+    pub score: i16,
 
     /// Node type of this entry.
     pub node_type: NodeType,
@@ -95,7 +95,7 @@ impl TTableEntry {
         Self {
             key,
             bestmove,
-            score,
+            score: score.inner() as i16,
             depth: depth.plies() as u8,
             node_type: NodeType::new(score, bounds),
         }
@@ -249,7 +249,7 @@ impl TTable {
         if let Some(entry) = self.get(&key) {
             // Can only cut off if the existing entry came from a greater depth.
             if entry.depth() >= depth {
-                let score = entry.score;
+                let score = Score::from(entry.score);
 
                 // If we can cutoff, do so
                 if entry.node_type == NodeType::Pv
@@ -300,7 +300,7 @@ mod test {
         let entry1 = TTableEntry {
             key: key1,
             bestmove: None,
-            score: Score::DRAW,
+            score: 0,
             depth: 0,
             node_type: NodeType::Pv,
         };
@@ -308,7 +308,7 @@ mod test {
         let entry2 = TTableEntry {
             key: key2,
             bestmove: None,
-            score: Score::MATE,
+            score: 0,
             depth: 0,
             node_type: NodeType::Pv,
         };

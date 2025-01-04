@@ -379,7 +379,7 @@ impl Engine {
                     .map(|piece| {
                         let (mg, eg) = Psqt::evals(piece, sq);
                         let score = mg.lerp(eg, endgame_weight)
-                            * piece.color().negation_multiplier() as i32;
+                            * Score::from(piece.color().negation_multiplier());
 
                         [piece.to_string(), format!("{:+}", score.normalize())]
                     })
@@ -528,7 +528,7 @@ impl Engine {
         game: &Game<V>,
         piece: Piece,
         square: Option<Square>,
-        endgame_weight: Option<i32>,
+        endgame_weight: Option<u8>,
     ) {
         // Compute the current endgame weight, if it wasn't provided
         let weight = endgame_weight.unwrap_or(game.evaluator().endgame_weight());
