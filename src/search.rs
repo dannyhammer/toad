@@ -204,7 +204,7 @@ impl AspirationWindow {
         let min_delta = tune::min_aspiration_window_delta!();
 
         // Gradually decrease the window size from `8*init` to `min`
-        Score::new(((initial_delta << 3) / depth.plies()).max(min_delta))
+        Score::from(((initial_delta << 3) / depth.plies()).max(min_delta))
     }
 
     /// Creates a new [`AspirationWindow`] centered around `score`.
@@ -218,8 +218,8 @@ impl AspirationWindow {
             // Otherwise we build a window around the provided score.
             let delta = Self::delta(depth);
             SearchBounds::new(
-                (score - delta).max(-Score::INF),
-                (score + delta).min(Score::INF),
+                score.saturating_sub(delta).max(-Score::INF),
+                score.saturating_add(delta).min(Score::INF),
             )
         };
 
@@ -236,11 +236,11 @@ impl AspirationWindow {
     #[inline(always)]
     fn widen_down(&mut self, score: Score, depth: Ply) {
         // Compute a gradually-increasing delta
-        let delta = Self::delta(depth) * (1 << (self.alpha_fails + 1));
+        let delta = Self::delta(depth).saturating_mul(Score::from(1 << (self.alpha_fails + 1)));
 
         // By convention, we widen both bounds on a fail low.
         self.bounds.beta = ((self.bounds.alpha + self.bounds.beta) / 2).min(Score::INF);
-        self.bounds.alpha = (score - delta).max(-Score::INF);
+        self.bounds.alpha = score.saturating_sub(delta).max(-Score::INF);
 
         // Increase number of failures
         self.alpha_fails += 1;
@@ -250,10 +250,10 @@ impl AspirationWindow {
     #[inline(always)]
     fn widen_up(&mut self, score: Score, depth: Ply) {
         // Compute a gradually-increasing delta
-        let delta = Self::delta(depth) * (1 << (self.beta_fails + 1));
+        let delta = Self::delta(depth).saturating_mul(Score::from(1 << (self.beta_fails + 1)));
 
         // Widen the beta bound
-        self.bounds.beta = (score + delta).min(Score::INF);
+        self.bounds.beta = score.saturating_add(delta).min(Score::INF);
 
         // Increase number of failures
         self.beta_fails += 1;
@@ -262,13 +262,13 @@ impl AspirationWindow {
     /// Returns `true` if `score` fails low, meaning it is below `alpha` and the window must be expanded downwards.
     #[inline(always)]
     fn fails_low(&self, score: Score) -> bool {
-        self.bounds.alpha != -Score::INF && score <= self.bounds.alpha
+        self.bounds.alpha > -Score::INF && score <= self.bounds.alpha
     }
 
     /// Returns `true` if `score` fails high, meaning it is above `beta` and the window must be expanded upwards.
     #[inline(always)]
     fn fails_high(&self, score: Score) -> bool {
-        self.bounds.beta != Score::INF && score >= self.bounds.beta
+        self.bounds.beta < Score::INF && score >= self.bounds.beta
     }
 }
 

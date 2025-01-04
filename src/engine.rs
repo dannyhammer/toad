@@ -528,7 +528,7 @@ impl Engine {
         game: &Game<V>,
         piece: Piece,
         square: Option<Square>,
-        endgame_weight: Option<i32>,
+        endgame_weight: Option<u8>,
     ) {
         // Compute the current endgame weight, if it wasn't provided
         let weight = endgame_weight.unwrap_or(game.evaluator().endgame_weight());

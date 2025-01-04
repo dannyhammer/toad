@@ -186,7 +186,7 @@ impl<V: Variant> Evaluator<V> {
     /// A score of 0 is considered equal.
     #[inline(always)]
     pub fn eval_for(&self, color: Color) -> Score {
-        self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color.negation_multiplier() as i32
+        self.evals.0.lerp(self.evals.1, self.endgame_weight()) * color
     }
 
     /// Divides the original material value of the board by the current material value, yielding an `i32` in the range `[0, 100]`
@@ -195,9 +195,9 @@ impl<V: Variant> Evaluator<V> {
     ///
     /// The King is ignored when performing this calculation.
     #[inline(always)]
-    pub fn endgame_weight(&self) -> i32 {
+    pub fn endgame_weight(&self) -> u8 {
         let remaining = V::INITIAL_MATERIAL_VALUE - self.material_remaining();
-        (remaining * 100 / V::INITIAL_MATERIAL_VALUE * 100) / 100
+        ((remaining * 100 / V::INITIAL_MATERIAL_VALUE * 100) / 100) as u8
     }
 
     /// Returns the current mid-game and end-game evaluations.
@@ -210,28 +210,26 @@ impl<V: Variant> Evaluator<V> {
     #[inline(always)]
     pub(crate) fn piece_placed(&mut self, piece: Piece, square: Square) {
         let color = piece.color();
-        let multiplier = color.negation_multiplier() as i32;
 
         self.material[color] += piece.kind().value();
 
         // Update PSQT contributions
         let (mg, eg) = Psqt::evals(piece, square);
-        self.evals.0 += mg * multiplier;
-        self.evals.1 += eg * multiplier;
+        self.evals.0 += mg * color;
+        self.evals.1 += eg * color;
     }
 
     /// Called when a piece is removed from a square to update the eval of the board.
     #[inline(always)]
     pub(crate) fn piece_taken(&mut self, piece: Piece, square: Square) {
         let color = piece.color();
-        let multiplier = color.negation_multiplier() as i32;
 
         self.material[piece.color()] -= piece.kind().value();
 
         // Update PSQT contributions
         let (mg, eg) = Psqt::evals(piece, square);
-        self.evals.0 -= mg * multiplier;
-        self.evals.1 -= eg * multiplier;
+        self.evals.0 -= mg * color;
+        self.evals.1 -= eg * color;
     }
 
     /// Counts the material value of all pieces on the board
@@ -280,7 +278,7 @@ impl Psqt {
         while i < psqt.len() {
             // Flip the rank, not the file, so it can be used from White's perspective without modification
             // Also add in the value of this piece
-            flipped[i] = Score::new(psqt[i ^ 56] + kind.value());
+            flipped[i] = Score::from_int(psqt[i ^ 56] + kind.value());
             // flipped[i] = value_of(kind); // Functions like a material-only eval
             i += 1;
         }
