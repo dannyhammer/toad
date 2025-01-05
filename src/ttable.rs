@@ -300,7 +300,7 @@ mod test {
         let entry1 = TTableEntry {
             key: key1,
             bestmove: None,
-            score: Score::DRAW,
+            score: Default::default(),
             depth: 0,
             node_type: NodeType::Pv,
         };
@@ -308,7 +308,7 @@ mod test {
         let entry2 = TTableEntry {
             key: key2,
             bestmove: None,
-            score: Score::MATE,
+            score: Default::default(),
             depth: 0,
             node_type: NodeType::Pv,
         };
