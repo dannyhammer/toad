@@ -6,6 +6,7 @@
 
 use std::{
     fmt::{self, Debug, Write},
+    marker::PhantomData,
     ops::{Deref, Index, IndexMut},
     str::FromStr,
 };
@@ -57,9 +58,6 @@ pub trait Variant
 where
     Self: Copy + Send + 'static,
 {
-    /// Initial material value of all pieces in a standard setup.
-    const INITIAL_MATERIAL_VALUE: i32;
-
     /// Formats a [`Move`] according to this variant's notation semantics.
     ///
     /// Calls the [`fmt::Display`] implementation.
@@ -111,12 +109,6 @@ where
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct Standard;
 impl Variant for Standard {
-    const INITIAL_MATERIAL_VALUE: i32 = PieceKind::Pawn.value() * 16
-        + PieceKind::Knight.value() * 4
-        + PieceKind::Bishop.value() * 4
-        + PieceKind::Rook.value() * 4
-        + PieceKind::Queen.value() * 2;
-
     #[inline(always)]
     fn variant() -> GameVariant {
         GameVariant::Standard
@@ -132,12 +124,6 @@ impl Variant for Standard {
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct Chess960;
 impl Variant for Chess960 {
-    const INITIAL_MATERIAL_VALUE: i32 = PieceKind::Pawn.value() * 16
-        + PieceKind::Knight.value() * 4
-        + PieceKind::Bishop.value() * 4
-        + PieceKind::Rook.value() * 4
-        + PieceKind::Queen.value() * 2;
-
     #[inline(always)]
     fn fmt_move(mv: Move) -> String {
         format!("{mv:#}")
@@ -192,12 +178,12 @@ impl Variant for Chess960 {
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct Horde;
 impl Variant for Horde {
-    const INITIAL_MATERIAL_VALUE: [i32; Color::COUNT] = [PieceKind::Pawn.value() * 32,
-        PieceKind::Pawn.value() * 8
-        + PieceKind::Knight.value() * 2
-        + PieceKind::Bishop.value() * 2
-        + PieceKind::Rook.value() * 2
-        + PieceKind::Queen.value() * 1;
+    const INITIAL_MATERIAL_VALUE: [i32; Color::COUNT] = [PieceKind::Pawn) * 32,
+        PieceKind::Pawn) * 8
+        + PieceKind::Knight) * 2
+        + PieceKind::Bishop) * 2
+        + PieceKind::Rook) * 2
+        + PieceKind::Queen) * 1;
     ];
 
     #[inline(always)]
@@ -219,7 +205,7 @@ impl Variant for Horde {
 ///
 /// The basic methods you're probably looking for are [`Game::<Standard>::from_fen`], [`Game::make_move`], and [`Game::get_legal_moves`].
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Game<V: Variant> {
+pub struct Game<V> {
     /// The current [`Position`] of the game, including piece layouts, castling rights, turn counters, etc.
     position: Position,
 
@@ -244,8 +230,8 @@ pub struct Game<V: Variant> {
     /// The square where the side-to-move's King resides.
     king_square: Square,
 
-    /// Responsible for evaluating the current position into a [`Score`].
-    evaluator: Evaluator<V>,
+    /// Variant of chess being played.
+    variant: PhantomData<V>,
 }
 
 /// Implementation details specific to standard chess.
@@ -289,7 +275,7 @@ impl<V: Variant> Game<V> {
             checkmask: Bitboard::EMPTY_BOARD,
             pinned: Bitboard::EMPTY_BOARD,
             attacks_by_color: [Bitboard::EMPTY_BOARD; Color::COUNT],
-            evaluator: Evaluator::new(),
+            variant: Default::default(),
         }
     }
 
@@ -506,7 +492,7 @@ impl<V: Variant> Game<V> {
     #[inline(always)]
     pub fn eval(&self) -> Score {
         let stm = self.side_to_move();
-        self.evaluator().eval_for(stm)
+        Evaluator::eval_for(self, stm)
     }
 
     /// Applies the provided [`Move`]. No enforcement of legality.
@@ -686,12 +672,6 @@ impl<V: Variant> Game<V> {
     #[inline(always)]
     pub const fn pinned(&self) -> Bitboard {
         self.pinned
-    }
-
-    /// Fetch a reference to this game's [`Evaluator`].
-    #[inline(always)]
-    pub fn evaluator(&self) -> &Evaluator<V> {
-        &self.evaluator
     }
 
     /// Checks if playing the provided [`Move`] is legal on the current position.
@@ -1222,17 +1202,13 @@ impl<V: Variant> Game<V> {
     pub fn place(&mut self, piece: Piece, square: Square) {
         self.position.board.place(piece, square);
         self.position.key.hash_piece(square, piece);
-        self.evaluator.piece_placed(piece, square);
     }
 
     /// Removes and returns a piece on the provided square, updating Zobrist hash information.
     #[inline(always)]
     pub fn take(&mut self, square: Square) -> Option<Piece> {
         let piece = self.position.board.take(square)?;
-
         self.position.key.hash_piece(square, piece);
-        self.evaluator.piece_taken(piece, square);
-
         Some(piece)
     }
 }
@@ -1295,23 +1271,25 @@ impl<V: Variant> fmt::Display for Game<V> {
                 write!(f, "   Checkers: {}", squares_to_string(self.checkers()))?;
             } else if rank == Rank::FOUR {
                 write!(f, "     Pinned: {}", squares_to_string(self.pinned()))?;
-            } else if rank == Rank::THREE {
-                write!(
-                    f,
-                    "   Material: {} (white) {} (black)",
-                    self.evaluator().material[Color::White],
-                    self.evaluator().material[Color::Black]
-                )?;
-            } else if rank == Rank::TWO {
-                let (mg, eg) = self.evaluator().evals();
-                write!(
-                    f,
-                    "       Eval: {} (mg={mg}, eg={eg}, %={})",
-                    self.eval(),
-                    self.evaluator().endgame_weight(),
-                )?;
-                // } else if rank == Rank::ONE {
             }
+            // else if rank == Rank::THREE {
+            //     write!(
+            //         f,
+            //         "   Material: {} (white) {} (black)",
+            //         self.evaluator().material(Color::White),
+            //         self.evaluator().material(Color::Black)
+            //     )?;
+            // }
+            // else if rank == Rank::TWO {
+            //     let (mg, eg) = self.evals();
+            //     write!(
+            //         f,
+            //         "       Eval: {} (mg={mg}, eg={eg}, %={})",
+            //         self.eval(),
+            //         self.evaluator().endgame_weight(),
+            //     )?;
+            // } else if rank == Rank::ONE {
+            // }
             writeln!(f)?;
         }
         write!(f, " +")?;

@@ -37,8 +37,7 @@ Alternatively, you can build from source:
     ./toad-<version>
     ```
 
-**Note**: Development has primarily been done on Linux (Ubuntu 22.04), with minimal testing on Windows 10 and no testing on MacOS.
-If you are willing to test the installation and execution of Toad on other operating systems, please provide feedback!
+**Note**: Development has primarily been done on Linux (Ubuntu 22.04), with minimal testing on Windows 10 and MacOS.
 
 ## Features
 
@@ -65,7 +64,7 @@ If you are willing to test the installation and execution of Toad on other opera
     -   [Internal Iterative Deepening](https://www.chessprogramming.org/Internal_Iterative_Deepening).
     -   [Late Move Pruning](https://www.chessprogramming.org/Futility_Pruning#MoveCountBasedPruning).
     -   [Mate Distance Pruning](https://www.chessprogramming.org/Mate_Distance_Pruning).
-    -   Support for [fractional plies](https://www.chessprogramming.org/Depth#Fractional_Plies)
+    -   Support for [fractional plies](https://www.chessprogramming.org/Depth#Fractional_Plies).
     -   Move Ordering:
         -   [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) with relative piece values `K < P < N < B < R < Q`, so `KxR` is ordered before `PxR`.
         -   [Hash moves](https://www.chessprogramming.org/Hash_Move).
@@ -128,12 +127,13 @@ For specifics on how a command works, run `toad <COMMAND> --help`
 
 ### UCI Options
 
-| Name           | Values          | Default | Description                                                                       |
-| -------------- | --------------- | ------- | --------------------------------------------------------------------------------- |
-| `Clear Hash`   |                 |         | Clear the hash table(s)                                                           |
-| `Hash`         | `1..=1024`      | `16`    | Set the size (in MB) of the hash table(s)                                         |
-| `Threads`      | `1..=1`         | `1`     | Only implemented for use with [OpenBench](https://github.com/AndyGrant/OpenBench) |
-| `UCI_Chess960` | `true`, `false` | `false` | Enable support for [Chess960](https://en.wikipedia.org/wiki/Fischer_random_chess) |
+| Name            | Values          | Default | Description                                                                                                          |
+| --------------- | --------------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
+| `Clear Hash`    |                 |         | Clear the hash table(s)                                                                                              |
+| `Hash`          | `1..=1024`      | `16`    | Set the size (in MB) of the hash table(s)                                                                            |
+| `Threads`       | `1..=1`         | `1`     | Only implemented for use with [OpenBench](https://github.com/AndyGrant/OpenBench)                                    |
+| `UCI_Chess960`  | `true`, `false` | `false` | Enable support for [Chess960](https://en.wikipedia.org/wiki/Fischer_random_chess)                                    |
+| `Move Overhead` | `0..=2000`      | `20`    | Expected communication delay between engine and arbiter. Increase if you notice the engine loses on time frequently. |
 
 ## Acknowledgements
 
@@ -148,3 +148,4 @@ More people have helped me on this journey than I can track, but I'll name a few
 -   All those in the engine testing community, with special thanks for those who manage and host the [CCRL pages](https://computerchess.org.uk/ccrl/).
 -   The authors of [Yukari](https://github.com/yukarichess/yukari) for motivation through friendly competition.
 -   [Paul T](https://github.com/DeveloperPaul123), for feedback on my [`uci-parser`](https://crates.io/crates/uci-parser) crate.
+-   All of the friendly devs over at [PyroBench](https://pyronomy.pythonanywhere.com), both for the friendly camaraderie and for sharing compute for testing.

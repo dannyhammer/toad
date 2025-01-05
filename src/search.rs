@@ -204,7 +204,7 @@ impl AspirationWindow {
         let min_delta = tune::min_aspiration_window_delta!();
 
         // Gradually decrease the window size from `8*init` to `min`
-        Score::new(((initial_delta << 3) / depth.plies()).max(min_delta))
+        Score::from(((initial_delta << 3) / depth.plies()).max(min_delta))
     }
 
     /// Creates a new [`AspirationWindow`] centered around `score`.
@@ -218,8 +218,8 @@ impl AspirationWindow {
             // Otherwise we build a window around the provided score.
             let delta = Self::delta(depth);
             SearchBounds::new(
-                (score - delta).max(-Score::INF),
-                (score + delta).min(Score::INF),
+                score.saturating_sub(delta).max(-Score::INF),
+                score.saturating_add(delta).min(Score::INF),
             )
         };
 
@@ -236,11 +236,12 @@ impl AspirationWindow {
     #[inline(always)]
     fn widen_down(&mut self, score: Score, depth: Ply) {
         // Compute a gradually-increasing delta
-        let delta = Self::delta(depth) * (1 << (self.alpha_fails + 1));
+        let delta = Self::delta(depth).saturating_mul(Score::from(1 << (self.alpha_fails + 1)));
 
         // By convention, we widen both bounds on a fail low.
-        self.bounds.beta = ((self.bounds.alpha + self.bounds.beta) / 2).min(Score::INF);
-        self.bounds.alpha = (score - delta).max(-Score::INF);
+        self.bounds.beta =
+            ((self.bounds.alpha.saturating_add(self.bounds.beta)) / 2).min(Score::INF);
+        self.bounds.alpha = score.saturating_sub(delta).max(-Score::INF);
 
         // Increase number of failures
         self.alpha_fails += 1;
@@ -250,10 +251,10 @@ impl AspirationWindow {
     #[inline(always)]
     fn widen_up(&mut self, score: Score, depth: Ply) {
         // Compute a gradually-increasing delta
-        let delta = Self::delta(depth) * (1 << (self.beta_fails + 1));
+        let delta = Self::delta(depth).saturating_mul(Score::from(1 << (self.beta_fails + 1)));
 
         // Widen the beta bound
-        self.bounds.beta = (score + delta).min(Score::INF);
+        self.bounds.beta = score.saturating_add(delta).min(Score::INF);
 
         // Increase number of failures
         self.beta_fails += 1;
@@ -262,13 +263,13 @@ impl AspirationWindow {
     /// Returns `true` if `score` fails low, meaning it is below `alpha` and the window must be expanded downwards.
     #[inline(always)]
     fn fails_low(&self, score: Score) -> bool {
-        self.bounds.alpha != -Score::INF && score <= self.bounds.alpha
+        self.bounds.alpha > -Score::INF && score <= self.bounds.alpha
     }
 
     /// Returns `true` if `score` fails high, meaning it is above `beta` and the window must be expanded upwards.
     #[inline(always)]
     fn fails_high(&self, score: Score) -> bool {
-        self.bounds.beta != Score::INF && score >= self.bounds.beta
+        self.bounds.beta < Score::INF && score >= self.bounds.beta
     }
 }
 
@@ -347,7 +348,7 @@ impl SearchConfig {
     /// Constructs a new [`SearchConfig`] from the provided UCI options and game.
     ///
     /// The [`Game`] is used to determine side to move, and other factors when computing the soft/hard timeouts.
-    pub fn new<V: Variant>(options: UciSearchOptions, game: &Game<V>) -> Self {
+    pub fn new<V: Variant>(options: UciSearchOptions, game: &Game<V>, overhead: Duration) -> Self {
         let mut config = Self::default();
 
         // If supplied, set the max depth / node allowance
@@ -374,6 +375,10 @@ impl SearchConfig {
             // Only calculate timeouts if a time was provided
             if let Some(remaining) = remaining {
                 let inc = inc.unwrap_or(Duration::ZERO) / tune::time_inc_divisor!();
+
+                // Subtract the move overhead *before* computing timeouts, clamping to 0 if we've "ran out" of time.
+                let overhead = overhead.min(remaining / 2);
+                let remaining = remaining.saturating_sub(overhead);
 
                 // Don't exceed time limit with increment.
                 config.soft_timeout =
@@ -476,17 +481,6 @@ impl Default for SearchParameters {
                 let m = (moves_made as f32).ln();
                 let r = lmr_offset + d * m / lmr_divisor;
                 *reduction = r as i32;
-
-                // eprintln!(
-                //     "D: {depth:width$}, M: {moves_made:width$} := {r}",
-                //     width = 3
-                // );
-                // assert!(!d.is_nan() && d.is_finite(), "{depth} produced {d}");
-                // assert!(!m.is_nan() && m.is_finite(), "{moves_made} produced {m}");
-                // assert!(
-                //     !r.is_nan() && m.is_finite(),
-                //     "{depth} x {moves_made} produced {r}"
-                // );
             }
         }
 
@@ -514,6 +508,41 @@ impl Default for SearchParameters {
     }
 }
 
+/// Parameters for the various features used to enhance the efficiency of a search.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct SearchStats {
+    /// Number of moves searched until a beta cutoff occurred during the a/b search.
+    ///
+    /// This is cumulative, and is increased by `moves_made` on every beta cutoff.
+    beta_cutoff_indices: usize,
+
+    /// Number of beta cutoffs that occurred during the a/b search.
+    num_beta_cutoffs: usize,
+
+    /// Number of moves searched until a beta cutoff occurred during the quiescent search.
+    ///
+    /// This is cumulative, and is increased by `moves_made` on every beta cutoff.
+    qs_beta_cutoff_indices: usize,
+
+    /// Number of beta cutoffs that occurred during the quiescent search.
+    qs_num_beta_cutoffs: usize,
+
+    /// Number of null moves made in attempts to perform NMP.
+    nmp_attempts: usize,
+
+    /// Number of times NMP succeeded in producing a cutoff.
+    nmp_cutoffs: usize,
+
+    /// Number of nodes searched in qsearch.
+    qs_nodes: usize,
+
+    // Number of nodes searched with a zero-window within the a/b search.
+    zw_nodes: usize,
+
+    // Number of nodes searched with a zero-window within the quiescent search.
+    zw_qs_nodes: usize,
+}
+
 /// Executes a search on a game of chess.
 pub struct Search<'a, Log, V> {
     /// An atomic flag to determine if the search should be cancelled at any time.
@@ -524,8 +553,13 @@ pub struct Search<'a, Log, V> {
     /// Configuration variables for this instance of the search.
     config: SearchConfig,
 
-    /// Information collected that is returned at the conclusion of the search.
+    /// Essential information collected that is returned at the conclusion of the search.
     result: SearchResult,
+
+    /// Non-essential information collected during the search.
+    ///
+    /// This information is printed when the `debug` UCI option is set.
+    stats: SearchStats,
 
     /// Previous positions encountered during search.
     prev_positions: Vec<Position>,
@@ -565,6 +599,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             history,
             params,
             result: SearchResult::default(),
+            stats: SearchStats::default(),
             variant: PhantomData,
             log: PhantomData,
         }
@@ -643,33 +678,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             _ => self.iterative_deepening(game),
         }
 
-        // Debug info about the termination of the search.
-        if Log::DEBUG {
-            if let Err(reason) = self.search_cancelled() {
-                if let Some(bestmove) = self.result.bestmove() {
-                    self.send_string(format!(
-                        "Search cancelled during depth {} while evaluating {} with score {}. Reason: {reason}",
-                        self.result.depth,
-                        V::fmt_move(bestmove),
-                        self.result.score,
-                    ));
-                } else {
-                    self.send_string(format!(
-                        "Search cancelled during depth {} with score {} and no bestmove. Reason: {reason}",
-                        self.result.depth, self.result.score,
-                    ));
-                }
-            }
-
-            let hits = self.ttable.hits;
-            let reads = self.ttable.reads;
-            let writes = self.ttable.writes;
-            let hit_rate = (hits as f32 / reads as f32 * 100.0).min(0.0);
-            let collisions = self.ttable.collisions;
-            let info = format!("TT stats: {hits} hits / {reads} reads ({hit_rate:.2}% hit rate), {writes} writes, {collisions} collisions");
-            self.send_string(info);
-        }
-
         // Sanity check: If no bestmove, but there is a legal move, update bestmove.
         if self.result.bestmove().is_none() {
             if let Some(first) = moves.first().copied() {
@@ -681,6 +689,68 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Search has ended; send bestmove
         if Log::INFO {
             self.send_search_info(); // UCI spec states to send one last `info` before `bestmove`.
+
+            // Debug info about the termination of the search.
+            if Log::DEBUG {
+                if let Err(reason) = self.search_cancelled() {
+                    if let Some(bestmove) = self.result.bestmove() {
+                        self.send_string(format!(
+                        "Search cancelled during depth {} while evaluating {} with score {}. Reason: {reason}",
+                        self.result.depth,
+                        V::fmt_move(bestmove),
+                        self.result.score,
+                    ));
+                    } else {
+                        self.send_string(format!(
+                        "Search cancelled during depth {} with score {} and no bestmove. Reason: {reason}",
+                        self.result.depth, self.result.score,
+                    ));
+                    }
+                }
+
+                let hits = self.ttable.hits;
+                let reads = self.ttable.reads;
+                let writes = self.ttable.writes;
+                let hit_rate = (hits as f32 / reads as f32 * 100.0).min(0.0);
+                let collisions = self.ttable.collisions;
+                let info = format!("TT stats: {hits} hits / {reads} reads ({hit_rate:.2}% hit rate), {writes} writes, {collisions} collisions");
+                self.send_string(info);
+
+                // Send search stats
+                let ebf = (self.result.nodes as f32).powf(1.0 / self.result.depth.plies() as f32);
+                self.send_string(format!("branching factor: {ebf:.2}"));
+
+                let ab_bci =
+                    self.stats.beta_cutoff_indices as f32 / self.stats.num_beta_cutoffs as f32;
+                self.send_string(format!("avg beta cutoff index (AB): {ab_bci:.2}"));
+
+                let qs_bci = self.stats.qs_beta_cutoff_indices as f32
+                    / self.stats.qs_num_beta_cutoffs as f32;
+                self.send_string(format!("avg beta cutoff index (QS): {qs_bci:.2}"));
+
+                let nmp_cutoff_rate =
+                    self.stats.nmp_cutoffs as f32 / self.stats.nmp_attempts as f32 * 100.0;
+                self.send_string(format!("nmp cutoff rate: {nmp_cutoff_rate:.1}%"));
+
+                let qs_node_percent = self.stats.qs_nodes as f32 / self.result.nodes as f32 * 100.0;
+                self.send_string(format!(
+                    "qs nodes: {} ({qs_node_percent:.1}%)",
+                    self.stats.qs_nodes
+                ));
+
+                let zw_node_percent = self.stats.zw_nodes as f32 / self.result.nodes as f32 * 100.0;
+                self.send_string(format!(
+                    "zw nodes (AB): {} ({zw_node_percent:.1}%)",
+                    self.stats.zw_nodes
+                ));
+
+                let zw_qs_node_percent =
+                    self.stats.zw_qs_nodes as f32 / self.stats.qs_nodes as f32 * 100.0;
+                self.send_string(format!(
+                    "zw nodes (QS): {} ({zw_qs_node_percent:.1}%)",
+                    self.stats.zw_qs_nodes
+                ));
+            }
 
             // TODO: On a `go infinite` search, we should *only* send `bestmove` after `stop` is received, regardless of whether the search has concluded
             self.send_response(UciResponse::BestMove {
@@ -787,6 +857,11 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 }
             };
 
+            // We check this again here for sanity reasons.
+            if self.search_cancelled().is_err() {
+                break 'iterative_deepening;
+            }
+
             /****************************************************************************************************
              * Update current best score
              ****************************************************************************************************/
@@ -822,6 +897,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         pv: &mut PrincipalVariation,
     ) -> Result<Score, SearchCancelled> {
         self.search_cancelled()?; // Exit early if search is terminated.
+
+        // Zero window node
+        self.stats.zw_nodes += !Node::PV as usize;
 
         /****************************************************************************************************
          * Quiescence Search: https://www.chessprogramming.org/Quiescence_Search
@@ -937,6 +1015,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // let mut i = 0;
         // while let Some((mv, _)) = picker.next() {
         // for (i, (mv, _)) in picker.enumerate() {
+
         for (i, mv) in moves.iter().copied().enumerate() {
             /****************************************************************************************************
              * Move-Loop Pruning techniques
@@ -965,8 +1044,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             /****************************************************************************************************
              * Recursion of the search
              ****************************************************************************************************/
-            // Don't bother searching drawn positions, unless we're in the root node.
-            if Node::ROOT || !self.is_draw(&new) {
+            // Don't bother searching drawn positions.
+            if !self.is_draw(&new) {
                 // Append this position onto our stack, so we can detect repetitions
                 self.prev_positions.push(*new.position());
 
@@ -1077,15 +1156,18 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                         // for mv in picker.moves_so_far().iter().filter(|mv| mv.is_quiet()) {
                         self.history.update(game, mv, -bonus);
                     }
+
+                    // Record beta cutoff stats
+                    self.stats.beta_cutoff_indices += i;
+                    self.stats.num_beta_cutoffs += 1;
+
                     break;
                 }
             }
         }
 
         // Adjust mate score by 1 ply, since we're returning up the call stack
-        if best.is_mate() {
-            best -= best.signum();
-        }
+        best.adjust_mate();
 
         // Save this node to the TTable.
         self.save_to_tt(
@@ -1167,9 +1249,9 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         /****************************************************************************************************
          * Primary move loop
          ****************************************************************************************************/
-        let mut picker = MovePicker::new(moves, game, self.history, tt_move);
-        while let Some((mv, _)) = picker.next() {
-            // for mv in moves {
+        let picker = MovePicker::new(moves, game, self.history, tt_move);
+        for (i, (mv, _)) in picker.enumerate() {
+            // for (i, mv) in moves.iter().copied().enumerate() {
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
             local_pv.clear();
 
@@ -1180,8 +1262,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             /****************************************************************************************************
              * Recursion of the search
              ****************************************************************************************************/
-            // Don't bother searching drawn positions, unless we're in the root node.
-            if Node::ROOT || !self.is_draw(&new) {
+            // Don't bother searching drawn positions.
+            if !self.is_draw(&new) {
                 // Append this position onto our stack, so we can detect repetitions
                 self.prev_positions.push(*new.position());
 
@@ -1190,6 +1272,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 self.search_cancelled()?; // Exit early if search is terminated.
 
                 self.result.nodes += 1; // We've now searched this node
+                self.stats.qs_nodes += 1;
+                self.stats.zw_qs_nodes += !Node::PV as usize;
 
                 self.prev_positions.pop();
             }
@@ -1215,6 +1299,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                 // Fail high
                 if score >= bounds.beta {
+                    // Record beta cutoff stats
+                    self.stats.qs_beta_cutoff_indices += i;
+                    self.stats.qs_num_beta_cutoffs += 1;
+
                     break;
                 }
             }
@@ -1227,9 +1315,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         }
 
         // Adjust mate score by 1 ply, since we're returning up the call stack
-        if best.is_mate() {
-            best -= best.signum();
-        }
+        best.adjust_mate();
 
         // Save this node to the TTable.
         self.save_to_tt(
@@ -1419,6 +1505,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         && non_king_pawn_material.is_nonempty(); // Can't play nullmove if insufficient material (only Kings and Pawns)
 
         if can_perform_nmp {
+            self.stats.nmp_attempts += 1;
             let null_game = game.with_nullmove_made();
             // Record this position in our stack, for repetition detection
             self.prev_positions.push(*null_game.position());
@@ -1437,6 +1524,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
             // If making the nullmove produces a cutoff, we can assume that a full-depth search would also produce a cutoff
             if score >= bounds.beta {
+                self.stats.nmp_cutoffs += 1;
                 return Ok(Some(score));
             }
         }
@@ -1517,6 +1605,9 @@ fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &Principal
     }
 }
 
+/// Values are obtained from here: <https://www.chessprogramming.org/Simplified_Evaluation_Function>
+const MVV_LVA_PIECE_VALUES: [i32; PieceKind::COUNT] = [100, 320, 330, 500, 900, 0];
+
 /// This table represents values for [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) move ordering.
 ///
 /// It is indexed by `[attacker][victim]`, and yields a "score" that is used when sorting moves.
@@ -1524,14 +1615,14 @@ fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &Principal
 /// The following table is produced:
 /// ```text
 ///                     VICTIM
-/// A       P     N     B     R     Q     K     
+/// A       P     N     B     R     Q     K
 /// T    +---------------------------------+
-/// T   P| 900   3100  3200  4900  8900  0     
-/// A   N| 680   2880  2980  4680  8680  0     
-/// C   B| 670   2870  2970  4670  8670  0     
-/// K   R| 500   2700  2800  4500  8500  0     
-/// E   Q| 100   2300  2400  4100  8100  0     
-/// R   K| 1000  3200  3300  5000  9000  0     
+/// T   P| 900   3100  3200  4900  8900  0
+/// A   N| 680   2880  2980  4680  8680  0
+/// C   B| 670   2870  2970  4670  8670  0
+/// K   R| 500   2700  2800  4500  8500  0
+/// E   Q| 100   2300  2400  4100  8100  0
+/// R   K| 1000  3200  3300  5000  9000  0
 /// ```
 ///
 /// Note that the actual table is different, as it has size `12x12` instead of `6x6`
@@ -1565,7 +1656,7 @@ const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
 
             // Default MVV-LVA except that the King is assigned a value of 0 if he is attacking
             // bench: 27032804 nodes 8136592 nps
-            let score = 10 * vtm.value() - atk.value();
+            let score = 10 * MVV_LVA_PIECE_VALUES[vtm.index()] - MVV_LVA_PIECE_VALUES[atk.index()];
 
             // If the attacker is the King, the score is half the victim's value.
             // This encourages the King to attack, but not as strongly as other pieces.
@@ -1630,42 +1721,20 @@ mod tests {
         .start(&game)
     }
 
-    fn ensure_is_mate_in(fen: &str, config: SearchConfig, moves: i32) -> SearchResult {
-        let res = run_search(fen, config);
-        assert!(
-            res.score.is_mate(),
-            "Search on {fen:?} with config {config:#?} produced result that is not mate.\nResult: {res:#?}"
-        );
-        assert_eq!(
-            res.score.moves_to_mate(),
-            moves,
-            "Search on {fen:?} with config {config:#?} produced result not mate in {moves}.\nResult: {res:#?}"
-        );
-        res
-    }
+    fn run_search_tests(tests: &[(&str, &str)], config: SearchConfig) {
+        for (fen, mv) in tests {
+            let res = run_search(fen, config);
 
-    #[test]
-    fn test_white_mate_in_1() {
-        let fen = "k7/8/KQ6/8/8/8/8/8 w - - 0 1";
-        let config = SearchConfig {
-            max_depth: Ply::new(2),
-            ..Default::default()
-        };
-
-        let res = ensure_is_mate_in(fen, config, 1);
-        assert_eq!(res.bestmove().unwrap(), "b6a7", "Result: {res:#?}");
-    }
-
-    #[test]
-    fn test_black_mated_in_1() {
-        let fen = "2k5/7Q/8/2K5/8/8/8/6Q1 b - - 0 1";
-        let config = SearchConfig {
-            max_depth: Ply::new(3),
-            ..Default::default()
-        };
-
-        let res = ensure_is_mate_in(fen, config, -1);
-        assert!(["c8b8", "c8d8"].contains(&res.bestmove().unwrap().to_string().as_str()));
+            assert!(
+                res.bestmove().is_some(),
+                "Search on fen {fen} found no bestmove. Expected {mv}"
+            );
+            let bestmove = res.bestmove().unwrap();
+            assert_eq!(
+                bestmove, mv,
+                "Search on fen {fen} found {bestmove} as bestmove. Expected {mv}"
+            );
+        }
     }
 
     #[test]
@@ -1679,25 +1748,12 @@ mod tests {
     }
 
     #[test]
-    fn test_obvious_capture_promote() {
-        // Pawn should take queen and also promote to queen
-        let fen = "3q1n2/4P3/8/8/8/8/k7/7K w - - 0 1";
-        let config = SearchConfig {
-            max_depth: Ply::new(1),
-            ..Default::default()
-        };
-
-        let res = run_search(fen, config);
-        assert_eq!(res.bestmove().unwrap(), "e7d8q");
-    }
-
-    #[test]
     fn test_quick_search_finds_move() {
         // If *any* legal move is available, it should be found, regardless of how much time was given.
         let fen = FEN_STARTPOS;
         let config = SearchConfig {
-            soft_timeout: Duration::from_nanos(1),
-            hard_timeout: Duration::from_nanos(1),
+            soft_timeout: Duration::from_nanos(0),
+            hard_timeout: Duration::from_nanos(0),
             ..Default::default()
         };
 
@@ -1760,5 +1816,107 @@ mod tests {
         };
         let res = run_search(fen, config);
         assert_ne!(res.bestmove().unwrap(), "d5e6");
+    }
+
+    /// From https://github.com/kz04px/rawr/blob/master/tests/search.rs
+    #[test]
+    fn test_search_mate_in_one() {
+        let tests = [
+            ("6k1/R7/6K1/8/8/8/8/8 w - - 0 1", "a7a8"),
+            ("8/8/8/8/8/6k1/r7/6K1 b - - 0 1", "a2a1"),
+            ("6k1/4R3/6K1/q7/8/8/8/8 w - - 0 1", "e7e8"),
+            ("8/8/8/8/Q7/6k1/4r3/6K1 b - - 0 1", "e2e1"),
+            ("6k1/8/6K1/q3R3/8/8/8/8 w - - 0 1", "e5e8"),
+            ("8/8/8/8/Q3r3/6k1/8/6K1 b - - 0 1", "e4e1"),
+            ("k7/6R1/5R1P/8/8/8/8/K7 w - - 0 1", "f6f8"),
+            ("k7/8/8/8/8/5r1p/6r1/K7 b - - 0 1", "f3f1"),
+        ];
+
+        let config = SearchConfig {
+            max_depth: Ply::new(3),
+            ..Default::default()
+        };
+        run_search_tests(&tests, config);
+    }
+
+    /// From https://github.com/kz04px/rawr/blob/master/tests/search.rs
+    #[test]
+    fn test_search_obvious_captures() {
+        let tests = [
+            ("5k2/8/8/b7/2N5/r7/8/5K2 w - - 0 1", "c4a3"),
+            ("5k2/8/8/B7/2n5/R7/8/5K2 b - - 0 1", "c4a3"),
+            ("5k2/8/8/b7/2N5/r7/8/5K2 w - - 0 1", "c4a3"),
+            ("5k2/8/8/B7/2n5/R7/8/5K2 b - - 0 1", "c4a3"),
+            ("4k3/8/8/1n1p4/2P5/8/8/4K3 w - - 0 1", "c4b5"),
+            ("4k3/8/8/2p5/1N1P4/8/8/4K3 b - - 0 1", "c5b4"),
+        ];
+
+        let config = SearchConfig {
+            max_depth: Ply::new(3),
+            ..Default::default()
+        };
+        run_search_tests(&tests, config);
+    }
+
+    /// From https://github.com/kz04px/rawr/blob/master/tests/search.rs
+    #[test]
+    fn test_search_finds_3_fold() {
+        let tests = [
+            ("7k/2QQ4/8/8/8/PPP5/2q5/K7 b - - 0 1", "c2c1"),
+            ("k7/2Q5/ppp5/8/8/8/2qq4/7K w - - 0 1", "c7c8"),
+        ];
+
+        let config = SearchConfig {
+            max_depth: Ply::new(3),
+            ..Default::default()
+        };
+        run_search_tests(&tests, config);
+    }
+
+    /// From https://github.com/kz04px/rawr/blob/master/tests/search.rs
+    #[test]
+    fn test_search_avoids_50_move() {
+        let tests = [
+            ("7k/8/R7/1R6/7K/8/7P/8 w - - 99 1", "h2h3"),
+            ("8/7p/8/7k/1r6/r7/8/7K b - - 99 1", "h7h6"),
+            ("8/8/8/P7/8/6n1/3R4/R3K2k w Q - 99 1", "a5a6"),
+            ("r3k2K/3r4/6N1/8/p7/8/8/8 b q - 99 1", "a4a3"),
+        ];
+
+        let config = SearchConfig {
+            max_depth: Ply::new(3),
+            ..Default::default()
+        };
+        run_search_tests(&tests, config);
+    }
+
+    /// From https://github.com/kz04px/rawr/blob/master/tests/search.rs
+    #[test]
+    fn test_search_finds_stalemate() {
+        let tests = [
+            ("k5q1/p7/8/6q1/6q1/6q1/8/Q6K w - - 0 1", "a1a7"),
+            ("q6k/8/6Q1/6Q1/6Q1/8/P7/K5Q1 b - - 0 1", "a8a2"),
+        ];
+
+        let config = SearchConfig {
+            max_depth: Ply::new(3),
+            ..Default::default()
+        };
+        run_search_tests(&tests, config);
+    }
+
+    /// From https://github.com/kz04px/rawr/blob/master/tests/search.rs
+    #[test]
+    fn test_search_finds_under_promotion() {
+        let tests = [
+            ("8/5P1k/8/4B1K1/8/1B6/2N5/8 w - - 0 1", "f7f8n"),
+            ("8/2n5/1b6/8/4b1k1/8/5p1K/8 b - - 0 1", "f2f1n"),
+        ];
+
+        let config = SearchConfig {
+            max_depth: Ply::new(3),
+            ..Default::default()
+        };
+        run_search_tests(&tests, config);
     }
 }

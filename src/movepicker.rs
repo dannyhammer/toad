@@ -76,8 +76,7 @@ impl MovePicker {
             } else
             // Capturing a high-value piece with a low-value piece is a good idea
             if let Some(victim) = game.piece_at(to) {
-                // scores[i] += MVV_LVA[piece][victim];
-                scores[i] += (10 * victim.kind().value() - piece.kind().value()) << 16
+                scores[i] += MVV_LVA[piece][victim];
             }
 
             if scores[i] > scores[best_index] {
@@ -103,7 +102,7 @@ impl MovePicker {
     //     &self.moves[..(self.current - 1)]
     // }
 
-    pub fn next(&mut self) -> Option<(Move, Score)> {
+    pub fn get_next(&mut self) -> Option<(Move, Score)> {
         // No more moves left
         if self.current == self.moves.len() {
             return None;
@@ -128,35 +127,13 @@ impl MovePicker {
     }
 }
 
-/*
 impl Iterator for MovePicker {
     type Item = (Move, Score);
 
     fn next(&mut self) -> Option<Self::Item> {
-        // No more moves left
-        if self.current == self.moves.len() {
-            return None;
-        }
-
-        // Fetch current move and score
-        let mv = self.moves[self.current];
-        let score = self.scores[self.current];
-
-        // Increment counter, since we're looking at the next move
-        self.current += 1;
-
-        // For all remaining moves, if one is found with a higher score, swap it to the current index
-        for i in (self.current + 1)..self.moves.len() {
-            if self.scores[i] > self.scores[self.current] {
-                self.moves.swap(self.current, i);
-                self.scores.swap(self.current, i);
-            }
-        }
-
-        Some((mv, score))
+        self.get_next()
     }
 }
- */
 
 /*
 struct Picker<T, const CAP: usize> {
@@ -209,6 +186,9 @@ impl<T: Copy + std::fmt::Debug, const CAP: usize> Iterator for Picker<T, CAP> {
 }
  */
 
+/// Values are obtained from here: <https://www.chessprogramming.org/Simplified_Evaluation_Function>
+const MVV_LVA_PIECE_VALUES: [i32; PieceKind::COUNT] = [100, 320, 330, 500, 900, 0];
+
 /// This table represents values for [MVV-LVA](https://www.chessprogramming.org/MVV-LVA) move ordering.
 ///
 /// It is indexed by `[attacker][victim]`, and yields a "score" that is used when sorting moves.
@@ -257,7 +237,7 @@ pub const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
 
             // Default MVV-LVA except that the King is assigned a value of 0 if he is attacking
             // bench: 27032804 nodes 8136592 nps
-            let score = 10 * vtm.value() - atk.value();
+            let score = 10 * MVV_LVA_PIECE_VALUES[vtm.index()] - MVV_LVA_PIECE_VALUES[atk.index()];
 
             // If the attacker is the King, the score is half the victim's value.
             // This encourages the King to attack, but not as strongly as other pieces.
@@ -327,24 +307,24 @@ mod tests {
         let mut picker = MovePicker::new(moves, &game, &history, tt_move);
 
         // Hash move comes first
-        let (mv, score) = picker.next().unwrap();
+        let (mv, score) = picker.get_next().unwrap();
         assert_eq!(mv, "b2b3", "Got score of {score}"); // BxB
 
         // MVV-LVA captures; will need to update once SEE is implemented
         // e2a6, f3f6, g2h3, e5g6, f3h3
-        let (mv, score) = picker.next().unwrap();
+        let (mv, score) = picker.get_next().unwrap();
         assert_eq!(mv, "e2a6", "Got score of {score}"); // BxB
 
-        let (mv, score) = picker.next().unwrap();
+        let (mv, score) = picker.get_next().unwrap();
         assert_eq!(mv, "f3f6", "Got score of {score}"); // QxN
 
-        let (mv, score) = picker.next().unwrap();
+        let (mv, score) = picker.get_next().unwrap();
         assert_eq!(mv, "g2h3", "Got score of {score}"); // PxP
 
-        let (mv, score) = picker.next().unwrap();
+        let (mv, score) = picker.get_next().unwrap();
         assert_eq!(mv, "e5g6", "Got score of {score}"); // NxP
 
-        let (mv, score) = picker.next().unwrap();
+        let (mv, score) = picker.get_next().unwrap();
         assert_eq!(mv, "f3h3", "Got score of {score}"); // QxP
     }
 }
