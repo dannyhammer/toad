@@ -173,26 +173,28 @@ impl Evaluator {
     /// Internally uses [PeSTO's evaluation function](https://www.chessprogramming.org/PeSTO%27s_Evaluation_Function#Source_Code).
     #[inline(always)]
     pub fn eval_for<V: Variant>(game: &Game<V>, color: Color) -> Score {
-        let mut mg = [Score::DRAW; Color::COUNT];
-        let mut eg = [Score::DRAW; Color::COUNT];
+        let mut mg = [0; Color::COUNT];
+        let mut eg = [0; Color::COUNT];
         let mut phase = 0;
 
         // Evaluate each piece
         for (square, piece) in game.iter() {
             let (mg_psqt, eg_psqt) = Psqt::evals(piece, square);
-            mg[piece.color()] += mg_psqt;
-            eg[piece.color()] += eg_psqt;
+            mg[piece.color()] += mg_psqt.inner() as i32;
+            eg[piece.color()] += eg_psqt.inner() as i32;
             phase += GAME_PHASE_INC[piece];
         }
 
         // Tapered eval
         let mg_score = mg[color] - mg[color.opponent()];
         let eg_score = eg[color] - eg[color.opponent()];
-        let mg_phase = Score::from(phase.min(24)); // in case of early promotion
+        let mg_phase = phase.min(24); // in case of early promotion
         let eg_phase = 24 - mg_phase;
 
         // Interpolate the score
-        (mg_score * mg_phase + eg_score * eg_phase) / 24
+        let eval = (mg_score * mg_phase + eg_score * eg_phase) / 24;
+
+        Score::from(eval)
     }
 
     /// Divides the original material value of the board by the current material value, yielding an `i32` in the range `[0, 100]`
