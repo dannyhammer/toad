@@ -951,7 +951,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
                 // futility pruning
                 let fp_margin = depth.plies() * 150 + 150;
-                if mv.is_quiet() && depth <= 8 && game.eval() + fp_margin <= bounds.alpha {
+                if mv.is_quiet() && game.eval() + fp_margin <= bounds.alpha {
                     break;
                 }
             }
