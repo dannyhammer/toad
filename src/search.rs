@@ -355,7 +355,7 @@ impl SearchConfig {
     /// Constructs a new [`SearchConfig`] from the provided UCI options and game.
     ///
     /// The [`Game`] is used to determine side to move, and other factors when computing the soft/hard timeouts.
-    pub fn new<V: Variant>(options: UciSearchOptions, game: &Game<V>) -> Self {
+    pub fn new<V: Variant>(options: UciSearchOptions, game: &Game<V>, overhead: Duration) -> Self {
         let mut config = Self::default();
 
         // If supplied, set the max depth / node allowance
@@ -382,6 +382,10 @@ impl SearchConfig {
             // Only calculate timeouts if a time was provided
             if let Some(remaining) = remaining {
                 let inc = inc.unwrap_or(Duration::ZERO) / tune::time_inc_divisor!();
+
+                // Subtract the move overhead *before* computing timeouts, clamping to 0 if we've "ran out" of time.
+                let overhead = overhead.min(remaining / 2);
+                let remaining = remaining.saturating_sub(overhead);
 
                 // Don't exceed time limit with increment.
                 config.soft_timeout =
@@ -484,17 +488,6 @@ impl Default for SearchParameters {
                 let m = (moves_made as f32).ln();
                 let r = lmr_offset + d * m / lmr_divisor;
                 *reduction = r as i32;
-
-                // eprintln!(
-                //     "D: {depth:width$}, M: {moves_made:width$} := {r}",
-                //     width = 3
-                // );
-                // assert!(!d.is_nan() && d.is_finite(), "{depth} produced {d}");
-                // assert!(!m.is_nan() && m.is_finite(), "{moves_made} produced {m}");
-                // assert!(
-                //     !r.is_nan() && m.is_finite(),
-                //     "{depth} x {moves_made} produced {r}"
-                // );
             }
         }
 

@@ -14,6 +14,7 @@ use std::{
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
+    time::Duration,
 };
 
 use anyhow::{bail, Context, Result};
@@ -28,6 +29,11 @@ use crate::{
 
 /// Default depth at which to run the benchmark searches.
 const BENCH_DEPTH: u8 = 13;
+
+/// Constants for controlling the move overhead to assume when searching.
+const MS_MOVE_OVERHEAD_DEFAULT: u64 = 20;
+const MS_MOVE_OVERHEAD_MIN: u64 = 0;
+const MS_MOVE_OVERHEAD_MAX: u64 = 2000;
 
 /// The Toad chess engine.
 #[derive(Debug)]
@@ -58,6 +64,9 @@ pub struct Engine {
     /// Whether to display extra information during execution.
     debug: bool,
 
+    /// Amount to subtract from search time in order to account for communication delay.
+    move_overhead: Duration,
+
     /// Parameters for search features like pruning, extensions, etc.
     params: Arc<Mutex<SearchParameters>>,
 }
@@ -79,6 +88,7 @@ impl Engine {
             history: Default::default(),
             debug: false,
             params: Default::default(),
+            move_overhead: Duration::from_millis(MS_MOVE_OVERHEAD_DEFAULT),
         }
     }
 
@@ -206,6 +216,7 @@ impl Engine {
                 } => self.moves(&game, square, pretty, debug, sort),
 
                 EngineCommand::Option { name } => {
+                    let name = name.join(" "); // Concat the name into a single string
                     if let Some(value) = self.get_option::<V>(&name) {
                         println!("Option {name:?} := {value}");
                     } else {
@@ -281,7 +292,7 @@ impl Engine {
                     return Ok(());
                 }
 
-                let config = SearchConfig::new(options, game);
+                let config = SearchConfig::new(options, game, self.move_overhead);
                 self.search_thread = if self.debug {
                     self.start_search::<LogDebug, V>(*game, config)
                 } else {
@@ -666,6 +677,12 @@ impl Engine {
             ),
             UciOption::spin("Threads", 1, 1, 1),
             UciOption::check("UCI_Chess960", false),
+            UciOption::spin(
+                "Move Overhead",
+                MS_MOVE_OVERHEAD_DEFAULT as i32,
+                MS_MOVE_OVERHEAD_MIN as i32,
+                MS_MOVE_OVERHEAD_MAX as i32,
+            ),
         ]
         .into_iter()
     }
@@ -681,7 +698,11 @@ impl Engine {
             // Re-size the hash table
             "Hash" => {
                 let Some(value) = value.as_ref() else {
-                    bail!("usage: setoption name {name} value <value>");
+                    bail!(
+                        "usage: setoption name {name} value {}..={}",
+                        TTable::MIN_SIZE,
+                        TTable::MAX_SIZE
+                    );
                 };
 
                 let Ok(mb) = value.parse() else {
@@ -690,10 +711,10 @@ impl Engine {
 
                 // Ensure the value is within bounds
                 if mb < TTable::MIN_SIZE {
-                    bail!("Minimum value for Hash is {}mb", TTable::MIN_SIZE);
+                    bail!("Minimum value for {name} is {}mb", TTable::MIN_SIZE);
                 }
                 if mb > TTable::MAX_SIZE {
-                    bail!("Maximum value for Hash is {}mb", TTable::MAX_SIZE);
+                    bail!("Maximum value for {name} is {}mb", TTable::MAX_SIZE);
                 }
 
                 *self.ttable() = TTable::new(mb);
@@ -720,6 +741,26 @@ impl Engine {
                 self.send_command(EngineCommand::ChangeVariant { variant: Some(v) });
             }
 
+            "Move Overhead" => {
+                let Some(value) = value.as_ref() else {
+                    bail!(
+                        "usage: setoption name {name} value {}..={}",
+                        MS_MOVE_OVERHEAD_MIN,
+                        MS_MOVE_OVERHEAD_MAX
+                    );
+                };
+
+                let Ok(ms) = value.parse() else {
+                    bail!("expected bool. got {value:?}");
+                };
+
+                if ms > MS_MOVE_OVERHEAD_MAX {
+                    bail!("Maximum value for {name} is {}sb", MS_MOVE_OVERHEAD_MAX);
+                }
+
+                self.move_overhead = Duration::from_millis(ms);
+            }
+
             _ => {
                 if let Some(value) = value.as_ref() {
                     bail!("Unrecognized option {name:?} with value {value:?}")
@@ -744,13 +785,16 @@ impl Engine {
     /// Returns the current value of the option `name`, if it exists on this engine.
     fn get_option<V: Variant>(&self, name: &str) -> Option<String> {
         let value = match name {
-            "Clear Hash" => String::default(),
+            "Clear Hash" => String::from("N/A (button)"),
 
             "Hash" => format!("{}", self.ttable().size()),
 
             "Threads" => String::from("1"),
 
             "UCI_Chess960" => format!("{}", V::variant() == GameVariant::Chess960),
+
+            "Move Overhead" => self.move_overhead.as_millis().to_string(),
+
             _ => return None,
         };
 
