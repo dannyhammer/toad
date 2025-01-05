@@ -948,6 +948,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                 if depth <= self.params.max_lmp_depth && i >= min_lmp_moves {
                     break;
                 }
+
+                // futility pruning
+                let fp_margin = depth.plies() * 150 + 150;
+                if mv.is_quiet() && depth <= 8 && game.eval() + fp_margin <= bounds.alpha {
+                    break;
+                }
             }
 
             // Copy-make the new position
