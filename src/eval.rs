@@ -188,8 +188,8 @@ impl Evaluator {
         // Tapered eval
         let mg_score = mg[color] - mg[color.opponent()];
         let eg_score = eg[color] - eg[color.opponent()];
-        let mg_phase = phase.min(24); // in case of early promotion
-        let eg_phase = 24 - mg_phase;
+        let mg_phase = Score::from(phase.min(24)); // in case of early promotion
+        let eg_phase = Score::from(24 - mg_phase);
 
         // Interpolate the score
         (mg_score * mg_phase + eg_score * eg_phase) / 24
