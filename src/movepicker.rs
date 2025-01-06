@@ -6,9 +6,7 @@
 
 use arrayvec::ArrayVec;
 
-use crate::{
-    Color, Game, HistoryTable, Move, MoveList, Piece, PieceKind, Score, Variant, MAX_NUM_MOVES,
-};
+use crate::{Color, Game, HistoryTable, Move, MoveList, Piece, PieceKind, Variant, MAX_NUM_MOVES};
 
 // enum Order {
 //     HashMove,
@@ -19,7 +17,7 @@ use crate::{
 
 pub struct MovePicker {
     moves: MoveList,
-    scores: ArrayVec<Score, MAX_NUM_MOVES>,
+    scores: ArrayVec<i32, MAX_NUM_MOVES>,
     current: usize,
     // pub skip_quiets: bool,
 }
@@ -31,7 +29,7 @@ impl MovePicker {
         history: &HistoryTable,
         tt_move: Option<Move>,
     ) -> Self {
-        let mut scores = ArrayVec::from([Score::BASE_MOVE_SCORE; MAX_NUM_MOVES]);
+        let mut scores = ArrayVec::from([0; MAX_NUM_MOVES]);
         let mut best_index = 0;
 
         /*
@@ -61,7 +59,7 @@ impl MovePicker {
             // TT move should have highest priority
             if Some(mv) == tt_move {
                 // scores[i] = -Score::new(i32::MIN);
-                scores[i] = Score::new(i32::MAX);
+                scores[i] = i32::MAX;
                 best_index = i;
                 continue;
             }
@@ -102,7 +100,7 @@ impl MovePicker {
     //     &self.moves[..(self.current - 1)]
     // }
 
-    pub fn get_next(&mut self) -> Option<(Move, Score)> {
+    pub fn get_next(&mut self) -> Option<(Move, i32)> {
         // No more moves left
         if self.current == self.moves.len() {
             return None;
@@ -128,7 +126,7 @@ impl MovePicker {
 }
 
 impl Iterator for MovePicker {
-    type Item = (Move, Score);
+    type Item = (Move, i32);
 
     fn next(&mut self) -> Option<Self::Item> {
         self.get_next()
