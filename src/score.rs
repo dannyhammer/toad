@@ -10,16 +10,24 @@ use uci_parser::UciScore;
 
 use crate::{tune, Color, Ply};
 
+/// Internal representation for a [`Score`].
+type ScoreInner = i16;
+
+/// Internal type that is larger than [`ScoreInner`].
+///
+/// This is used during linear interpolation between scores.
+type ScoreInnerLarger = i32;
+
 /// A numerical representation of the evaluation of a position / move, in units of ["centipawns"](https://www.chessprogramming.org/Score).
 ///
 /// This value is internally capped at [`Self::INF`].
 #[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct Score(i32);
+pub struct Score(ScoreInner);
 
 impl Score {
     /// Largest possible score ever achievable.
-    pub const INF: Self = Self(i16::MAX as i32);
+    pub const INF: Self = Self(ScoreInner::MAX);
 
     /// Score of mate in the current position.
     pub const MATE: Self = Self(Self::INF.0 - 1);
@@ -30,7 +38,7 @@ impl Score {
     /// Lowest possible score for mate.
     ///
     /// This is only obtainable if mate is possible in [`Ply::MAX`] moves.
-    pub const LOWEST_MATE: Self = Self(Self::MATE.0 - Ply::MAX.plies());
+    pub const LOWEST_MATE: Self = Self(Self::MATE.0 - Ply::MAX.plies() as ScoreInner);
 
     /// Maximum bonus to apply to moves via history heuristic.
     pub const MAX_HISTORY: Self = Self(tune::max_history_bonus!());
@@ -46,31 +54,31 @@ impl Score {
 
     /// Constructs a new [`Score`] instance.
     #[inline(always)]
-    pub const fn new(score: i32) -> Self {
+    pub const fn new(score: ScoreInner) -> Self {
         Self(score)
     }
 
     /// Constructs a new [`Score`] instance that represents *being* checkmated in `n` plies.
     #[inline(always)]
     pub const fn mated_in(n: Ply) -> Self {
-        Self(-Self::MATE.0 + n.plies())
+        Self(-Self::MATE.0 + n.plies() as ScoreInner)
     }
 
     /// Constructs a new [`Score`] instance that represents *giving* checkmate in `n` plies.
     #[inline(always)]
     pub const fn mate_in(n: Ply) -> Self {
-        Self(Self::MATE.0 - n.plies())
+        Self(Self::MATE.0 - n.plies() as ScoreInner)
     }
 
     /// Constructs a new [`Score`] instance from an integer.
     #[inline(always)]
     pub const fn from_int(score: i32) -> Self {
-        Self(score)
+        Self(score as ScoreInner)
     }
 
     /// Returns the inner value of this [`Score`].
     #[inline(always)]
-    pub const fn inner(self) -> i32 {
+    pub const fn inner(self) -> ScoreInner {
         self.0
     }
 
@@ -101,14 +109,14 @@ impl Score {
         if self.is_mate() {
             UciScore::mate(self.moves_to_mate())
         } else {
-            UciScore::cp(self.0)
+            UciScore::cp(self.0 as i32)
         }
     }
 
     /// Returns the number of plies (half moves) this score is from mate.
     #[inline(always)]
     pub const fn plies_to_mate(&self) -> i32 {
-        Self::MATE.0 - self.0.abs()
+        (Self::MATE.0 - self.0.abs()) as i32
     }
 
     /// Returns the number of moves (full moves) this score is from mate.
@@ -136,7 +144,7 @@ impl Score {
     /// This helps with mate score adjustments, ensuring that a mate score is always relative to the current ply.
     #[inline(always)]
     pub const fn adjust_mate(&mut self) {
-        self.0 -= self.0.signum() * self.is_mate() as i32
+        self.0 -= self.0.signum() * self.is_mate() as ScoreInner
     }
 
     /// "Normalizes" a score so that it can be printed as a float.
@@ -153,9 +161,11 @@ impl Score {
     pub const fn lerp(self, other: Self, t: u8) -> Self {
         // Cast these to larger types to prevent overflow during the arithmetic.
         // TODO: Is there a nicer way of doing this? Perhaps with some of the std saturating/overflowing functions?
-        let overflow = self.0 as i64 + (other.0 as i64 - self.0 as i64) * t as i64 / 100;
+        let overflow = self.0 as ScoreInnerLarger
+            + (other.0 as ScoreInnerLarger - self.0 as ScoreInnerLarger) * t as ScoreInnerLarger
+                / 100;
 
-        Self(overflow as i32)
+        Self(overflow as ScoreInner)
     }
 
     /// Wrapper for `saturating_add` on a [`Score`]'s internal representation.
@@ -187,7 +197,7 @@ impl From<Score> for UciScore {
 impl From<i32> for Score {
     #[inline(always)]
     fn from(value: i32) -> Self {
-        Self(value)
+        Self(value as ScoreInner)
     }
 }
 
@@ -202,16 +212,16 @@ macro_rules! impl_binary_op {
             }
         }
 
-        impl std::ops::$trait<i32> for Score {
+        impl std::ops::$trait<ScoreInner> for Score {
             type Output = Self;
 
             #[inline(always)]
-            fn $fn(self, rhs: i32) -> Self::Output {
+            fn $fn(self, rhs: ScoreInner) -> Self::Output {
                 Self(self.0.$fn(rhs))
             }
         }
 
-        impl std::ops::$trait<Score> for i32 {
+        impl std::ops::$trait<Score> for ScoreInner {
             type Output = Score;
 
             #[inline(always)]
@@ -225,7 +235,7 @@ macro_rules! impl_binary_op {
 
             #[inline(always)]
             fn $fn(self, rhs: Ply) -> Self::Output {
-                Self(self.0.$fn(rhs.plies() as i32))
+                Self(self.0.$fn(rhs.plies() as ScoreInner))
             }
         }
 
@@ -234,7 +244,7 @@ macro_rules! impl_binary_op {
 
             #[inline(always)]
             fn $fn(self, rhs: Score) -> Self::Output {
-                Score((self.plies() as i32).$fn(rhs.0))
+                Score((self.plies() as ScoreInner).$fn(rhs.0))
             }
         }
     };
@@ -249,9 +259,9 @@ macro_rules! impl_binary_op_assign {
             }
         }
 
-        impl std::ops::$trait<i32> for Score {
+        impl std::ops::$trait<ScoreInner> for Score {
             #[inline(always)]
-            fn $fn(&mut self, rhs: i32) {
+            fn $fn(&mut self, rhs: ScoreInner) {
                 self.0.$fn(rhs);
             }
         }
@@ -280,7 +290,7 @@ impl std::ops::Mul<bool> for Score {
 
     #[inline(always)]
     fn mul(self, rhs: bool) -> Self::Output {
-        Self(self.0 * rhs as i32)
+        Self(self.0 * rhs as ScoreInner)
     }
 }
 
@@ -289,20 +299,20 @@ impl std::ops::Mul<Color> for Score {
 
     #[inline(always)]
     fn mul(self, rhs: Color) -> Self::Output {
-        Self(self.0 * rhs.negation_multiplier() as i32)
+        Self(self.0 * rhs.negation_multiplier() as ScoreInner)
     }
 }
 
-impl PartialEq<i32> for Score {
+impl PartialEq<ScoreInner> for Score {
     #[inline(always)]
-    fn eq(&self, other: &i32) -> bool {
+    fn eq(&self, other: &ScoreInner) -> bool {
         self.0.eq(other)
     }
 }
 
-impl PartialOrd<i32> for Score {
+impl PartialOrd<ScoreInner> for Score {
     #[inline(always)]
-    fn partial_cmp(&self, other: &i32) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &ScoreInner) -> Option<std::cmp::Ordering> {
         self.0.partial_cmp(other)
     }
 }
@@ -364,10 +374,10 @@ mod tests {
 
         // Plies to mate
         let our_mate = Score::MATE - plies;
-        assert_eq!(our_mate.plies_to_mate(), plies.plies() as i32);
+        assert_eq!(our_mate.plies_to_mate(), plies.plies());
 
         let their_mate = -(Score::MATE - plies);
-        assert_eq!(their_mate.plies_to_mate(), plies.plies() as i32);
+        assert_eq!(their_mate.plies_to_mate(), plies.plies());
     }
 
     #[test]
@@ -378,18 +388,24 @@ mod tests {
         assert_eq!(Score::new(0).lerp(Score::new(100), 65), Score::new(65));
         assert_eq!(Score::new(10).lerp(Score::new(20), 50), Score::new(15));
 
-        assert_eq!(Score::new(0).lerp(Score::new(i32::MAX), 0), Score::new(0));
-
         assert_eq!(
-            Score::new(0).lerp(Score::new(i32::MAX), 100),
-            Score::new(i32::MAX)
+            Score::new(0).lerp(Score::new(ScoreInner::MAX), 0),
+            Score::new(0)
         );
 
         assert_eq!(
-            Score::new(i32::MAX).lerp(Score::new(i32::MAX), 100),
-            Score::new(i32::MAX)
+            Score::new(0).lerp(Score::new(ScoreInner::MAX), 100),
+            Score::new(ScoreInner::MAX)
         );
 
-        // assert_eq!(Score::INF.lerp(Score::new(i32::MAX), 100), Score::INF);
+        assert_eq!(
+            Score::new(ScoreInner::MAX).lerp(Score::new(ScoreInner::MAX), 100),
+            Score::new(ScoreInner::MAX)
+        );
+
+        assert_eq!(
+            Score::INF.lerp(Score::new(ScoreInner::MAX), 100),
+            Score::INF
+        );
     }
 }

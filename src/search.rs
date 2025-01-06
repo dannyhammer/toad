@@ -435,10 +435,10 @@ pub struct SearchParameters {
     lmr_divisor: f32,
 
     /// Value to multiply depth by when computing history scores.
-    history_multiplier: Score,
+    history_multiplier: i32,
 
     /// Value to subtract from a history score at a given depth.
-    history_offset: Score,
+    history_offset: i32,
 
     /// Safety margin when applying reverse futility pruning.
     rfp_margin: Score,
@@ -493,8 +493,8 @@ impl Default for SearchParameters {
             min_lmr_moves: tune::min_lmr_moves!(),
             lmr_offset,
             lmr_divisor,
-            history_multiplier: Score::new(tune::history_multiplier!()),
-            history_offset: Score::new(tune::history_offset!()),
+            history_multiplier: tune::history_multiplier!(),
+            history_offset: tune::history_offset!(),
             rfp_margin: Score::new(tune::rfp_margin!()),
             check_extensions_depth: Ply::from_raw(tune::check_extensions_depth!()),
             max_razoring_depth: Ply::from_raw(tune::max_razoring_depth!()),
@@ -1144,7 +1144,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                      * as this one (as they did not cause a beta cutoff).
                      ****************************************************************************************************/
                     // Simple bonus based on depth
-                    let bonus = self.params.history_multiplier * depth - self.params.history_offset;
+                    let bonus =
+                        self.params.history_multiplier * depth.plies() - self.params.history_offset;
 
                     // Only update quiet moves
                     if mv.is_quiet() {
@@ -1415,16 +1416,16 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
     /// Applies a score to the provided move, intended to be used when ordering moves during search.
     #[inline(always)]
-    fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> Score {
+    fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> i32 {
         // TT move should be looked at first, so assign it the best possible score and immediately exit.
         if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
-            return Score::new(i32::MIN);
+            return i32::MIN;
         }
 
         // Safe unwrap because we can't move unless there's a piece at `from`
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
-        let mut score = Score::BASE_MOVE_SCORE;
+        let mut score = 0;
 
         // Apply history bonus to quiets
         if mv.is_quiet() {
