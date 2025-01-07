@@ -63,7 +63,7 @@ pub(crate) use min_aspiration_window_depth;
 /// Maximum bonus to apply to a move via History Heuristic.
 macro_rules! max_history_bonus {
     () => {
-        16_384
+        8_192
     };
 }
 pub(crate) use max_history_bonus;
