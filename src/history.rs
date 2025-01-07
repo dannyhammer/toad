@@ -11,7 +11,7 @@ use crate::{tune, Color, File, Game, Move, Piece, PieceKind, Rank, Square, Table
 ///
 /// Used to keep track of good/bad moves found during search.
 #[derive(Debug)]
-pub struct HistoryTable([Table<i32>; Piece::COUNT]);
+pub struct HistoryTable([Table<i16>; Piece::COUNT]);
 
 impl HistoryTable {
     /// Clear the history table, removing all scores.
@@ -24,7 +24,7 @@ impl HistoryTable {
     ///
     /// Uses the "history gravity" formula from <https://www.chessprogramming.org/History_Heuristic#History_Bonuses>
     #[inline(always)]
-    pub fn update<V: Variant>(&mut self, game: &Game<V>, mv: &Move, bonus: i32) {
+    pub fn update<V: Variant>(&mut self, game: &Game<V>, mv: &Move, bonus: i16) {
         // Safety: This is a move. There *must* be a piece at `from`.
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
@@ -34,7 +34,9 @@ impl HistoryTable {
         let clamped = bonus.clamp(-max, max);
 
         // History gravity formula
-        let new = current + clamped - current * clamped.abs() / max;
+        // Casting to i32 to prevent overflow
+        let new = (current as i32 + clamped as i32
+            - current as i32 * clamped.abs() as i32 / max as i32) as i16;
 
         self.0[piece].set(to, new);
     }
@@ -48,7 +50,7 @@ impl Default for HistoryTable {
 }
 
 impl Deref for HistoryTable {
-    type Target = [Table<i32>; Piece::COUNT];
+    type Target = [Table<i16>; Piece::COUNT];
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.0
