@@ -435,10 +435,10 @@ pub struct SearchParameters {
     lmr_divisor: f32,
 
     /// Value to multiply depth by when computing history scores.
-    history_multiplier: i32,
+    history_multiplier: i16,
 
     /// Value to subtract from a history score at a given depth.
-    history_offset: i32,
+    history_offset: i16,
 
     /// Safety margin when applying reverse futility pruning.
     rfp_margin: Score,
@@ -1139,8 +1139,8 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                      * as this one (as they did not cause a beta cutoff).
                      ****************************************************************************************************/
                     // Simple bonus based on depth
-                    let bonus =
-                        self.params.history_multiplier * depth.plies() - self.params.history_offset;
+                    let bonus = self.params.history_multiplier * depth.plies() as i16
+                        - self.params.history_offset;
 
                     // Only update quiet moves
                     if mv.is_quiet() {
@@ -1421,7 +1421,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Apply history bonus to quiets
         if mv.is_quiet() {
-            score += self.history[piece][to];
+            score += self.history[piece][to] as i32;
         } else
         // Capturing a high-value piece with a low-value piece is a good idea
         if let Some(victim) = game.piece_at(to) {
@@ -1661,8 +1661,8 @@ const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
             //     10 * value_of(vtm) - value_of(atk)
             // };
 
-            // Shift the value by a large amount so that captures are always ranked very highly
-            matrix[attacker][victim] = (score * can_capture as i32) << 16;
+            // Since HistoryTable uses an i16 internally, we offset by enough to always be above a history score.
+            matrix[attacker][victim] = (score * can_capture as i32) << i16::BITS;
             victim += 1;
         }
         attacker += 1;
