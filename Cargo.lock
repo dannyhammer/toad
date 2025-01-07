@@ -231,8 +231,8 @@ dependencies = [
 
 [[package]]
 name = "uci-parser"
-version = "0.2.0"
-source = "git+https://github.com/dannyhammer/uci-parser.git#8fc724cd30cb136d18050470da9ba93c75082042"
+version = "1.0.0"
+source = "git+https://github.com/dannyhammer/uci-parser.git#4559d15e8b77988736e76a5aaa29cc2fc910795a"
 dependencies = [
  "nom",
  "thiserror 1.0.69",

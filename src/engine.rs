@@ -278,7 +278,7 @@ impl Engine {
 
             Debug(status) => self.debug = status,
 
-            IsReady => println!("{}", UciResponse::<&str>::ReadyOk),
+            IsReady => println!("{}", UciResponse::readyok()),
 
             SetOption { name, value } => self.set_option(&name, value)?,
 
@@ -654,15 +654,15 @@ impl Engine {
     ///
     /// Prints engine's ID, version, and authors, and lists all UCI options.
     fn uci(&self) {
-        println!("id name {}\nid author {}\n", self.name(), self.authors());
+        println!("{}", UciResponse::Name(self.name()));
+        println!("{}\n", UciResponse::Name(self.authors()));
 
         // Print all UCI options
         for opt in self.options() {
             println!("{}", UciResponse::Option(opt));
         }
-
         // We're ready to go!
-        println!("{}", UciResponse::<&str>::UciOk)
+        println!("{}", UciResponse::uciok());
     }
 
     /// Convenience function to return an iterator over all UCI options this engine supports.
@@ -804,7 +804,7 @@ impl Engine {
     /// Helper to send a [`UciInfo`] containing only a `string` message to `stdout`.
     #[inline(always)]
     fn send_string<T: fmt::Display>(info: T) {
-        let resp = UciResponse::<String>::Info(Box::new(UciInfo::new().string(info)));
+        let resp = UciResponse::info(UciInfo::new().string(info));
         println!("{resp}");
     }
 
