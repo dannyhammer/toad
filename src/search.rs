@@ -1011,7 +1011,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * Primary move loop
          ****************************************************************************************************/
 
-        for (i, mv) in moves.iter().copied().enumerate() {
+        for (i, mv) in moves.iter().rev().copied().enumerate() {
             /****************************************************************************************************
              * Move-Loop Pruning techniques
              ****************************************************************************************************/
@@ -1250,7 +1250,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * Primary move loop
          ****************************************************************************************************/
 
-        for (i, mv) in moves.iter().copied().enumerate() {
+        for (i, mv) in moves.iter().rev().copied().enumerate() {
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
             local_pv.clear();
 
@@ -1408,27 +1408,33 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
     /// Applies a score to the provided move, intended to be used when ordering moves during search.
     #[inline(always)]
-    fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> i32 {
+    fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> MoveScore {
         // TT move should be looked at first, so assign it the best possible score and immediately exit.
         if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
-            return i32::MIN;
+            return MoveScore::HashMove;
         }
 
         // Safe unwrap because we can't move unless there's a piece at `from`
         let piece = game.piece_at(mv.from()).unwrap();
         let to = mv.to();
-        let mut score = 0;
 
         // Apply history bonus to quiets
         if mv.is_quiet() {
-            score += self.history[piece][to] as i32;
-        } else
-        // Capturing a high-value piece with a low-value piece is a good idea
-        if let Some(victim) = game.piece_at(to) {
-            score += MVV_LVA[piece][victim];
-        }
+            let history = self.history[piece][to] as i32;
+            MoveScore::Quiet(history)
+        } else {
+            let victim_square = if mv.is_en_passant() {
+                to.backward_by(piece.color(), 1).unwrap()
+            } else {
+                to
+            };
 
-        -score // We're sorting, so a lower number is better
+            // Capturing a high-value piece with a low-value piece is a good idea
+            let victim = game.piece_at(victim_square).unwrap();
+            let mvv_lva = MVV_LVA[piece][victim];
+
+            MoveScore::GoodCapture(mvv_lva)
+        }
     }
 
     /// If we can prune the provided node, this function returns a score to return upon pruning.
@@ -1598,6 +1604,14 @@ fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &Principal
     }
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum MoveScore {
+    Quiet(i32),
+    GoodCapture(i32),
+    // BadCapture(i32),
+    HashMove,
+}
+
 /// Values are obtained from here: <https://www.chessprogramming.org/Simplified_Evaluation_Function>
 const MVV_LVA_PIECE_VALUES: [i32; PieceKind::COUNT] = [100, 320, 330, 500, 900, 0];
 
@@ -1694,8 +1708,38 @@ pub fn print_mvv_lva_table() {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::*;
+
+    #[test]
+    fn test_move_score_ordering() {
+        use MoveScore::*;
+        let mut scores = [
+            Quiet(0),
+            GoodCapture(0),
+            GoodCapture(-1),
+            HashMove,
+            Quiet(-2),
+            GoodCapture(1),
+            Quiet(2),
+        ];
+
+        scores.sort();
+
+        assert_eq!(
+            scores,
+            [
+                Quiet(-2),
+                Quiet(0),
+                Quiet(2),
+                GoodCapture(-1),
+                GoodCapture(0),
+                GoodCapture(1),
+                HashMove,
+            ]
+        )
+    }
 
     fn run_search(fen: &str, config: SearchConfig) -> SearchResult {
         let is_searching = Arc::new(AtomicBool::new(true));
