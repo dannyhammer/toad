@@ -63,7 +63,6 @@ pub(crate) use min_aspiration_window_depth;
 /// Maximum bonus to apply to a move via History Heuristic.
 macro_rules! max_history_bonus {
     () => {
-        // 16_384
         32_767
     };
 }
@@ -83,7 +82,7 @@ pub(crate) use base_move_score;
 /// Value to multiply depth by when computing history scores.
 macro_rules! history_multiplier {
     () => {
-        300
+        600
     };
 }
 pub(crate) use history_multiplier;
@@ -91,7 +90,7 @@ pub(crate) use history_multiplier;
 /// Value to subtract from a history score at a given depth.
 macro_rules! history_offset {
     () => {
-        250
+        500
     };
 }
 pub(crate) use history_offset;
