@@ -956,15 +956,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
                     || ((entry.node_type == NodeScoreType::All && entry.score <= bounds.alpha)
                         || (entry.node_type == NodeScoreType::Cut && entry.score >= bounds.beta)))
             {
-                // Apply a history bonus to fail-high quiet moves that caused a TT cutoff
-                if entry.score >= bounds.beta && entry.bestmove.is_some_and(|mv| mv.is_quiet()) {
-                    let bonus = self.params.history_multiplier * depth.plies() as i16
-                        - self.params.history_offset;
-
-                    // Only update quiet moves
-                    self.history.update(game, &entry.bestmove.unwrap(), bonus);
-                }
-
                 return Ok(entry.score);
             } else {
                 entry.bestmove
