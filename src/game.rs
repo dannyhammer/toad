@@ -831,6 +831,22 @@ impl<V: Variant> Game<V> {
         moves
     }
 
+    /// Computes a [`Bitboard`] of ALL pieces that attack `square`.
+    ///
+    /// This _only_ includes the attacker itself, not the ray of attack.
+    /// Useful for Static Exchange Evaluation.
+    #[inline(always)]
+    pub fn compute_all_attacks_to(&self, square: Square, occupied: Bitboard) -> Bitboard {
+        (pawn_attacks(square, Color::Black) & self.pawn(Color::White))
+            | (pawn_attacks(square, Color::White) & self.pawn(Color::Black))
+            | (knight_attacks(square) & self.kind(PieceKind::Knight))
+            | (bishop_attacks(square, occupied)
+                & (self.kind(PieceKind::Bishop) | self.kind(PieceKind::Queen)))
+            | (rook_attacks(square, occupied)
+                & (self.kind(PieceKind::Rook) | self.kind(PieceKind::Queen)))
+            | (king_attacks(square) & self.kind(PieceKind::King))
+    }
+
     /// Recomputes legal metadata (checkers, checkmask, pinmask, etc.).
     #[inline(always)]
     fn recompute_legal_masks(&mut self) {
