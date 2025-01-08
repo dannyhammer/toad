@@ -26,7 +26,7 @@ pub enum ProbeResult<'a> {
 ///
 /// See [CPW](https://www.chessprogramming.org/Node_Types) for more.
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
-pub enum NodeType {
+pub enum NodeScoreType {
     /// The score is exact.
     Pv,
 
@@ -37,7 +37,7 @@ pub enum NodeType {
     Cut,
 }
 
-impl NodeType {
+impl NodeScoreType {
     /// Creates a new [`NodeType`] based on the parameters as follows:
     ///
     /// ```text
@@ -76,7 +76,7 @@ pub struct TTableEntry {
     pub score: Score,
 
     /// Node type of this entry.
-    pub node_type: NodeType,
+    pub node_type: NodeScoreType,
 }
 
 impl TTableEntry {
@@ -97,7 +97,7 @@ impl TTableEntry {
             bestmove,
             score,
             depth: depth.plies() as u8,
-            node_type: NodeType::new(score, bounds),
+            node_type: NodeScoreType::new(score, bounds),
         }
     }
 
@@ -252,9 +252,9 @@ impl TTable {
                 let score = entry.score;
 
                 // If we can cutoff, do so
-                if entry.node_type == NodeType::Pv
-                    || ((entry.node_type == NodeType::All && score <= bounds.alpha)
-                        || (entry.node_type == NodeType::Cut && score >= bounds.beta))
+                if entry.node_type == NodeScoreType::Pv
+                    || ((entry.node_type == NodeScoreType::All && score <= bounds.alpha)
+                        || (entry.node_type == NodeScoreType::Cut && score >= bounds.beta))
                 {
                     return ProbeResult::Cutoff(score);
                 }
@@ -302,7 +302,7 @@ mod test {
             bestmove: None,
             score: Default::default(),
             depth: 0,
-            node_type: NodeType::Pv,
+            node_type: NodeScoreType::Pv,
         };
 
         let entry2 = TTableEntry {
@@ -310,7 +310,7 @@ mod test {
             bestmove: None,
             score: Default::default(),
             depth: 0,
-            node_type: NodeType::Pv,
+            node_type: NodeScoreType::Pv,
         };
 
         // Create a TTable that can hold two elements.

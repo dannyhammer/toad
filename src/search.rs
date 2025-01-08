@@ -20,8 +20,8 @@ use thiserror::Error;
 use uci_parser::{UciInfo, UciResponse, UciSearchOptions};
 
 use crate::{
-    tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, Piece, PieceKind, Ply, Position,
-    ProbeResult, Score, TTable, TTableEntry, Variant, ZobristKey, MAX_NUM_MOVES,
+    tune, Color, Game, HistoryTable, LogLevel, Move, MoveList, NodeScoreType, Piece, PieceKind,
+    Ply, Position, ProbeResult, Score, TTable, TTableEntry, Variant, ZobristKey, MAX_NUM_MOVES,
 };
 
 /// Reasons that a search can be cancelled.
@@ -942,7 +942,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         if Log::DEBUG {
             self.ttable.reads += 1;
         }
-        let tt_move = match self.ttable.probe(game.key(), depth, bounds) {
+        let tt_move = if let Some(entry) = self.ttable.get(&game.key()) {
             /****************************************************************************************************
              * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
              *
@@ -950,27 +950,39 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
              * work by just returning the evaluation stored in the transposition table. However, we must be sure
              * that we are not in a PV node.
              ****************************************************************************************************/
-            ProbeResult::Cutoff(tt_score) if !Node::PV => return Ok(tt_score),
+            // Can only cut off if the existing entry came from a greater depth.
+            if entry.depth() >= depth
+                && (entry.node_type == NodeScoreType::Pv
+                    || ((entry.node_type == NodeScoreType::All && entry.score <= bounds.alpha)
+                        || (entry.node_type == NodeScoreType::Cut && entry.score >= bounds.beta)))
+            {
+                // Apply a history bonus to fail-high quiet moves that caused a TT cutoff
+                if entry.score >= bounds.beta && entry.bestmove.is_some_and(|mv| mv.is_quiet()) {
+                    let bonus = self.params.history_multiplier * depth.plies() as i16
+                        - self.params.history_offset;
 
-            // Entry was found, but could not be used to perform a cutoff
-            ProbeResult::Hit(tt_entry) => tt_entry.bestmove,
-
-            // Miss or otherwise unusable result
-            _ => {
-                /****************************************************************************************************
-                 * Internal Iterative Deepening: https://www.chessprogramming.org/Internal_Iterative_Deepening
-                 *
-                 * If we're in a PV node and there was no TT hit, this is likely to be a costly search, due to poor
-                 * move ordering. So, we perform a shallower search in order to get a TT move and to populate the
-                 * hash tables.
-                 ****************************************************************************************************/
-                if Node::PV && depth >= self.params.min_iid_depth {
-                    let iid_depth = depth - self.params.min_iid_depth + self.params.iid_offset;
-                    self.negamax::<Node>(game, iid_depth, ply, bounds, &mut local_pv)?;
-                    local_pv.0.first().copied() // Return the bestmove found during the reduced search
-                } else {
-                    None
+                    // Only update quiet moves
+                    self.history.update(game, &entry.bestmove.unwrap(), bonus);
                 }
+
+                return Ok(entry.score);
+            } else {
+                entry.bestmove
+            }
+        } else {
+            /****************************************************************************************************
+             * Internal Iterative Deepening: https://www.chessprogramming.org/Internal_Iterative_Deepening
+             *
+             * If we're in a PV node and there was no TT hit, this is likely to be a costly search, due to poor
+             * move ordering. So, we perform a shallower search in order to get a TT move and to populate the
+             * hash tables.
+             ****************************************************************************************************/
+            if Node::PV && depth >= self.params.min_iid_depth {
+                let iid_depth = depth - self.params.min_iid_depth + self.params.iid_offset;
+                self.negamax::<Node>(game, iid_depth, ply, bounds, &mut local_pv)?;
+                local_pv.0.first().copied() // Return the bestmove found during the reduced search
+            } else {
+                None
             }
         };
 
