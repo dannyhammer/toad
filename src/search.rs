@@ -1409,15 +1409,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
     /// Applies a score to the provided move, intended to be used when ordering moves during search.
     #[inline(always)]
-    fn score_move(
-        &self,
-        game: &Game<V>,
-        mv: &Move,
-        tt_move: Option<Move>,
-    ) -> MoveScore<Reverse<i32>> {
+    fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> MoveScore {
         // TT move should be looked at first, so assign it the best possible score and immediately exit.
         if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
-            return MoveScore::HashMove;
+            return MoveScore::hash_move();
         }
 
         // Safe unwrap because we can't move unless there's a piece at `from`
@@ -1427,7 +1422,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Apply history bonus to quiets
         if mv.is_quiet() {
             let history = self.history[piece][to] as i32;
-            MoveScore::Quiet(Reverse(history))
+            MoveScore::quiet(history)
         } else {
             let victim_square = if mv.is_en_passant() {
                 to.backward_by(piece.color(), 1).unwrap()
@@ -1439,7 +1434,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             let victim = game.piece_at(victim_square).unwrap();
             let mvv_lva = MVV_LVA[piece][victim];
 
-            MoveScore::GoodCapture(Reverse(mvv_lva))
+            MoveScore::good_capture(mvv_lva)
         }
     }
 
@@ -1611,11 +1606,25 @@ fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &Principal
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum MoveScore<T> {
+enum MoveScore {
     HashMove,
-    GoodCapture(T),
-    Quiet(T),
+    GoodCapture(Reverse<i32>),
+    Quiet(Reverse<i32>),
     // BadCapture(i32),
+}
+
+impl MoveScore {
+    fn hash_move() -> Self {
+        Self::HashMove
+    }
+
+    fn good_capture(score: i32) -> Self {
+        Self::GoodCapture(Reverse(score))
+    }
+
+    fn quiet(score: i32) -> Self {
+        Self::Quiet(Reverse(score))
+    }
 }
 
 /// Values are obtained from here: <https://www.chessprogramming.org/Simplified_Evaluation_Function>
@@ -1720,33 +1729,28 @@ mod tests {
 
     #[test]
     fn test_move_score_ordering() {
-        use MoveScore::*;
         let mut scores = [
-            Quiet(0),
-            GoodCapture(0),
-            GoodCapture(-1),
-            HashMove,
-            Quiet(-2),
-            GoodCapture(1),
-            Quiet(2),
+            MoveScore::quiet(0),
+            MoveScore::good_capture(0),
+            MoveScore::good_capture(-1),
+            MoveScore::hash_move(),
+            MoveScore::quiet(-2),
+            MoveScore::good_capture(1),
+            MoveScore::quiet(2),
         ];
 
-        scores.sort_by_cached_key(|&s| match s {
-            Quiet(i) => Quiet(Reverse(i)),
-            GoodCapture(i) => GoodCapture(Reverse(i)),
-            HashMove => HashMove,
-        });
+        scores.sort();
 
         assert_eq!(
             scores,
             [
-                HashMove,
-                GoodCapture(1),
-                GoodCapture(0),
-                GoodCapture(-1),
-                Quiet(2),
-                Quiet(0),
-                Quiet(-2),
+                MoveScore::HashMove,
+                MoveScore::good_capture(1),
+                MoveScore::good_capture(0),
+                MoveScore::good_capture(-1),
+                MoveScore::quiet(2),
+                MoveScore::quiet(0),
+                MoveScore::quiet(-2),
             ]
         )
     }
