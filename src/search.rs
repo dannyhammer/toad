@@ -999,9 +999,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             return Ok(-Score::MATE * game.is_in_check());
         }
 
-        // Sort moves so that we look at "promising" ones first
-        moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
-
         // Start with a *really bad* initial score
         let mut best = -Score::INF;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
@@ -1011,7 +1008,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * Primary move loop
          ****************************************************************************************************/
 
-        for (i, mv) in moves.iter().copied().enumerate() {
+        for i in 0..moves.len() {
+            // Sort moves so that we look at "promising" ones first
+            let (_, mv, _) =
+                moves.select_nth_unstable_by_key(i, |mv| self.score_move(game, mv, tt_move));
+            let mv = *mv;
+
             /****************************************************************************************************
              * Move-Loop Pruning techniques
              ****************************************************************************************************/
@@ -1240,8 +1242,6 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             return Ok(static_eval);
         }
 
-        moves.sort_by_cached_key(|mv| self.score_move(game, mv, tt_move));
-
         let mut best = static_eval;
         let mut bestmove = tt_move; // Ensures we don't overwrite TT entry's bestmove with `None` if one already existed.
         let original_alpha = bounds.alpha;
@@ -1250,7 +1250,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * Primary move loop
          ****************************************************************************************************/
 
-        for (i, mv) in moves.iter().copied().enumerate() {
+        for i in 0..moves.len() {
+            // Sort moves so that we look at "promising" ones first
+            let (_, mv, _) =
+                moves.select_nth_unstable_by_key(i, |mv| self.score_move(game, mv, tt_move));
+            let mv = *mv;
+
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
             local_pv.clear();
 
