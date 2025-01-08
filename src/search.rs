@@ -5,6 +5,7 @@
  */
 
 use std::{
+    cmp::Reverse,
     fmt,
     marker::PhantomData,
     ops::Neg,
@@ -1011,7 +1012,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * Primary move loop
          ****************************************************************************************************/
 
-        for (i, mv) in moves.iter().rev().copied().enumerate() {
+        for (i, mv) in moves.iter().copied().enumerate() {
             /****************************************************************************************************
              * Move-Loop Pruning techniques
              ****************************************************************************************************/
@@ -1250,7 +1251,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * Primary move loop
          ****************************************************************************************************/
 
-        for (i, mv) in moves.iter().rev().copied().enumerate() {
+        for (i, mv) in moves.iter().copied().enumerate() {
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
             local_pv.clear();
 
@@ -1408,7 +1409,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
     /// Applies a score to the provided move, intended to be used when ordering moves during search.
     #[inline(always)]
-    fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> MoveScore {
+    fn score_move(
+        &self,
+        game: &Game<V>,
+        mv: &Move,
+        tt_move: Option<Move>,
+    ) -> MoveScore<Reverse<i32>> {
         // TT move should be looked at first, so assign it the best possible score and immediately exit.
         if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
             return MoveScore::HashMove;
@@ -1421,7 +1427,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         // Apply history bonus to quiets
         if mv.is_quiet() {
             let history = self.history[piece][to] as i32;
-            MoveScore::Quiet(history)
+            MoveScore::Quiet(Reverse(history))
         } else {
             let victim_square = if mv.is_en_passant() {
                 to.backward_by(piece.color(), 1).unwrap()
@@ -1433,7 +1439,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
             let victim = game.piece_at(victim_square).unwrap();
             let mvv_lva = MVV_LVA[piece][victim];
 
-            MoveScore::GoodCapture(mvv_lva)
+            MoveScore::GoodCapture(Reverse(mvv_lva))
         }
     }
 
@@ -1604,12 +1610,12 @@ fn assert_pv_is_legal<V: Variant>(game: &Game<V>, mv: Move, local_pv: &Principal
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum MoveScore {
-    Quiet(i32),
-    GoodCapture(i32),
-    // BadCapture(i32),
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum MoveScore<T> {
     HashMove,
+    GoodCapture(T),
+    Quiet(T),
+    // BadCapture(i32),
 }
 
 /// Values are obtained from here: <https://www.chessprogramming.org/Simplified_Evaluation_Function>
@@ -1725,18 +1731,22 @@ mod tests {
             Quiet(2),
         ];
 
-        scores.sort();
+        scores.sort_by_cached_key(|&s| match s {
+            Quiet(i) => Quiet(Reverse(i)),
+            GoodCapture(i) => GoodCapture(Reverse(i)),
+            HashMove => HashMove,
+        });
 
         assert_eq!(
             scores,
             [
-                Quiet(-2),
-                Quiet(0),
-                Quiet(2),
-                GoodCapture(-1),
-                GoodCapture(0),
-                GoodCapture(1),
                 HashMove,
+                GoodCapture(1),
+                GoodCapture(0),
+                GoodCapture(-1),
+                Quiet(2),
+                Quiet(0),
+                Quiet(-2),
             ]
         )
     }
