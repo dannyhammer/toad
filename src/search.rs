@@ -1408,10 +1408,10 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
     /// Applies a score to the provided move, intended to be used when ordering moves during search.
     #[inline(always)]
-    fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> i32 {
+    fn score_move(&self, game: &Game<V>, mv: &Move, tt_move: Option<Move>) -> i64 {
         // TT move should be looked at first, so assign it the best possible score and immediately exit.
         if tt_move.is_some_and(|tt_mv| tt_mv == *mv) {
-            return i32::MIN;
+            return i64::MIN;
         }
 
         // Safe unwrap because we can't move unless there's a piece at `from`
@@ -1421,11 +1421,12 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
 
         // Apply history bonus to quiets
         if mv.is_quiet() {
-            score += self.history[piece][to] as i32;
+            // Lower 10 bits are reserved for bad captures
+            score += (self.history[piece][to] as i64) << 10;
         } else
         // Capturing a high-value piece with a low-value piece is a good idea
         if let Some(victim) = game.piece_at(to) {
-            score += MVV_LVA[piece][victim];
+            score += (MVV_LVA[piece][victim] as i64) << 20;
         }
 
         -score // We're sorting, so a lower number is better
@@ -1607,15 +1608,15 @@ const MVV_LVA_PIECE_VALUES: [i32; PieceKind::COUNT] = [100, 320, 330, 500, 900, 
 ///
 /// The following table is produced:
 /// ```text
-///                     VICTIM
-/// A       P     N     B     R     Q     K
-/// T    +---------------------------------+
-/// T   P| 900   3100  3200  4900  8900  0
-/// A   N| 680   2880  2980  4680  8680  0
-/// C   B| 670   2870  2970  4670  8670  0
-/// K   R| 500   2700  2800  4500  8500  0
-/// E   Q| 100   2300  2400  4100  8100  0
-/// R   K| 1000  3200  3300  5000  9000  0
+///                 VICTIM
+/// A       P    N    B    R    Q    K
+/// T    +----------------------------+
+/// T   P| 90   310  320  490  890  0
+/// A   N| 68   288  298  468  868  0
+/// C   B| 67   287  297  467  867  0
+/// K   R| 50   270  280  450  850  0
+/// E   Q| 10   230  240  410  810  0
+/// R   K| 100  320  330  500  900  0
 /// ```
 ///
 /// Note that the actual table is different, as it has size `12x12` instead of `6x6`
@@ -1649,7 +1650,8 @@ const MVV_LVA: [[i32; Piece::COUNT]; Piece::COUNT] = {
 
             // Default MVV-LVA except that the King is assigned a value of 0 if he is attacking
             // bench: 27032804 nodes 8136592 nps
-            let score = 10 * MVV_LVA_PIECE_VALUES[vtm.index()] - MVV_LVA_PIECE_VALUES[atk.index()];
+            let score =
+                (10 * MVV_LVA_PIECE_VALUES[vtm.index()] - MVV_LVA_PIECE_VALUES[atk.index()]) / 10;
 
             // If the attacker is the King, the score is half the victim's value.
             // This encourages the King to attack, but not as strongly as other pieces.
