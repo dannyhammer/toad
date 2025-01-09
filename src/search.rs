@@ -950,6 +950,18 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
              ****************************************************************************************************/
             ProbeResult::Cutoff(tt_entry) => {
                 if !Node::PV {
+                    // ciekce's TT history bonus
+                    if tt_entry.score >= bounds.beta
+                        && tt_entry.bestmove.is_some_and(|mv| mv.is_quiet())
+                    {
+                        // Simple bonus based on depth
+                        let bonus = self.params.history_multiplier * depth.plies() as i16
+                            - self.params.history_offset;
+
+                        self.history
+                            .update(game, &tt_entry.bestmove.unwrap(), bonus);
+                    }
+
                     return Ok(tt_entry.score);
                 }
 
