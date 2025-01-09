@@ -1,5 +1,24 @@
 # Changelog
 
+## [3.1.0](https://github.com/dannyhammer/toad/compare/v3.0.0...v3.1.0) (2025-01-09)
+
+
+### Features
+
+* added `Move Overhead` UCI option. ([207f3c9](https://github.com/dannyhammer/toad/commit/207f3c91f17630d00aadc0744b88ed4b890c0542))
+* added `Move Overhead` UCI option. ([6fb5cbc](https://github.com/dannyhammer/toad/commit/6fb5cbc5c854a1d234cd65cce40335d7c6e20e34))
+* fully using PesTO's evaluation function, including tapered piece values, game phasing, etc. ([01142d5](https://github.com/dannyhammer/toad/commit/01142d5f96bcdbdd04681b2bec9a89f323f72cd7))
+* tracking several stats when debug mode enabled ([4a7a30e](https://github.com/dannyhammer/toad/commit/4a7a30e57a40af9a3dfb4d09dd40eb5306e29917))
+
+
+### Bug Fixes
+
+* fixed another overflow case ([35c9bb9](https://github.com/dannyhammer/toad/commit/35c9bb9a2c0e5aafccddfd36d2d3cc9426b2f92f))
+* fixed not setting TT move if probe returned a cutoff, but we're not in a PV node ([a84ea4c](https://github.com/dannyhammer/toad/commit/a84ea4c01c8bb036a132ff0e0f3d283029854289))
+* fixed overflow bugs with aspiration windows... i hope ([6e73331](https://github.com/dannyhammer/toad/commit/6e73331cdec383fb8ca404105c88c73988ee749b))
+* fixed overflow in eval_for ([0e54ef3](https://github.com/dannyhammer/toad/commit/0e54ef3a2f4bd0bd72ebca169e1e0cb85225f8b6))
+* re-added sanity check for if the search is cancelled. removing it might be causing crashes at low tc again? ([55da525](https://github.com/dannyhammer/toad/commit/55da5251fa580dd81dcc2b7046a9c09ad6ae20b2))
+
 ## [3.0.0](https://github.com/dannyhammer/toad/compare/v2.0.0...v3.0.0) (2025-01-03)
 
 
