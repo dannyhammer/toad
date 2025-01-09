@@ -13,7 +13,7 @@ const BYTES_IN_MB: usize = 1024 * 1024;
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum ProbeResult<'a> {
     /// An entry was found and can be used to perform a cutoff.
-    Cutoff(Score),
+    Cutoff(&'a TTableEntry),
 
     /// An entry was found, but it could not be used to perform a cutoff.
     Hit(&'a TTableEntry),
@@ -248,16 +248,12 @@ impl TTable {
         // if-let chains are set to be stabilized in Rust 2024 (1.85.0): https://rust-lang.github.io/rfcs/2497-if-let-chains.html
         if let Some(entry) = self.get(&key) {
             // Can only cut off if the existing entry came from a greater depth.
-            if entry.depth() >= depth {
-                let score = entry.score;
-
-                // If we can cutoff, do so
-                if entry.node_type == NodeType::Pv
-                    || ((entry.node_type == NodeType::All && score <= bounds.alpha)
-                        || (entry.node_type == NodeType::Cut && score >= bounds.beta))
-                {
-                    return ProbeResult::Cutoff(score);
-                }
+            if entry.depth() >= depth
+                && (entry.node_type == NodeType::Pv
+                    || ((entry.node_type == NodeType::All && entry.score <= bounds.alpha)
+                        || (entry.node_type == NodeType::Cut && entry.score >= bounds.beta)))
+            {
+                return ProbeResult::Cutoff(entry);
             }
 
             // No cutoff was possible, but there was still an entry found.

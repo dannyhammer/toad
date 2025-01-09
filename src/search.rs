@@ -939,9 +939,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         }
 
         // Probe the TT to see if we can return early or use an existing bestmove.
-        if Log::DEBUG {
-            self.ttable.reads += 1;
-        }
+        self.ttable.reads += 1;
         let tt_move = match self.ttable.probe(game.key(), depth, bounds) {
             /****************************************************************************************************
              * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
@@ -950,13 +948,19 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
              * work by just returning the evaluation stored in the transposition table. However, we must be sure
              * that we are not in a PV node.
              ****************************************************************************************************/
-            ProbeResult::Cutoff(tt_score) if !Node::PV => return Ok(tt_score),
+            ProbeResult::Cutoff(tt_entry) => {
+                if !Node::PV {
+                    return Ok(tt_entry.score);
+                }
+
+                tt_entry.bestmove
+            }
 
             // Entry was found, but could not be used to perform a cutoff
             ProbeResult::Hit(tt_entry) => tt_entry.bestmove,
 
             // Miss or otherwise unusable result
-            _ => {
+            ProbeResult::Miss => {
                 /****************************************************************************************************
                  * Internal Iterative Deepening: https://www.chessprogramming.org/Internal_Iterative_Deepening
                  *
@@ -1208,21 +1212,21 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
         }
 
         // Probe the TT to see if we can return early or use an existing bestmove.
+        self.ttable.reads += 1;
         let tt_move = match self.ttable.probe(game.key(), Ply::ZERO, bounds) {
-            /****************************************************************************************************
-             * TT Cutoffs: https://www.chessprogramming.org/Transposition_Table#Transposition_Table_Cutoffs
-             *
-             * If we've already evaluated this position before at a higher depth, we can avoid re-doing a lot of
-             * work by just returning the evaluation stored in the transposition table. However, we must be sure
-             * that we are not in a PV node.
-             ****************************************************************************************************/
-            ProbeResult::Cutoff(tt_score) if !Node::PV => return Ok(tt_score),
+            ProbeResult::Cutoff(tt_entry) => {
+                if !Node::PV {
+                    return Ok(tt_entry.score);
+                }
+
+                tt_entry.bestmove
+            }
 
             // Entry was found, but could not be used to perform a cutoff
             ProbeResult::Hit(tt_entry) => tt_entry.bestmove,
 
             // Miss or otherwise unusable result
-            _ => None,
+            ProbeResult::Miss => None,
         };
 
         // Generate only the legal captures
