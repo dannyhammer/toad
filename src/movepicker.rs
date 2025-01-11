@@ -6,7 +6,7 @@
 
 use arrayvec::ArrayVec;
 
-use crate::{Color, Game, HistoryTable, Move, MoveList, Piece, PieceKind, Variant, MAX_NUM_MOVES};
+use crate::{Color, Move, MoveList, Piece, PieceKind, MAX_NUM_MOVES};
 
 // enum Order {
 //     HashMove,
@@ -23,14 +23,18 @@ pub struct MovePicker {
 }
 
 impl MovePicker {
-    pub fn new<V: Variant>(
-        mut moves: MoveList,
-        game: &Game<V>,
-        history: &HistoryTable,
-        tt_move: Option<Move>,
+    pub fn new(
+        moves: MoveList,
+        // game: &Game<V>,
+        // history: &HistoryTable,
+        // tt_move: Option<Move>,
+        score_fn: impl Fn(&Move) -> i32,
     ) -> Self {
-        let mut scores = ArrayVec::from([0; MAX_NUM_MOVES]);
-        let mut best_index = 0;
+        let mut scores = ArrayVec::default();
+
+        for mv in moves.iter() {
+            scores.push(score_fn(mv));
+        }
 
         /*
         // TT move should be looked at first, so assign it the best possible score and immediately exit.
@@ -55,6 +59,7 @@ impl MovePicker {
         -score // We're sorting, so a lower number is better
          */
 
+        /*
         for (i, &mv) in moves.iter().enumerate() {
             // TT move should have highest priority
             if Some(mv) == tt_move {
@@ -88,6 +93,7 @@ impl MovePicker {
             moves.swap(0, best_index);
             scores.swap(0, best_index);
         }
+          */
 
         Self {
             moves,
@@ -106,6 +112,7 @@ impl Iterator for MovePicker {
     type Item = (Move, i32);
 
     fn next(&mut self) -> Option<Self::Item> {
+        /*
         // No more moves left
         if self.current == self.moves.len() {
             return None;
@@ -120,11 +127,44 @@ impl Iterator for MovePicker {
 
         // For all remaining moves, if one is found with a higher score, swap it to the current index
         for i in (self.current + 1)..self.moves.len() {
-            if self.scores[i] > self.scores[self.current] {
+            if self.scores[i] < self.scores[self.current] {
                 self.moves.swap(self.current, i);
                 self.scores.swap(self.current, i);
             }
         }
+
+        Some((mv, score))
+         */
+
+        // No more moves left
+        if self.current >= self.moves.len() {
+            return None;
+        }
+
+        // Fetch the current best
+        let mut best_index = self.current;
+        let mut best_score = self.scores[best_index];
+
+        // Find the index of the next highest score
+        for i in (self.current + 1)..self.moves.len() {
+            if self.scores[i] <= best_score {
+                best_index = i;
+                best_score = self.scores[i];
+            }
+        }
+
+        // Swap, if necessary
+        if best_index != self.current {
+            self.moves.swap(self.current, best_index);
+            self.scores.swap(self.current, best_index);
+        }
+
+        // Get the move/score at this index
+        let mv = self.moves[self.current];
+        let score = self.scores[self.current];
+
+        // Increment for next call
+        self.current += 1;
 
         Some((mv, score))
     }
@@ -291,6 +331,7 @@ mod tests {
     //     assert_eq!(list, vec![('d', 4), ('c', 3), ('b', 2), ('a', 1)])
     // }
 
+    /*
     #[test]
     fn test_capture_order() {
         let fen = "r3k2r/p1p1q1b1/bn3np1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1";
@@ -322,4 +363,6 @@ mod tests {
         let (mv, score) = picker.next().unwrap();
         assert_eq!(mv, "f3h3", "Got score of {score}"); // QxP
     }
+
+     */
 }

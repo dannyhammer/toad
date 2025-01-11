@@ -1249,7 +1249,7 @@ impl<'a, Log: LogLevel, V: Variant> Search<'a, Log, V> {
          * Primary move loop
          ****************************************************************************************************/
 
-        let picker = MovePicker::new(moves, game, self.history, tt_move);
+        let picker = MovePicker::new(moves, |mv| self.score_move(game, mv, tt_move));
         for (i, (mv, _)) in picker.enumerate() {
             // for (i, mv) in moves.iter().copied().enumerate() {
             // The local PV is different for every node search after this one, so we must reset it in between recursive calls.
