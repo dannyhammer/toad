@@ -70,7 +70,7 @@ impl MovePicker {
 
             // Apply history bonus to quiets
             if mv.is_quiet() {
-                scores[i] += history[piece][to];
+                scores[i] += history[piece][to] as i32;
             } else
             // Capturing a high-value piece with a low-value piece is a good idea
             if let Some(victim) = game.piece_at(to) {
