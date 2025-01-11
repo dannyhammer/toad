@@ -123,7 +123,7 @@ impl Iterator for MovePicker {
 
         // Find the index of the next highest score
         for i in (self.current + 1)..self.moves.len() {
-            if self.scores[i] >= best_score {
+            if self.scores[i] > best_score {
                 best_index = i;
                 best_score = self.scores[i];
             }
