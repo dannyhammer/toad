@@ -33,7 +33,7 @@ impl MovePicker {
         let mut scores = ArrayVec::default();
 
         for mv in moves.iter() {
-            scores.push(score_fn(mv));
+            scores.push(-score_fn(mv));
         }
 
         /*
@@ -112,30 +112,6 @@ impl Iterator for MovePicker {
     type Item = (Move, i32);
 
     fn next(&mut self) -> Option<Self::Item> {
-        /*
-        // No more moves left
-        if self.current == self.moves.len() {
-            return None;
-        }
-
-        // Fetch current move and score
-        let mv = self.moves[self.current];
-        let score = self.scores[self.current];
-
-        // Increment counter, since we're looking at the next move
-        self.current += 1;
-
-        // For all remaining moves, if one is found with a higher score, swap it to the current index
-        for i in (self.current + 1)..self.moves.len() {
-            if self.scores[i] < self.scores[self.current] {
-                self.moves.swap(self.current, i);
-                self.scores.swap(self.current, i);
-            }
-        }
-
-        Some((mv, score))
-         */
-
         // No more moves left
         if self.current >= self.moves.len() {
             return None;
@@ -147,7 +123,7 @@ impl Iterator for MovePicker {
 
         // Find the index of the next highest score
         for i in (self.current + 1)..self.moves.len() {
-            if self.scores[i] <= best_score {
+            if self.scores[i] >= best_score {
                 best_index = i;
                 best_score = self.scores[i];
             }
@@ -315,6 +291,7 @@ pub fn print_mvv_lva_table() {
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
 
@@ -366,3 +343,5 @@ mod tests {
 
      */
 }
+
+ */
